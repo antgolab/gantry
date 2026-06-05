@@ -1,0 +1,30 @@
+# 使用者项目里的临时产物（flow-kit 只提供模板，不跟踪实例）
+.specs/
+!.specs/.gitkeep
+
+# OMC 运行时状态（session / specs / state · 仅本地）
+.omc/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# 日志与临时文件
+*.log
+tmp/
+.omx/
+
+# 构建产物
+dist/
+
+# 本地编排状态（按项目实例化，不跟踪）
+.planning/
+.claude/
+
+# 测试临时目录
+.test-tmp-*
+.tmp-integration*

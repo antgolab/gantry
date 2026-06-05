@@ -1,0 +1,39 @@
+{
+  "name": "@mmmjk/gantry",
+  "version": "1.0.0",
+  "description": "Protocol-driven AI engineering framework for traceable, reviewable, and verifiable AI-assisted development",
+  "type": "module",
+  "bin": {
+    "gantry": "./src/cli.mjs"
+  },
+  "files": [
+    "src/",
+    "phases/",
+    "skills/",
+    "templates/",
+    "reference/",
+    "docs/",
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "build": "node tools/build.mjs",
+    "verify": "node tools/verify.mjs",
+    "metrics": "node tools/metrics.mjs",
+    "prepublishOnly": "npm run build && npm run verify"
+  },
+  "keywords": ["ai", "workflow", "agent", "orchestration", "claude", "codex", "phase-gate", "artifact-driven"],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/antgolab/gantry.git"
+  },
+  "homepage": "https://github.com/antgolab/gantry#readme",
+  "bugs": {
+    "url": "https://github.com/antgolab/gantry/issues"
+  }
+}
