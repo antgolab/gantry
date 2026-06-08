@@ -1,5 +1,8 @@
 # Gantry
 
+[![npm](https://img.shields.io/npm/v/@mmmjk/gantry)](https://www.npmjs.com/package/@mmmjk/gantry)
+[![license](https://img.shields.io/github/license/antgolab/gantry)](https://github.com/antgolab/gantry/blob/main/LICENSE)
+
 > **协议驱动的 AI 工程框架。**  
 > 将 AI 辅助开发从临时对话，升级为可追踪、可审查、可验证的软件工程过程。
 
@@ -147,7 +150,7 @@ Gantry 不是 AI coding assistant、不是 code generator、不是 agent framewo
 ## 安装与初始化
 
 ```bash
-npm install -g gantry
+npm install -g @mmmjk/gantry
 ```
 
 初始化目标项目：
