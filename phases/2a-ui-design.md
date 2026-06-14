@@ -9,10 +9,10 @@ UI Director。**只产视觉/交互方向，不产实现代码**（角色红线 
 
 ## 输入
 
-- `@.specs/<id>/CHANGE.md`（**必读**，含 0-change 阶段已选的「视觉调性」）
-- `@.specs/<id>/REQUIREMENT.md`
-- `@.specs/<id>/DESIGN.md`（**必读 `## 0. 技术栈选定` 段**——字体 / UI 库 / 组件库 / 图标库的选择必须基于这个栈）
-- `@.specs/CONTEXT.md`
+- `@.gantry/specs/<id>/CHANGE.md`（**必读**，含 0-change 阶段已选的「视觉调性」）
+- `@.gantry/specs/<id>/REQUIREMENT.md`
+- `@.gantry/specs/<id>/DESIGN.md`（**必读 `## 0. 技术栈选定` 段**——字体 / UI 库 / 组件库 / 图标库的选择必须基于这个栈）
+- `@.gantry/specs/CONTEXT.md`
 - `@gantry/reference/ui-aesthetics.md`（决策框架）
 - `@gantry/reference/ui-anti-patterns.md`（反 AI-slop 清单）
 - 已存在的品牌资产（logo / 色板 / 字体）如有
@@ -211,7 +211,7 @@ v0 = 占位符 + 关键布局 + 步骤 2 决定的 token + 假设清单。
 
 ## 输出
 
-- `.specs/<id>/UI-DESIGN.md`（必填）
+- `.gantry/specs/<id>/UI-DESIGN.md`（必填）
   - 使用 `@gantry/templates/UI-DESIGN.md` 模板
   - 包含 frontmatter 形式的 design tokens（颜色 / 字体 / 间距 / 圆角 / 动效）
   - 包含调性声明、5 维决策、组件规约、Do's and Don'ts

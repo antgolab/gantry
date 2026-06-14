@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // gantry metrics — monthly adoption scan
 // Usage:
-//   node tools/metrics.mjs [--target <repo>] [--since "1 month ago"] [--out team/metrics]
+//   node tools/metrics.mjs [--target <repo>] [--since "1 month ago"] [--out .gantry/specs/metrics]
 // 产物: <out>/<YYYY-MM>.md
 // 非 KPI · 非考核 · 只给 Curator 与团队 retro 用
 
@@ -16,8 +16,8 @@ const ROOT = resolve(__dirname, '..');
 const args = parseArgs(process.argv.slice(2));
 const TARGET = resolve(args.target ?? '.');
 const SINCE = args.since ?? '1 month ago';
-const OUT_DIR = resolve(TARGET, args.out ?? 'team/metrics');
-const SPECS = resolve(TARGET, '.specs');
+const OUT_DIR = resolve(TARGET, args.out ?? '.gantry/specs/metrics');
+const SPECS = resolve(TARGET, '.gantry/specs');
 
 if (!existsSync(join(TARGET, '.git'))) {
   console.error(`[metrics] not a git repo: ${TARGET}`);
@@ -189,7 +189,7 @@ ${Object.entries(byAuthor)
 
 ## 3. 阶段产物覆盖率
 
-扫 \`.specs/\` active + archive 所有 change（共 **${changeIds.length}** 个）。
+扫 \`.gantry/specs/\` active + archive 所有 change（共 **${changeIds.length}** 个）。
 
 | 阶段产物 | 产出数 | 覆盖率 |
 |---|---|---|
@@ -202,7 +202,7 @@ ${Object.entries(byAuthor)
 
 > **关注信号**：REVIEW.md 覆盖率 < 70% → review 阶段被系统性跳过。
 
-## 4. 知识库（\`.specs/knowledge/\`）
+## 4. 知识库（\`.gantry/specs/knowledge/\`）
 
 - 条目总数：${knowledge.length}
 - 近 30 天新增：${knowledge.filter((k) => withinDays(k.date, 30)).length}

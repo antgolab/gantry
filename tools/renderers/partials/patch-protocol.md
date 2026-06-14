@@ -1,62 +1,53 @@
 ## 你正在协作一个使用 Gantry 流程的项目
 
-完整流程：`CHANGE → REQUIREMENT → DESIGN → TASK → DEV → TEST → REVIEW → INTEGRATION`（归档独立成 `/gantry:archive`，不在主流程内）
+完整流程：`CHANGE → REQUIREMENT → DESIGN → TASK → DEV → TEST → REVIEW → INTEGRATION`
 
-## Patch 识别（**所有阶段开工前先读**）
+每阶段产物存到 `.gantry/specs/<change-id>/`，跨 change 文件存到 `.gantry/specs/`：
+- `CHANGE.md` — 变更提案
+- `REQUIREMENT.md` — 需求 + AC（Given/When/Then）
+- `DESIGN.md` — 技术决策 + ADR + 风险
+- `TASK.md` — 原子任务（XML，含 verify + done）
+- `<task-id>-SUMMARY.md` — 每任务完成报告
+- `TEST.md` — 测试矩阵
+- `REVIEW.md` — 双轮审查
+- `.gantry/specs/CONTEXT.md` — 项目级共享上下文
+- `.gantry/specs/LESSONS.md` — 跨任务失败知识库
 
-每个 phase prompt 执行前**必读**当前 change 的 `.specs/<change-id>/PATCH.md`：
+## Patch 识别
+
+每个 phase prompt 执行前**必读**当前 change 的 `.gantry/specs/<change-id>/PATCH.md`：
 
 - 文件存在且 `status: open` → 当前处于 patch 闭环中。
 - 先查看「变更记录」理解持续调整原因。
 - 再查看「必须更新」中与当前阶段对应的检查项。
-- 当前阶段完成后，必须在 `PATCH.md` 中勾选对应项，`gantry next` 才会继续推进。
+- 当前阶段完成后，必须在 `PATCH.md` 中勾选对应项。
 
 | 阶段 | Patch 行为 |
 |---|---|
-| requirement | 更新 `REQUIREMENT.md` 中受影响 AC / 边界 / 非目标，然后勾选 `REQUIREMENT.md` |
-| design | 追加 design delta / ADR 变更，不重写整篇，然后勾选 `DESIGN.md` |
-| ui-design | 追加交互 / 状态 / 视觉 delta，然后勾选 `UI-DESIGN.md` |
-| task | 追加 patch task；废弃旧任务用 `supersededBy` 标注，然后勾选 `TASK.md` |
-| dev | 只执行 patch 相关任务，完成代码和任务级 SUMMARY 后勾选 `DEV` |
-| test | 为受影响 AC / 风险补测试矩阵和结果，然后勾选 `TEST.md` |
-| review | 复核 patch 后 spec 与实现一致，然后勾选 `REVIEW.md` |
-| integration | UAT 覆盖 patch 影响项，然后勾选 `UAT.md` |
+| requirement | 更新 AC / 边界 / 非目标，勾选 `REQUIREMENT.md` |
+| design | 追加 design delta / ADR 变更，勾选 `DESIGN.md` |
+| task | 追加 patch task；废弃旧任务标注 `supersededBy`，勾选 `TASK.md` |
+| dev | 只执行 patch 相关任务，勾选 `DEV` |
+| test | 补测试矩阵和结果，勾选 `TEST.md` |
+| review | 复核 spec 与实现一致，勾选 `REVIEW.md` |
 
 **禁止**：patch 中静默覆盖旧事实。废弃旧 AC / ADR / task 时必须写明 replacement 或 drop reason。
 
-每阶段产物存到 `.specs/<change-id>/`，跨 change 文件存到 `.specs/`：
-- `CHANGE.md` — 一次变更提案
-- `REQUIREMENT.md` — 需求 + AC（Given/When/Then）+ v1·v2·out
-- `DESIGN.md` — 技术决策 + ADR + 风险
-- `TASK.md` — 原子任务（XML，含 verify + done）
-- `<task-id>-SUMMARY.md` — 每任务完成报告
-- `<task-id>-PROGRESS.md` — 任务中途清窗的快照（临时）
-- `TEST.md` — 测试矩阵 + UAT
-- `REVIEW.md` — 双轮审查
-- `UAT.md` — 集成验证
-- `.specs/CONTEXT.md` — 项目级共享上下文（术语、决策、偏好）
-- `.specs/LESSONS.md` — 跨任务失败知识库
-- `STATE.md`（仓库根）— 跨会话状态
-
-## 角色红线（**必须遵守**）
+## 角色红线
 
 - Architect 不写实现代码
 - Dev 不改 REQUIREMENT.md / DESIGN.md（发现问题开新 CHANGE）
 - Reviewer 不修代码（只产报告 + 修复 task）
-- 同会话同时间只扮演一个角色，切换角色必须清窗
 
 ---
 
 ## R1 · 上下文与 Token
 
-- **R1.1** 出现以下任一信号必须触发清窗：① 输入 token > 50k；② 复读已说过的内容；③ 同类错误连续 ≥ 2 次；④ 用户感觉对话打转
+- **R1.1** 出现以下任一信号必须触发清窗：① 累计 / 输入 token > 200k；② 当前上下文窗口使用率 > 85%；③ 复读已说过的内容；④ 同类错误连续 ≥ 2 次
 - **R1.2** 阶段切换时输出本阶段工件文件作为后续唯一上下文来源
 - **R1.3** 引用历史决策必须用 `@文件路径`，禁止粘贴正文
-- **R1.4** 不允许"我记得我们之前说过……"。所有决策必须可在 `.md` 里查到
-- **R1.5 · 重启协议** 清窗前必须：① 写 `<task-id>-PROGRESS.md`（已完成 / 当前 / **已排除方案** / 待确认假设）；② 更新 STATE.md 中断任务字段；③ 输出"重启指令"给用户
-- **R1.6 · 反重复** 清窗恢复后第一件事：读 PROGRESS.md「已排除方案」段，确认下一步不在该清单里。撞了必须先回答"本次与上次差异是 X"
-- **R1.7 · 任务过大** 半路触发清窗 = task 拆得不够细。恢复后第一动作是在 TASK.md 里就地拆为 ≥ 2 个子任务
-- **R1.8 · LESSONS 检查** DEV 任务进入实现前必须 grep `.specs/LESSONS.md`；命中条目必须显式声明"差异是 X"或"仍适用所以不重试"。INTEGRATION ARCHIVE 前必须按提名条件扫描并入库
+- **R1.5 · 重启协议** 清窗前必须写 `<task-id>-PROGRESS.md`（已完成 / 当前 / 已排除方案）
+- **R1.8 · LESSONS 检查** DEV 前必须 grep `.gantry/specs/LESSONS.md`
 
 ## R2 · 阶段门
 
@@ -64,19 +55,11 @@
 - **R2.2** 没 `REQUIREMENT.md` 不能进 DESIGN
 - **R2.3** 没 `TASK.md` 不能写代码；每任务必含可执行 `verify`
 - **R2.4** verify 未通过禁止标记完成
-- **R2.5** REVIEW 标 Critical 项必须修复或显式接受
-- **R2.6** UAT 失败自动重试 ≤ 3 轮，超限暂停
-
-## R3 · 角色红线
-
-见上方「角色红线」段。
 
 ## R4 · 提交与产物
 
 - **R4.1** DEV 每任务一次原子提交，格式 `<type>(<change-id>): <task-id> <subject>`
 - **R4.2** 代码改动必须伴随测试改动
-- **R4.3** Bug 修复必须伴随回归测试
-- **R4.4** 不能声称"完成"而没跑过 verify
 
 ## R5 · 测试纪律
 
@@ -87,18 +70,13 @@
 ## R6 · 反幻觉
 
 - **R6.1** 引用外部 API / 字段名前必须 grep 验证存在性
-- **R6.2** 不确定的事实必须明示"待确认"，禁止伪装已知
+- **R6.2** 不确定的事实必须明示"待确认"
 - **R6.3** 不能假设代码"应该可以工作"——必须实际跑 verify
 
 ## R7 · 范围控制
 
-- **R7.1** 严禁悄悄扩大范围；超出 TASK.md 必须先停下更新或开新 CHANGE
+- **R7.1** 严禁悄悄扩大范围；超出 TASK.md 必须先停下
 - **R7.2** 同次提交不允许混入多个无关任务
-
-## R8 · 语言
-
-- **R8.1** 工件 `.md` 与项目主语言一致
-- **R8.2** 代码标识符英文，注释允许中文
 
 ---
 

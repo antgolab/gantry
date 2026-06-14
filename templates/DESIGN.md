@@ -1,7 +1,7 @@
 # DESIGN: <change 标题>
 
 - **Change ID**: <id>
-- **关联**: `@.specs/<id>/REQUIREMENT.md`、`@.specs/CONTEXT.md`、`@gantry/reference/tech-stacks.md`
+- **关联**: `@.gantry/specs/<id>/REQUIREMENT.md`、`@.gantry/specs/CONTEXT.md`、`@gantry/reference/tech-stacks.md`
 - **作者**: AI（Architect 角色）+ 人工 review
 
 ---
@@ -112,7 +112,7 @@
 
 > 这是**给未来的礼物**，不是必填。AI 写 DESIGN 时如果发现本 change 引入了"项目级有复用价值"的东西，列在这里。
 > 没引入新东西就整段写 `本 change 无架构层面沉淀建议`。
-> 后续用户跑 `phases/A-evolve.md` 会扫这段，逐项 review，批准的内容 patch 到 `.specs/CONTEXT.md`。
+> 后续用户跑 `phases/A-evolve.md` 会扫这段，逐项 review，批准的内容 patch 到 `.gantry/specs/CONTEXT.md`。
 
 ### 9.1 新增的可复用抽象（建议 append 到 CONTEXT 「既有抽象索引」段）
 

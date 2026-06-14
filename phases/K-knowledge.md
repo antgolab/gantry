@@ -1,7 +1,7 @@
 # 横向命令 · K-knowledge — 知识沉淀通道
 
 > **触发方式**：`docs/GO.md` + `调研 / 对比 / 评估 / 这个库怎么样 / X vs Y / 怎么选 / 原理 / 沉淀一下 / 记个笔记`
-> 不属于任何 change，不写 CHANGE.md。产物直接进 `.specs/knowledge/<YYYY-MM-DD>-<topic>.md`。
+> 不属于任何 change，不写 CHANGE.md。产物直接进 `.gantry/specs/knowledge/<YYYY-MM-DD>-<topic>.md`。
 
 ---
 
@@ -28,18 +28,18 @@
 ## 输入
 
 - 用户的问题 / 对比诉求
-- `@.specs/CONTEXT.md`（技术栈 · 已锁决策 · 避免重复）
-- `@.specs/knowledge/`（已有条目 · 避免重建）
+- `@.gantry/specs/CONTEXT.md`（技术栈 · 已锁决策 · 避免重复）
+- `@.gantry/specs/knowledge/`（已有条目 · 避免重建）
 - 外部文档 / 源码（按需）
 
 ## 你的职责
 
 ### 步骤 1 · 去重检查（必跑）
 
-进入产出前先 grep `.specs/knowledge/` 看有没有重复条目：
+进入产出前先 grep `.gantry/specs/knowledge/` 看有没有重复条目：
 
 ```
-grep -ri "<关键词>" .specs/knowledge/
+grep -ri "<关键词>" .gantry/specs/knowledge/
 ```
 
 **命中已有条目**：
@@ -67,7 +67,7 @@ grep -ri "<关键词>" .specs/knowledge/
 
 ### 步骤 3 · 结构化答复
 
-用 `.specs/knowledge/` 统一模板产出：
+用 `.gantry/specs/knowledge/` 统一模板产出：
 
 ```markdown
 ---
@@ -125,14 +125,14 @@ supersedes: <旧条目 ID · 如有>
 
 ### 步骤 5 · 归档
 
-- 写入 `.specs/knowledge/<YYYY-MM-DD>-<kebab-topic>.md`
+- 写入 `.gantry/specs/knowledge/<YYYY-MM-DD>-<kebab-topic>.md`
 - **不修改 `CONTEXT.md` / `CONVENTIONS.md`**（域外职责）
 - 如果本次结论影响某项已锁决策 → 提示用户："这会改 CONTEXT.md 的 X 决策，建议跑 A-evolve 同步"
 - 不改 `STATE.md`（K 不是阶段，不占活跃 change 槽）
 
 ## 输出
 
-- `.specs/knowledge/<date>-<topic>.md`（必产）
+- `.gantry/specs/knowledge/<date>-<topic>.md`（必产）
 - 0~1 个 A-evolve 触发提示（如结论影响项目级决策）
 
 ## 约束（强制）
@@ -145,7 +145,7 @@ supersedes: <旧条目 ID · 如有>
 
 ## 自检
 
-- [ ] 已 grep `.specs/knowledge/` 去重
+- [ ] 已 grep `.gantry/specs/knowledge/` 去重
 - [ ] 模糊请求已反问清楚场景 / 约束
 - [ ] 每条证据标了等级（🟢/🟡/🟠）
 - [ ] 有「适用 / 不适用」段，不适用 ≥ 1 条
@@ -156,13 +156,13 @@ supersedes: <旧条目 ID · 如有>
 
 - 用户要基于结论落地代码 → `docs/GO.md` + 一句话需求（进 0-change）
 - 结论影响项目级决策 → 提示用户跑 A-evolve 同步 CONTEXT
-- 只是沉淀 · 无后续 → 归档，提示用户「已归入 .specs/knowledge/，团队可 grep 复用」
+- 只是沉淀 · 无后续 → 归档，提示用户「已归入 .gantry/specs/knowledge/，团队可 grep 复用」
 
 ---
 
 ## Curator 月度职责（摘录）
 
-月度 review 时扫 `.specs/knowledge/`：
+月度 review 时扫 `.gantry/specs/knowledge/`：
 
 - 状态从 `draft` 升 `reviewed` 或标 `deprecated`
 - 相似主题合并（保留最新 · 老的 `status: superseded · supersededBy: <新 ID>`）

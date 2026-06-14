@@ -28,3 +28,4 @@ dist/
 # 测试临时目录
 .test-tmp-*
 .tmp-integration*
+.gantry

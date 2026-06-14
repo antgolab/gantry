@@ -136,7 +136,7 @@ function isBannerSkipped(file) {
     return relPath.startsWith('.claude/') || relPath === 'CLAUDE.md';
   }
   if (tool === 'codex') {
-    return relPath.startsWith('agents/') || relPath === 'AGENTS.md';
+    return relPath.startsWith('.agents/') || relPath === 'AGENTS.md';
   }
   return false;
 }

@@ -15,14 +15,14 @@ gantry hook run before:dev
 
 ## 输入
 
-- `@.specs/<change-id>/TASK.md`
+- `@.gantry/specs/<change-id>/TASK.md`
 - 要执行的 task id（用户指定，例如 `T03`）
-- `@.specs/<change-id>/DESIGN.md`（**必读 `## 0. 技术栈选定` + `## 0.5 既有架构对齐`**——install / build / test 命令必须匹配选定的栈；触碰模块 / 禁动清单 / 沿用决策必须严格遵循）
+- `@.gantry/specs/<change-id>/DESIGN.md`（**必读 `## 0. 技术栈选定` + `## 0.5 既有架构对齐`**——install / build / test 命令必须匹配选定的栈；触碰模块 / 禁动清单 / 沿用决策必须严格遵循）
 - **项目上下文文档**（从 `STATE.md` 读 `ai_context_doc` 字段决定）：
   - 有 `ai_context_doc: <path>` → 读那个文档（如 `AGENTS.md` / `CLAUDE.md`）
-  - 没或为 `CONTEXT.md` → 读 `@.specs/CONTEXT.md`
+  - 没或为 `CONTEXT.md` → 读 `@.gantry/specs/CONTEXT.md`
   - `none` → 跳过此输入（AI "盲飞"，1.4 沿用既有抽象 grep 必须更彻底以补偿）
-- `@.specs/LESSONS.md`
+- `@.gantry/specs/LESSONS.md`
 - 仅引用与本任务相关的文件，**不要加载整个项目**
 
 ## 你的职责
@@ -66,12 +66,12 @@ gantry hook run before:dev
 
 进入实现**之前**：
 
-1. 用当前任务的 `files` 路径关键词、`action` 中的关键名词，grep `.specs/LESSONS.md`
+1. 用当前任务的 `files` 路径关键词、`action` 中的关键名词，grep `.gantry/specs/LESSONS.md`
 2. 对每条命中且 `状态: active` 的 `L-NNN`，在本次执行计划里写一行：
    - 「已查阅 L-NNN，本次方案与之差异是 X」 或
    - 「已查阅 L-NNN，本次确认仍适用，所以不会重试该方案」
 3. 若计划做的事与某条 active 条目完全相同 → 停下来按 R1.6 回答"本次与上次的差异是什么"，不允许盲目重试
-4. 若 `.specs/LESSONS.md` 不存在 → 用 `@gantry/templates/LESSONS.md` 创建空骨架
+4. 若 `.gantry/specs/LESSONS.md` 不存在 → 用 `@gantry/templates/LESSONS.md` 创建空骨架
 
 ### 1.6 UI 任务额外检查（仅当任务涉及任何用户可见 UI）
 
@@ -79,7 +79,7 @@ gantry hook run before:dev
 
 命中时，进入实现**之前**还必须：
 
-1. 加载 `@.specs/<id>/UI-DESIGN.md`（必须存在；不存在 → 停下来要求先跑 `phases/2a-ui-design.md`）
+1. 加载 `@.gantry/specs/<id>/UI-DESIGN.md`（必须存在；不存在 → 停下来要求先跑 `phases/2a-ui-design.md`）
 2. 加载 `@gantry/reference/ui-anti-patterns.md`，按当前任务的关键词 grep 相关章节
 3. 加载 `@gantry/reference/frontend-engineer-rules.md`（**第 1 + 第 2 + 第 10 节必读**），其他节按输出类型按需读：
    - 任务是做交互原型 → 补读第 6.1
@@ -135,7 +135,7 @@ gantry hook run before:dev
 | 5 | `flyway.conf` / `flyway/sql/` 存在 | Flyway | 手写 `V<timestamp>__<change-id>_<task-id>.sql` 放进 `flyway/sql/` |
 | 6 | `liquibase/changelog.xml` 存在 | Liquibase | 追加 `<changeSet>` 到 changelog |
 | 7 | `migrations/` 或 `db/migrations/` 目录（无框架）| 手写 SQL | 文件名：`YYYYMMDDHHmm_<change-id>_<task-id>_<verb>.sql` |
-| 8 | 全部都没有（裸项目）| **回退**：生成在 `.specs/<change-id>/migrations/` | 文件名同上，并在 SUMMARY 里登记"待用户搬到正式迁移目录" |
+| 8 | 全部都没有（裸项目）| **回退**：生成在 `.gantry/specs/<change-id>/migrations/` | 文件名同上，并在 SUMMARY 里登记"待用户搬到正式迁移目录" |
 
 #### 1.7.3 生成可逆迁移
 
@@ -427,7 +427,7 @@ git status --short                  # 含 untracked
 
 ### 6. 写 SUMMARY
 
-使用 `@gantry/templates/SUMMARY.md` 模板，填到 `.specs/<change-id>/<task-id>-SUMMARY.md`。
+使用 `@gantry/templates/SUMMARY.md` 模板，填到 `.gantry/specs/<change-id>/<task-id>-SUMMARY.md`。
 内容：做了什么 / 改了哪些文件 / verify 输出 / **6 维自查输出**（步骤 4 的 brooks-review 或内置回退结果）/ 是否触发新 fix-plan。
 
 ### 7. 标记完成
@@ -460,10 +460,10 @@ gantry snapshot <task-id> --interrupt --reason "<原因>"
 
 ### 中途暂停（触发 R1.1 信号时）
 
-若执行中出现 token > 50k / 自我复读 / 同错重现 / 用户说"打转了"中任一信号：
+若执行中出现累计 / 输入 token > 200k、当前上下文窗口使用率 > 85%、自我复读、同错重现、用户说"打转了"中任一信号：
 
 1. **立即停手**——不要再写代码或跑工具
-2. 用 `@gantry/templates/PROGRESS.md` 写出 `.specs/<id>/<task-id>-PROGRESS.md`，重点填：
+2. 用 `@gantry/templates/PROGRESS.md` 写出 `.gantry/specs/<id>/<task-id>-PROGRESS.md`，重点填：
    - 已完成子步骤（勾选清单）
    - 当前正在做（一段话，恢复后能直接续上）
    - **已排除的方案 + 理由 + 失败次数**（这是反重复的核心）

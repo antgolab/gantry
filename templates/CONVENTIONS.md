@@ -1,6 +1,6 @@
 # CONVENTIONS · 项目约定
 
-> 本文件是**样板**。`gantry init` 会把它复制到目标项目 `.specs/CONVENTIONS.md`，请按实际项目填充。
+> 本文件是**样板**。`gantry init` 会把它复制到目标项目 `.gantry/specs/CONVENTIONS.md`，请按实际项目填充。
 > 写完后它就是 Gantry 给 AI 的"项目专属上下文"，每个阶段都会加载。
 >
 > **与 CONTEXT.md 的边界**：

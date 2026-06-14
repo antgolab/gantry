@@ -18,7 +18,7 @@ stage: dev
 ## 执行协议
 
 1. 确认当前阶段为 dev
-2. 解析 `.specs/<change-id>/TASK.md`
+2. 解析 `.gantry/specs/<change-id>/TASK.md`
 3. 按依赖关系分组为 waves
 4. 分配 Executor agent
 5. 每个任务在 fresh context 中执行 `phases/4-dev.md`

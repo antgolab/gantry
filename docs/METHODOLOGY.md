@@ -41,13 +41,13 @@ CHANGE → REQUIREMENT → DESIGN → [2a UI-DESIGN]* → TASK → DEV → TEST 
 | INTEGRATION | 全部已通过 | UAT + 集成 smoke + 失败诊断 | `UAT.md` / fix-plan | 是 | 否 |
 | ARCHIVE | 已收尾 | 保存 change 工件副本 | `_archive/<change-id>/` | 否 | — |
 
-> `ship` 默认完成收尾并把 `.specs/<id>/` 复制到 `.specs/_archive/<id>/`（保留源目录）。如需只收尾不归档，使用 `/gantry:ship --no-archive`；`/gantry:archive <change-id>` 作为补归档 / 重新归档维护命令保留（`--keep-history` 加版本后缀）。开发 / 测试中发现变化时，用 `/gantry:adjust "<发生了什么>"` 打开或追加当前 change 的 `PATCH.md` 闭环账本。`/gantry:unarchive <change-id>` 仅反向恢复工件，不切换 STATE。
+> `archive` 完成当前 change 收尾并把 `.gantry/specs/<id>/` 复制到 `.gantry/specs/_archive/<id>/`（保留源目录），然后把 STATE 重置为 idle。`ship` 是兼容入口，执行同一套逻辑。`/gantry:unarchive <change-id>` 是反向生命周期动作：恢复归档工件并重新激活该 change。开发 / 测试中发现变化时，用 `/gantry:adjust "<发生了什么>"` 打开或追加当前 change 的 `PATCH.md` 闭环账本。
 
 ---
 
 ## 文件体系
 
-所有产物存到：`./.specs/<change-id>/`
+所有产物存到：`./.gantry/specs/<change-id>/`
 
 | 文件 | 用途 | 谁来写 |
 |---|---|---|
@@ -61,7 +61,7 @@ CHANGE → REQUIREMENT → DESIGN → [2a UI-DESIGN]* → TASK → DEV → TEST 
 | `REVIEW.md` | 审查发现（严重度 / 修复决策 / 跨模型分歧）| AI |
 | `SUMMARY.md` | 阶段产物快照（用于截断历史）| AI |
 | `<task-id>-PROGRESS.md` | **临时**文件——任务执行中途清窗时写入，含「已排除方案」反重复段。任务完成后删除。详见 RULES R1.5/R1.6/R1.7 | AI |
-| `LESSONS.md`（`.specs/` 根）| **项目级常驻**——跨 change 失败知识库。每个 DEV 任务开工前必扫；INTEGRATION 阶段提名新条目。详见 RULES R1.8 | AI 提名 + 人工筛 |
+| `LESSONS.md`（`.gantry/specs/` 根）| **项目级常驻**——跨 change 失败知识库。每个 DEV 任务开工前必扫；INTEGRATION 阶段提名新条目。详见 RULES R1.8 | AI 提名 + 人工筛 |
 | `STATE.md`（仓库根）| 跨会话状态（当前位置 / 中断任务 / 阻塞 / 决策日志）| AI 维护，人可改 |
 
 ---

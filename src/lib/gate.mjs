@@ -12,7 +12,7 @@ import { parseTasks } from './tasks.mjs';
 /**
  * 运行质量门禁检查
  * @param {string} taskId - 任务 ID
- * @param {string} specsDir - .specs/<change-id>/ 目录路径
+ * @param {string} specsDir - .gantry/specs/<change-id>/ 目录路径
  * @param {object} opts - { force?, pipeline?, actualFiles? }
  * @returns {{ passed: boolean, checks: object[], timestamp: string, forced: boolean }}
  */

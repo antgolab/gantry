@@ -39,10 +39,10 @@ fresh_context: false
 4. 如果通过：
    - 产出 UAT.md
    - 提名 LESSONS 条目（成功经验）
-   - 归档 .specs/<change-id>/ → .specs/_archive/
+   - 归档 .gantry/specs/<change-id>/ → .gantry/specs/_archive/
 
 ## 退出协议
 
-1. UAT.md 写入 .specs/<change-id>/
+1. UAT.md 写入 .gantry/specs/<change-id>/
 2. LESSONS 提名写入 LESSONS.md
 3. 归档完成后通知编排器重置状态

@@ -16,14 +16,14 @@ gantry hook run before:change
 ## 输入
 
 - 用户一句话（可能很模糊，例如"加个深色模式"）
-- 已有项目（如有）：`@README.md`、`@.specs/`
+- 已有项目（如有）：`@README.md`、`@.gantry/specs/`
 
 ## 你的职责
 
 0. **自动生成 change-id**（用户**不需要**提供）：
    - 从用户描述提取核心关键词，转成 kebab-case（小写、短横线分隔、英文）
    - 长度 2~4 个词。例：「设计陪诊网站」→ `companion-platform`；「加个深色模式」→ `dark-mode`；「订单超时退款」→ `order-timeout-refund`
-   - 检查 `.specs/<id>/` 不存在，若冲突自动加序号 `<id>-2`、`<id>-3`
+   - 检查 `.gantry/specs/<id>/` 不存在，若冲突自动加序号 `<id>-2`、`<id>-3`
    - 在反问的第一条消息里向用户**显式声明**：
      ```
      ✅ 自动生成 change-id：`<id>`（不满意请告诉我新的，否则继续。）
@@ -74,7 +74,7 @@ gantry hook run before:change
 
    #### 0.4.3 ARCHITECTURE.md 不存在的特殊处理
 
-   如果检测到架构级变更但 `.specs/ARCHITECTURE.md` 不存在（项目从未跑过 A-architect）：
+   如果检测到架构级变更但 `.gantry/specs/ARCHITECTURE.md` 不存在（项目从未跑过 A-architect）：
 
    - 选项 1 改为："✅ 先跑 `@A-architect` 建立项目级架构文档（**这是首次建立 · 一次性投资**）"
    - 选项 2 不变
@@ -135,7 +135,7 @@ gantry hook run before:change
    - 是否触及架构（需要更新 `DESIGN.md` / 新增 ADR）？
    - 是否影响现有 AC？
 3. **范围排除**：明确写出**这次不做什么**。
-4. **生成 CHANGE.md**：使用 `@gantry/templates/CHANGE.md` 模板，填好后保存到 `.specs/<change-id>/CHANGE.md`（id 来自步骤 0）。
+4. **生成 CHANGE.md**：使用 `@gantry/templates/CHANGE.md` 模板，填好后保存到 `.gantry/specs/<change-id>/CHANGE.md`（id 来自步骤 0）。
 5. **路径建议**：基于影响面判定，给出本次走哪条路径：
    - 完整：`REQUIREMENT → DESIGN → TASK → DEV → TEST → REVIEW → INTEGRATION`
    - 中等：`(REQUIREMENT 增量) → TASK → DEV → TEST → REVIEW → INTEGRATION`
@@ -143,7 +143,7 @@ gantry hook run before:change
 
 ## 输出
 
-- `.specs/<change-id>/CHANGE.md`（必填）
+- `.gantry/specs/<change-id>/CHANGE.md`（必填）
 - 一段路径建议，并询问用户确认
 
 ## 约束（来自 RULES.md）

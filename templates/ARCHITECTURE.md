@@ -2,13 +2,13 @@
 
 - **维护者**：`phases/A-architect.md`（首次 / 重构）+ `phases/A-evolve.md`（增量同步 ADR）
 - **首次创建**：<YYYY-MM-DD>
-- **最近修订**：<YYYY-MM-DD>（来自 A-evolve <YYYY-MM-DD> · 详见 `.specs/evolve/<date>-EVOLVE.md`）
+- **最近修订**：<YYYY-MM-DD>（来自 A-evolve <YYYY-MM-DD> · 详见 `.gantry/specs/evolve/<date>-EVOLVE.md`）
 - **当前 ADR 编号最大值**：ADR-007
 
 > **本文件 vs CONTEXT.md vs DESIGN.md 的边界**：
 > - `CONTEXT.md`（**rules 层**）：技术栈版本、命名约定、既有抽象索引、禁动清单、code-style——AI 实施时**每个 change 都加载**，约 50-200 行
 > - `ARCHITECTURE.md`（**structure 层 · 本文件**）：模块图、跨模块契约、ADR 列表、扩展点、容量边界——**仅 2-design / A-evolve 阶段加载**，约 200-600 行
-> - `.specs/<change-id>/DESIGN.md`（**change 层**）：单次 change 的技术决策、本次 change 的接口契约、风险——change 归档后冻结
+> - `.gantry/specs/<change-id>/DESIGN.md`（**change 层**）：单次 change 的技术决策、本次 change 的接口契约、风险——change 归档后冻结
 >
 > **三层职责无重叠**：CONTEXT 回答"AI 写代码时该遵守什么"，ARCHITECTURE 回答"系统是怎么搭起来的"，DESIGN 回答"这次 change 怎么做"。
 
@@ -97,7 +97,7 @@ graph LR
 - **决定**：Redis 7（ioredis 客户端）
 - **理由**：多实例部署需要共享缓存；in-memory 在水平扩容时失效率高
 - **代价**：多一个运维组件；冷启动慢
-- **来源 change**：`add-cache-layer`（`.specs/archive/2026-04-12-add-cache-layer/`）
+- **来源 change**：`add-cache-layer`（`.gantry/specs/archive/2026-04-12-add-cache-layer/`）
 - **推翻成本**：中（应用层接口未暴露 Redis 细节）
 
 ### ADR-NNN · <标题>
@@ -219,4 +219,4 @@ erDiagram
 | <YYYY-MM-DD> | A-evolve | ADR-002 新增（来自 add-cache-layer）| A-evolve |
 | <YYYY-MM-DD> | A-architect | ADR-001 重审：保持 Postgres，否决 CockroachDB 迁移 | A-architect 重构跑 |
 
-> 详细修订内容见 `.specs/evolve/<date>-EVOLVE.md` 或 `.specs/archive/<arch-change-id>/`。
+> 详细修订内容见 `.gantry/specs/evolve/<date>-EVOLVE.md` 或 `.gantry/specs/archive/<arch-change-id>/`。

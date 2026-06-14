@@ -24,7 +24,7 @@ checkpoint: human-verify
    - 第 1 轮：规格合规（AC 逐条对照）
    - 第 2 轮：代码质量（SOLID / DRY / 安全）
    - 第 3 轮（--cross-model）：跨模型审查
-5. 产出 `.specs/<change-id>/REVIEW.md`
+5. 产出 `.gantry/specs/<change-id>/REVIEW.md`
 6. 创建 checkpoint（human-verify）
 
 ## Agent 指令

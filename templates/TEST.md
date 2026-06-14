@@ -1,7 +1,7 @@
 # TEST: <change 标题>
 
 - **Change ID**: <id>
-- **关联**: `@.specs/<id>/REQUIREMENT.md`、`@gantry/reference/test-pyramid.md`
+- **关联**: `@.gantry/specs/<id>/REQUIREMENT.md`、`@gantry/reference/test-pyramid.md`
 - **项目类型**: <Web 前端 / 后端 API / 全栈 / 移动 / CLI / 库>
 
 ---

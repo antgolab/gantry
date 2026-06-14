@@ -31,10 +31,10 @@
 
 **问题**：gantry 命令执行情况完全不可见，没有"发生了什么"的机器可读记录。
 
-**目标**：每次 gantry 命令执行时，向 `.planning/trace/` 写入结构化日志。
+**目标**：每次 gantry 命令执行时，向 `.gantry/planning/trace/` 写入结构化日志。
 
 **产物**：
-- `.planning/trace/<YYYY-MM-DD>.jsonl`：每行一条 trace 事件
+- `.gantry/planning/trace/<YYYY-MM-DD>.jsonl`：每行一条 trace 事件
 - 事件结构：
   ```json
   {
@@ -106,7 +106,7 @@ retry count: 1（T03 frontend-download）
 - fast: commit 占比（从 git log）
 - change 平均交付周期
 
-**产物**：`.specs/metrics/<YYYY-MM>.md` 新增 §0 执行效率摘要
+**产物**：`.gantry/specs/metrics/<YYYY-MM>.md` 新增 §0 执行效率摘要
 
 **依赖**：O-1
 
@@ -219,7 +219,7 @@ DESIGN → [O-orr] → TASK
 | 2026-06-04 18:45 | gantry ship | order-export | review→idle | mjk |
 ```
 
-**实现**：CLI 每次执行后 append 到 STATE.md 的审计段；超过 50 条时自动归档到 `.planning/trace/`。
+**实现**：CLI 每次执行后 append 到 STATE.md 的审计段；超过 50 条时自动归档到 `.gantry/planning/trace/`。
 
 **依赖**：无（独立于 O-1）
 
@@ -289,7 +289,7 @@ gantry gate --policy require-verify   // CI/pre-commit 时运行
 
 **问题**：任何人都能执行任何 gantry 命令，无权限边界。
 
-**目标**：通过 `.planning/config.json` 定义角色权限，`gantry ship` / `gantry gate --force` 等高风险命令需要对应权限。
+**目标**：通过 `.gantry/planning/config.json` 定义角色权限，`gantry ship` / `gantry gate --force` 等高风险命令需要对应权限。
 
 **设计**：
 ```json

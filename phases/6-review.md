@@ -15,11 +15,11 @@ gantry hook run before:review
 
 ## 输入
 
-- `@.specs/<change-id>/REQUIREMENT.md`
-- `@.specs/<change-id>/DESIGN.md`（如有）
-- `@.specs/<change-id>/UI-DESIGN.md`（如是前端项目）
-- `@.specs/<change-id>/TASK.md`
-- `@.specs/<change-id>/TEST.md`
+- `@.gantry/specs/<change-id>/REQUIREMENT.md`
+- `@.gantry/specs/<change-id>/DESIGN.md`（如有）
+- `@.gantry/specs/<change-id>/UI-DESIGN.md`（如是前端项目）
+- `@.gantry/specs/<change-id>/TASK.md`
+- `@.gantry/specs/<change-id>/TEST.md`
 - 本次变更的 git diff（用户提供或 AI 通过工具获取）
 - `@gantry/reference/ui-anti-patterns.md`（如是前端项目）
 
@@ -42,7 +42,7 @@ gantry hook run before:review
 
 #### 2.0 TEST.md 5 轮金字塔完整性（先查）
 
-打开 `.specs/<id>/TEST.md`，检查"本次测试范围声明"段：
+打开 `.gantry/specs/<id>/TEST.md`，检查"本次测试范围声明"段：
 
 - [ ] 5 轮状态都明确（无未填）
 - [ ] 跳过的轮次都有理由（不允许"暂时跳过"）
@@ -172,7 +172,7 @@ AI 自己逐个维度诊断 diff，输出上面同样的 4 要素格式，发现
 
 #### 4.1 技术债评估（适用于里程碑 / 季度大版本 / 重构项目）
 
-**触发条件**：本次 change 是里程碑 / 季度大版本 / 重构项目，或 `.specs/CONTEXT.md` 「技术债」段多于 30 天未更新。
+**触发条件**：本次 change 是里程碑 / 季度大版本 / 重构项目，或 `.gantry/specs/CONTEXT.md` 「技术债」段多于 30 天未更新。
 
 ```
 /brooks-debt              # 装了 brooks-lint 才能调
@@ -184,7 +184,7 @@ AI 自己逐个维度诊断 diff，输出上面同样的 4 要素格式，发现
 
 拿到输出后：
 - 🔴 Critical · 本次必修 → 追加为 fix 任务
-- 🟡 Scheduled · 近 1~3 个迭代 → 追加为 backlog，记入 `.specs/CONTEXT.md` 的「技术债」段
+- 🟡 Scheduled · 近 1~3 个迭代 → 追加为 backlog，记入 `.gantry/specs/CONTEXT.md` 的「技术债」段
 - 🟢 Monitored · 仅记录不处理 → LESSONS.md
 
 未装 brooks-lint → 跳过本段（内置不提供回退，债评估需要书本包装才不会“凭感觉”）。
@@ -212,7 +212,7 @@ AI 自己逐个维度诊断 diff，输出上面同样的 4 要素格式，发现
 
 ## 输出
 
-- `.specs/<change-id>/REVIEW.md`
+- `.gantry/specs/<change-id>/REVIEW.md`
 - 0~N 条新增 fix 任务追加到 `TASK.md`
 
 ## 约束（强制）

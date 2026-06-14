@@ -8,17 +8,18 @@
 ## R1 · 上下文与 Token
 
 - **R1.1** 出现以下**任一信号**时必须触发清窗（非数值死规，而是信号触发）：
-  1. 输入 token > 50k
-  2. AI 在同一会话内复读已说过的内容（自我提示症状）
-  3. 同一类错误连续出现 ≥ 2 次（说明它没记住失败原因）
-  4. 用户感觉对话开始"打转"
+  1. 累计 / 输入 token > 200k
+  2. 当前上下文窗口使用率 > 85%
+  3. AI 在同一会话内复读已说过的内容（自我提示症状）
+  4. 同一类错误连续出现 ≥ 2 次（说明它没记住失败原因）
+  5. 用户感觉对话开始"打转"
 - **R1.2** 阶段切换时，AI 必须输出本阶段的 `SUMMARY.md` 或对应工件文件，作为后续阶段的唯一上下文来源。
 - **R1.3** 引用历史决策必须用 `@文件路径` 形式，禁止粘贴正文复述。
 - **R1.4** 不允许"我记得我们之前说过……"这类对话依赖。所有决策必须可在 `.md` 里查到。
 - **R1.5 · 重启协议（清窗前后必须严格执行）**
 
   **清窗前** AI 必须依次完成：
-  1. 把当前任务的中间状态写入 `.specs/<id>/<task-id>-PROGRESS.md`（用 `@gantry/templates/PROGRESS.md`）。必须包含：已完成子步骤 / 当前正在做 / **已排除方案及理由** / 待确认假设。
+  1. 把当前任务的中间状态写入 `.gantry/specs/<id>/<task-id>-PROGRESS.md`（用 `@gantry/templates/PROGRESS.md`）。必须包含：已完成子步骤 / 当前正在做 / **已排除方案及理由** / 待确认假设。
   2. 更新仓库根 `STATE.md` 的「中断任务」字段。
   3. 输出一段"重启指令"给用户，形如：
      ```
@@ -26,10 +27,10 @@
      docs/METHODOLOGY.md
      docs/RULES.md
      phases/4-dev.md
-     @.specs/CONTEXT.md
-     @.specs/<id>/REQUIREMENT.md
-     @.specs/<id>/TASK.md
-     @.specs/<id>/<task-id>-PROGRESS.md
+     @.gantry/specs/CONTEXT.md
+     @.gantry/specs/<id>/REQUIREMENT.md
+     @.gantry/specs/<id>/TASK.md
+     @.gantry/specs/<id>/<task-id>-PROGRESS.md
      继续 task <task-id>
      ```
 
@@ -47,7 +48,7 @@
 - **R1.7 · 任务过大早期信号** 一个 task 在执行到一半就触发 R1.1 清窗 → 说明该 task 在 TASK 阶段就拆得不够细。恢复后第一动作不是继续干，而是把它在 `TASK.md` 里**就地拆为 ≥ 2 个子任务**（编号沿用 `<task-id>-1` / `<task-id>-2`），然后从最近一个未完成子任务起步。
 
 - **R1.8 · 跨任务失败检查（任何 DEV 任务进入实现前必跑）**
-  1. AI 用当前任务的 `files` + `action` 关键词 grep `.specs/LESSONS.md`
+  1. AI 用当前任务的 `files` + `action` 关键词 grep `.gantry/specs/LESSONS.md`
   2. 命中的每条 `L-NNN` 必须在执行计划里**显式声明**：
      - "已查阅 L-NNN，本次方案与之的差异是 X" 或
      - "已查阅 L-NNN，本次确认仍适用，因此不重试该方案"
@@ -59,7 +60,7 @@
   Gantry 的文件按加载策略分三类：
   | 类型 | 路径 | 长度 | 加载方式 |
   |---|---|---|---|
-  | SPEC | `.specs/<id>/*.md` | 通常 < 200 行 | 整读 OK |
+  | SPEC | `.gantry/specs/<id>/*.md` | 通常 < 200 行 | 整读 OK |
   | REFERENCE | `gantry/reference/*.md` | 75~470 行 | **禁止默认整读**，按节 grep / read offset |
   | TEMPLATE / PROMPT | `gantry/templates\|prompts/*.md` | < 150 行 | 整读 OK |
 

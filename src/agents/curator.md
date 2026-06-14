@@ -41,6 +41,6 @@ fresh_context: false
 
 ## 退出协议
 
-1. HEALTH.md 写入项目根目录或 .planning/
+1. HEALTH.md 写入.gantry/specs/health/ 或 .gantry/planning/
 2. LESSONS.md 更新（如有变更）
 3. 此为横向命令，不影响主管线状态

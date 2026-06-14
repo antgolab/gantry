@@ -43,7 +43,7 @@ for (const tool of targets) {
   for (const [relPath, content] of Object.entries(files)) {
     const full = join(outDir, relPath);
     mkdirSync(dirname(full), { recursive: true });
-    const skipBanner = relPath.startsWith('.claude/') || relPath.startsWith('agents/') || relPath === 'CLAUDE.md' || relPath === 'AGENTS.md';
+    const skipBanner = isPromptEntry(relPath);
     if (skipBanner) {
       writeFileSync(full, content);
     } else {
@@ -86,4 +86,11 @@ function insertBanner(content, banner) {
     }
   }
   return banner + content;
+}
+
+function isPromptEntry(relPath) {
+  return relPath.startsWith('.claude/')
+    || relPath.startsWith('.agents/')
+    || relPath === 'CLAUDE.md'
+    || relPath === 'AGENTS.md';
 }

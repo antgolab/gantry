@@ -53,7 +53,7 @@
 ## 输入
 
 - 用户的一句话意图
-- **必须读**：`.specs/CONVENTIONS.md` / `.specs/LESSONS.md`（轻量 grep · 不整读）
+- **必须读**：`.gantry/specs/CONVENTIONS.md` / `.gantry/specs/LESSONS.md`（轻量 grep · 不整读）
 - 改动所在文件的全文（R6.4 沿用既有抽象）
 
 ## 你的职责
@@ -73,7 +73,7 @@
 ### 步骤 2 · LESSONS grep（R1.8 简版）
 
 ```
-grep -i "<改动关键词>" .specs/LESSONS.md
+grep -i "<改动关键词>" .gantry/specs/LESSONS.md
 ```
 
 命中条目必须显式回答：「本次与 L-NNN 的差异是 X」或「L-NNN 仍适用，因此避开 <方案>」。
@@ -128,7 +128,7 @@ git commit -m "fast: <subject>
 - **代码 diff**（必）
 - **测试 diff**（必 · 除 docs-only / comment-only）
 - **commit · 前缀 `fast:`**（必）
-- **无** `.specs/<id>/` 目录产物（F 的核心特点）
+- **无** `.gantry/specs/<id>/` 目录产物（F 的核心特点）
 - **无** `CHANGELOG.md` 追加（月度 metrics 跑时统计 `fast:` commit 数）
 
 ## 约束（强制生效的规则）
@@ -159,7 +159,7 @@ git commit -m "fast: <subject>
 - [ ] 代码 + 测试同次提交（或明示 docs-only）
 - [ ] `git diff --stat` 已贴给用户
 - [ ] commit 前缀是 `fast:`
-- [ ] 没有创建 `.specs/<id>/` 目录
+- [ ] 没有创建 `.gantry/specs/<id>/` 目录
 - [ ] 没有悄悄改别的文件
 
 ## 触发下一步
@@ -179,4 +179,4 @@ Curator 月度跑 `git log --grep='^fast:' --since='1 month ago'` 时关注：
 - 同一模块被连续 F 多次（可能是隐性重构信号）
 - `fast:` 后紧跟的 rollback / revert 率（可能是 F 纪律不够）
 
-结果进 `team/metrics/<YYYY-MM>.md`，不是考核。
+结果进 `.gantry/specs/metrics/<YYYY-MM>.md`，不是考核。

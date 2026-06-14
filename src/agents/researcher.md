@@ -23,7 +23,7 @@ fresh_context: false
 
 ## 入场协议
 
-1. 读取 .planning/STATE.md 确认当前上下文
+1. 读取 .gantry/planning/STATE.md 确认当前上下文
 2. 如果是 scan：扫描项目根目录结构、package.json、配置文件
 3. 如果是 knowledge：确认研究主题和范围
 

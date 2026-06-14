@@ -59,6 +59,40 @@ export function detectConflicts(tasks) {
   };
 }
 
+/**
+ * 检测两个任务之间的资源冲突。
+ * write/write 是硬冲突；write/read 是软冲突，用于诊断和风险提示。
+ * @param {object} taskA
+ * @param {object} taskB
+ * @returns {Array<{type: string, severity: 'hard'|'soft', files: string[], reason: string}>}
+ */
+export function findResourceConflicts(taskA, taskB) {
+  const conflicts = [];
+  const writeWrite = findOverlap(taskA.writeFiles || [], taskB.writeFiles || []);
+  if (writeWrite.length > 0) {
+    conflicts.push({
+      type: 'write-write-conflict',
+      severity: 'hard',
+      files: writeWrite,
+      reason: 'tasks write overlapping files',
+    });
+  }
+
+  const aWritesBReads = findOverlap(taskA.writeFiles || [], taskB.readFiles || []);
+  const bWritesAReads = findOverlap(taskB.writeFiles || [], taskA.readFiles || []);
+  const readWrite = [...new Set([...aWritesBReads, ...bWritesAReads])];
+  if (readWrite.length > 0) {
+    conflicts.push({
+      type: 'read-write-risk',
+      severity: 'soft',
+      files: readWrite,
+      reason: 'one task reads files another task writes',
+    });
+  }
+
+  return conflicts;
+}
+
 // --- 内部辅助 ---
 
 /**

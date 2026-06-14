@@ -25,7 +25,7 @@ fresh_context: false
 
 ## 入场协议
 
-1. 读取 .planning/STATE.md 确认当前阶段
+1. 读取 .gantry/planning/STATE.md 确认当前阶段
 2. change：接收用户一句话描述
 3. requirement：读取 CHANGE.md
 4. task：读取 DESIGN.md + UI-DESIGN.md（如有）
@@ -46,7 +46,7 @@ fresh_context: false
 
 ## 退出协议
 
-1. 产出工件写入 .specs/<change-id>/
+1. 产出工件写入 .gantry/specs/<change-id>/
 2. 创建 checkpoint（human-verify）等待确认
 
 ## 强制引用规则

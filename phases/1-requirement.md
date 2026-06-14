@@ -15,8 +15,8 @@ gantry hook run before:requirement
 
 ## 输入
 
-- `@.specs/<change-id>/CHANGE.md`
-- 已有项目（如有）：`@.specs/CONTEXT.md`、`@REQUIREMENT.md`
+- `@.gantry/specs/<change-id>/CHANGE.md`
+- 已有项目（如有）：`@.gantry/specs/CONTEXT.md`、`@REQUIREMENT.md`
 
 ## 你的职责
 
@@ -31,7 +31,7 @@ gantry hook run before:requirement
 
 ### 2. 提取域语言（关键步骤）
 
-在 `@.specs/CONTEXT.md` 里**追加**或更新：
+在 `@.gantry/specs/CONTEXT.md` 里**追加**或更新：
 
 - **术语表**：本次引入的新名词，每个一句话定义
 - **已锁决策**：本次确定的偏好（例如"使用系统 prefers-color-scheme 而非应用内开关"）
@@ -47,8 +47,8 @@ gantry hook run before:requirement
 
 ## 输出
 
-- `.specs/<change-id>/REQUIREMENT.md`（必填）
-- 更新或创建 `.specs/CONTEXT.md`
+- `.gantry/specs/<change-id>/REQUIREMENT.md`（必填）
+- 更新或创建 `.gantry/specs/CONTEXT.md`
 
 ## 约束
 

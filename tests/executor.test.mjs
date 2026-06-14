@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { selectModel, escalateModel, resolveModelId } from '../src/lib/model-router.mjs';
 import { buildPromptPackage, assembleWave, assembleAllWaves } from '../src/lib/executor.mjs';
+import { scheduleWaves } from '../src/lib/tasks.mjs';
 import { writeFileSync, mkdirSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -94,6 +95,8 @@ read_files: []
     assert.ok(pkg.metadata.stage === 'dev');
     assert.deepEqual(pkg.metadata.writeFiles, ['src/feat.mjs']);
     assert.ok(typeof pkg.modelReason === 'string');
+    assert.equal(pkg.executionPlan.runtime, 'subagent');
+    assert.equal(pkg.executionPlan.isolation, 'shared-worktree');
     teardown();
   });
 
@@ -140,6 +143,78 @@ write_files: [src/pending.mjs]
     teardown();
   });
 
+  it('scheduleWaves auto-repairs unique dependency id typos in memory', () => {
+    const tasks = [
+      { id: 'T01', status: 'done', parallel: true, depends: [], writeFiles: ['src/base.mjs'], readFiles: [], estimate: 1, risk: 'medium' },
+      { id: 'T02', status: 'pending', parallel: true, depends: ['t001'], writeFiles: ['src/a.mjs'], readFiles: [], estimate: 1, risk: 'medium' },
+    ];
+    const plan = scheduleWaves(tasks);
+    assert.equal(plan.waves[0][0].id, 'T02');
+    assert.ok(plan.repairs.some(r => r.action === 'replace-dependency' && r.from === 't001' && r.to === 'T01'));
+    assert.deepEqual(tasks[1].depends, ['t001']);
+  });
+
+  it('scheduleWaves rejects unrecoverable missing dependencies with diagnostics', () => {
+    const tasks = [
+      { id: 'T01', status: 'pending', parallel: true, depends: ['T99'], writeFiles: ['src/a.mjs'], readFiles: [], estimate: 1, risk: 'medium' },
+    ];
+    assert.throws(() => scheduleWaves(tasks), /Invalid task dependencies/);
+  });
+
+  it('scheduleWaves auto-removes self and duplicate dependencies in memory', () => {
+    const tasks = [
+      { id: 'T01', status: 'done', parallel: true, depends: [], writeFiles: ['src/base.mjs'], readFiles: [], estimate: 1, risk: 'medium' },
+      { id: 'T02', status: 'pending', parallel: true, depends: ['T02', 'T01', 'T01'], writeFiles: ['src/a.mjs'], readFiles: [], estimate: 1, risk: 'medium' },
+    ];
+    const plan = scheduleWaves(tasks);
+    assert.equal(plan.waves.length, 1);
+    assert.equal(plan.waves[0][0].id, 'T02');
+    assert.ok(plan.repairs.some(r => r.action === 'remove-dependency' && r.taskId === 'T02' && r.dependency === 'T02'));
+    assert.ok(plan.repairs.some(r => r.action === 'remove-duplicate-dependency' && r.dependency === 'T01'));
+    assert.deepEqual(tasks[1].depends, ['T02', 'T01', 'T01']);
+  });
+
+  it('scheduleWaves auto-breaks a cycle only when there is one weak edge', () => {
+    const tasks = [
+      { id: 'T01', title: 'unrelated wrapper', body: 'unrelated wrapper', status: 'pending', parallel: true, depends: ['T03'], writeFiles: ['src/a.mjs'], readFiles: [], estimate: 1, risk: 'medium' },
+      { id: 'T02', title: 'consume a', body: 'consume a', status: 'pending', parallel: true, depends: ['T01'], writeFiles: ['src/b.mjs'], readFiles: ['src/a.mjs'], estimate: 1, risk: 'medium' },
+      { id: 'T03', title: 'consume b', body: 'consume b', status: 'pending', parallel: true, depends: ['T02'], writeFiles: ['src/c.mjs'], readFiles: ['src/b.mjs'], estimate: 1, risk: 'medium' },
+    ];
+    const plan = scheduleWaves(tasks);
+    assert.equal(plan.waves.length, 3);
+    assert.equal(plan.waves[0][0].id, 'T01');
+    assert.ok(plan.repairs.some(r => r.action === 'remove-dependency' && r.taskId === 'T01' && r.dependency === 'T03'));
+  });
+
+  it('scheduleWaves respects maxParallelism and keeps waves bounded', () => {
+    const tasks = Array.from({ length: 7 }, (_, i) => ({
+      id: `T0${i + 1}`,
+      status: 'pending',
+      parallel: true,
+      depends: [],
+      writeFiles: [`src/${i}.mjs`],
+      readFiles: [],
+      estimate: 1,
+      risk: 'low',
+    }));
+    const plan = scheduleWaves(tasks, { maxParallelism: 3 });
+    assert.equal(plan.waves.length, 3);
+    assert.equal(plan.waves[0].length, 3);
+    assert.equal(plan.waves[1].length, 3);
+    assert.equal(plan.waves[2].length, 1);
+  });
+
+  it('scheduleWaves keeps read/write risk in diagnostics without forcing extra waves', () => {
+    const tasks = [
+      { id: 'T01', status: 'pending', parallel: true, depends: [], writeFiles: ['src/shared.mjs'], readFiles: [], estimate: 1, risk: 'medium' },
+      { id: 'T02', status: 'pending', parallel: true, depends: [], writeFiles: ['src/other.mjs'], readFiles: ['src/shared.mjs'], estimate: 1, risk: 'medium' },
+    ];
+    const plan = scheduleWaves(tasks, { maxParallelism: 4 });
+    assert.equal(plan.waves.length, 1);
+    assert.equal(plan.waves[0].length, 2);
+    assert.ok(plan.diagnostics.some(d => d.type === 'read-write-risk'));
+  });
+
   it('buildPromptPackage reads task files for context isolation', () => {
     setup();
     mkdirSync(join(TMP, 'src'), { recursive: true });
@@ -170,7 +245,85 @@ write_files: [src/auth.mjs]
     const task = { id: 'T01', title: 'Security audit of auth module', writeFiles: ['src/auth.mjs'], readFiles: [], body: 'Security audit of auth module' };
     const pkg = buildPromptPackage(task, { specsDir: TMP, projectRoot: TMP, stage: 'dev' });
     assert.equal(pkg.model, 'deep');
-    assert.ok(pkg.modelReason.includes('security'));
+    assert.equal(pkg.agentName, 'reviewer');
+    assert.equal(pkg.executionPlan.specialization, 'security-review');
+    assert.equal(pkg.executionPlan.runtime, 'subagent');
+    assert.deepEqual(pkg.executionPlan.workflow, ['reviewer']);
+    teardown();
+  });
+
+  it('buildPromptPackage routes docs tasks to low-cost researcher documentation subagent', () => {
+    setup();
+    writeFileSync(join(TMP, 'TASK.md'), `
+<task id="T01" status="pending">
+Update README docs
+write_files: [README.md]
+</task>
+`);
+    const task = { id: 'T01', title: 'Update README docs', writeFiles: ['README.md'], readFiles: [], body: 'Update README docs', risk: 'low' };
+    const pkg = buildPromptPackage(task, { specsDir: TMP, projectRoot: TMP, stage: 'dev' });
+    assert.equal(pkg.agentName, 'researcher');
+    assert.equal(pkg.executionPlan.requestedAgent, 'writer');
+    assert.equal(pkg.executionPlan.specialization, 'documentation');
+    assert.equal(pkg.model, 'fast');
+    assert.equal(pkg.executionPlan.runtime, 'subagent');
+    assert.deepEqual(pkg.executionPlan.workflow, ['researcher']);
+    teardown();
+  });
+
+  it('assembleAllWaves marks repaired tasks for deep workflow execution', () => {
+    setup();
+    writeFileSync(join(TMP, 'TASK.md'), `
+<task id="T01" status="done">
+Base task
+write_files: [src/base.mjs]
+</task>
+<task id="T02" status="pending" depends="t001">
+Use repaired dependency
+write_files: [src/use-base.mjs]
+</task>
+`);
+    const result = assembleAllWaves(TMP, { projectRoot: TMP, stage: 'dev' });
+    const pkg = result.waves[0][0];
+    assert.ok(result.repairs.some(r => r.taskId === 'T02'));
+    assert.equal(pkg.model, 'deep');
+    assert.equal(pkg.executionPlan.runtime, 'workflow');
+    assert.ok(pkg.executionPlan.reasons.some(r => r.includes('auto-repair')));
+    teardown();
+  });
+
+  it('buildPromptPackage constrains test-engineer to reviewer test specialization', () => {
+    setup();
+    writeFileSync(join(TMP, 'TASK.md'), `
+<task id="T01" status="pending">
+Review coverage for auth flow
+write_files: [src/auth.test.mjs]
+</task>
+`);
+    const task = { id: 'T01', title: 'Review coverage for auth flow', writeFiles: ['src/auth.test.mjs'], readFiles: ['src/auth.mjs'], body: 'Review coverage for auth flow', risk: 'medium' };
+    const pkg = buildPromptPackage(task, { specsDir: TMP, projectRoot: TMP, stage: 'dev' });
+    assert.equal(pkg.executionPlan.requestedAgent, 'test-engineer');
+    assert.equal(pkg.agentName, 'reviewer');
+    assert.equal(pkg.executionPlan.specialization, 'test');
+    assert.equal(pkg.executionPlan.runtime, 'subagent');
+    teardown();
+  });
+
+  it('buildPromptPackage keeps executor security workflow within supported agents', () => {
+    setup();
+    writeFileSync(join(TMP, 'TASK.md'), `
+<task id="T01" status="pending">
+Implement auth hardening
+write_files: [src/auth.mjs, src/auth.test.mjs]
+</task>
+`);
+    const task = { id: 'T01', title: 'Implement auth hardening', writeFiles: ['src/auth.mjs', 'src/auth.test.mjs'], readFiles: [], body: 'Implement auth hardening', risk: 'high' };
+    const pkg = buildPromptPackage(task, { specsDir: TMP, projectRoot: TMP, stage: 'dev' });
+    assert.equal(pkg.agentName, 'executor');
+    assert.equal(pkg.executionPlan.specialization, 'security');
+    assert.equal(pkg.executionPlan.runtime, 'workflow');
+    assert.deepEqual(pkg.executionPlan.workflow, ['executor', 'reviewer']);
+    assert.equal(pkg.model, 'deep');
     teardown();
   });
 });

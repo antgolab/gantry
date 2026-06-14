@@ -1,7 +1,7 @@
 # TASK: <change 标题>
 
 - **Change ID**: <id>
-- **关联**: `@.specs/<id>/REQUIREMENT.md`、`@.specs/<id>/DESIGN.md`
+- **关联**: `@.gantry/specs/<id>/REQUIREMENT.md`、`@.gantry/specs/<id>/DESIGN.md`
 
 ---
 

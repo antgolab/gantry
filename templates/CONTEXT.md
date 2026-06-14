@@ -34,7 +34,7 @@
 
 按时间倒序追加：
 
-- `[YYYY-MM-DD]` <决策内容> — 来自 `@.specs/<change-id>/DESIGN.md`
+- `[YYYY-MM-DD]` <决策内容> — 来自 `@.gantry/specs/<change-id>/DESIGN.md`
 - ……
 
 ## 默认偏好（AI 在缺省时按此决策）
@@ -137,4 +137,4 @@
 
 ---
 
-> 此文件长度建议 ≤ 300 行（含 intel-scan 自动填的字段）；超出时把陈旧条目归档到 `.specs/archive/CONTEXT-history.md`。
+> 此文件长度建议 ≤ 300 行（含 intel-scan 自动填的字段）；超出时把陈旧条目归档到 `.gantry/specs/archive/CONTEXT-history.md`。

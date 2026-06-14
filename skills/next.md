@@ -11,7 +11,7 @@ stage: auto
 
 ## 执行协议
 
-1. 读取 `.planning/STATE.md` 获取当前阶段
+1. 读取 `.gantry/planning/STATE.md` 获取当前阶段
 2. 计算下一阶段（跳过 config 中 disabled 的阶段）
 3. 检查门禁（前置工件是否存在）
 4. 如果门禁通过：转换阶段，更新 STATE

@@ -18,9 +18,9 @@ gantry hook run before:test
 
 ## 输入
 
-- `@.specs/<change-id>/REQUIREMENT.md`（AC + 非功能性需求）
-- `@.specs/<change-id>/DESIGN.md`（**必读 `## 0. 技术栈选定`**——5 轮各项的工具选择必须匹配栈：JS 用 Vitest / Playwright / k6，Python 用 pytest / locust，Go 用 testing / vegeta）
-- `@.specs/<change-id>/TASK.md`
+- `@.gantry/specs/<change-id>/REQUIREMENT.md`（AC + 非功能性需求）
+- `@.gantry/specs/<change-id>/DESIGN.md`（**必读 `## 0. 技术栈选定`**——5 轮各项的工具选择必须匹配栈：JS 用 Vitest / Playwright / k6，Python 用 pytest / locust，Go 用 testing / vegeta）
+- `@.gantry/specs/<change-id>/TASK.md`
 - 各任务的 `*-SUMMARY.md`
 - 已存在的测试代码
 - `@gantry/reference/test-pyramid.md`（5 轮的工具 / 标准 / 清单）
@@ -248,7 +248,7 @@ Semgrep / CodeQL / Bandit 选一。无 high；medium 有处理记录。
 
 ## 输出
 
-- `.specs/<change-id>/TEST.md`（用 `@gantry/templates/TEST.md` 模板，含 5 轮报告段）
+- `.gantry/specs/<change-id>/TEST.md`（用 `@gantry/templates/TEST.md` 模板，含 5 轮报告段）
 - 性能 / 安全扫描的原始输出贴入或链接到附件
 
 ## 约束（强制）

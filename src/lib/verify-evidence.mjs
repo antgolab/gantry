@@ -35,7 +35,7 @@ const EVIDENCE_PATTERNS = [
 /**
  * 检查任务的验证证据是否充分
  * @param {object} task - 任务对象 { id, verify, body }
- * @param {string} specsDir - .specs/<change-id>/ 目录路径
+ * @param {string} specsDir - .gantry/specs/<change-id>/ 目录路径
  * @returns {{ passed: boolean, issues: string[] }}
  */
 export function checkEvidence(task, specsDir) {

@@ -6,8 +6,8 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
+import { PLANNING_DIR } from './paths.mjs';
 
-const PLANNING_DIR = '.planning';
 const CHECKPOINTS_DIR = 'checkpoints';
 
 /**

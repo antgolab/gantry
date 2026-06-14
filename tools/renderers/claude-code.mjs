@@ -1,5 +1,15 @@
 // Claude Code renderer
-// Produces: CLAUDE.md + .claude/commands/<name>.md (phases + orchestration commands)
+// Produces: CLAUDE.md + .claude/skills/gantry-<name>/SKILL.md
+//
+// Uses the official Claude Code Skills format (.claude/skills/<name>/SKILL.md).
+// Each skill is a folder — can hold supporting files (templates, scripts, etc).
+//
+// Strategy:
+// - Orchestration commands (skills/) that have a matching phase get the phase
+//   content appended at install time → single merged SKILL.md.
+// - Phases without a matching skill are emitted as standalone gantry-<name> skills.
+// - All entry points unified under /gantry-* (user invokes /gantry-change, etc).
+// - Source files (phases/*.md, skills/*.md) remain unchanged.
 
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -8,35 +18,79 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const systemPartial = readFileSync(join(__dirname, 'partials/patch-protocol.md'), 'utf8');
 
+// Map skill stage field → phase filename (without .md)
+const STAGE_PHASE_MAP = {
+  change: '0-change',
+  requirement: '1-requirement',
+  design: '2-design',
+  'ui-design': '2a-ui-design',
+  task: '3-task',
+  dev: '4-dev',
+  test: '5-test',
+  review: '6-review',
+  integration: '7-integration',
+  architect: 'A-architect',
+  evolve: 'A-evolve',
+  curator: 'C-curator',
+  fast: 'F-fast',
+  scan: 'I-intel-scan',
+  knowledge: 'K-knowledge',
+  restyle: 'L-restyle',
+  health: 'M-health',
+};
+
 export function render(core, commands, agents) {
   const files = {};
 
-  // Root CLAUDE.md = SYSTEM + RULES 摘要 + 命令清单 + 编排协议
   files['CLAUDE.md'] = claudeRoot(core, commands, agents);
 
-  // Phase commands: 每个 phase → 一个 .md（跳过与 flow 命令同名的）
-  const flowNames = commands ? new Set(Object.keys(commands)) : new Set();
-  for (const [name, content] of Object.entries(core.phases)) {
-    const cmdName = toCommandName(name);
-    if (flowNames.has(cmdName)) continue; // flow 命令优先，跳过同名 phase 命令
-    files[`.claude/commands/${cmdName}.md`] = claudeCommand(name, content);
+  // Build phase lookup: cmdName → { fileName, content }
+  const phaseLookup = {};
+  for (const [fileName, content] of Object.entries(core.phases)) {
+    const cmdName = toCommandName(fileName);
+    phaseLookup[cmdName] = { fileName, content };
   }
 
-  // Orchestration commands: /gantry:* 命令
+  const consumedPhases = new Set();
+
+  // Orchestration commands: reference matching phase file
   if (commands) {
     for (const [name, content] of Object.entries(commands)) {
-      files[`.claude/commands/gantry-${name}.md`] = content;
+      const { frontmatter } = splitFrontmatter(content);
+      const stage = frontmatter.stage;
+
+      let phaseFileName = null;
+      if (stage && STAGE_PHASE_MAP[stage]) {
+        const phaseCmd = toCommandName(STAGE_PHASE_MAP[stage] + '.md');
+        if (phaseLookup[phaseCmd]) {
+          phaseFileName = phaseLookup[phaseCmd].fileName;
+          consumedPhases.add(phaseCmd);
+        }
+      }
+
+      const skillName = `gantry-${name}`;
+      if (phaseFileName) {
+        files[`.claude/skills/${skillName}/SKILL.md`] = skillWithPhaseRef(skillName, content, phaseFileName);
+      } else {
+        files[`.claude/skills/${skillName}/SKILL.md`] = flowSkill(skillName, name, content);
+      }
     }
+  }
+
+  // Remaining phases → standalone skill that references the phase file
+  for (const [cmdName, { fileName }] of Object.entries(phaseLookup)) {
+    if (consumedPhases.has(cmdName)) continue;
+    if (commands && commands[cmdName]) continue;
+    const skillName = `gantry-${cmdName}`;
+    files[`.claude/skills/${skillName}/SKILL.md`] = phaseRefSkill(skillName, fileName, core.phases[fileName]);
   }
 
   return files;
 }
 
-function claudeRoot(core, commands, agents) {
-  const orchCmds = commands ? Object.keys(commands).map(name =>
-    `| \`/gantry:${name}\` | 编排命令 | \`commands/${name}.md\` |`
-  ).join('\n') : '';
+// --- CLAUDE.md ---
 
+function claudeRoot(core, commands, agents) {
   const agentList = agents ? Object.keys(agents).map(name =>
     `- **${name}**`
   ).join('\n') : '';
@@ -53,10 +107,8 @@ ${systemPartial.trim()}
 
 ## 编排协议
 
-本项目使用状态驱动的 agent 协作模式：
-- 状态文件: \`.planning/STATE.md\`
-- 配置: \`.planning/config.json\`
-- CLI: \`node <gantry>/src/cli.mjs <command>\`
+- 状态文件: \`.gantry/planning/STATE.md\`
+- 配置: \`.gantry/planning/config.json\`
 
 ### Agent 角色
 
@@ -68,54 +120,85 @@ ${agentList}
 idle → change → requirement → design → [ui-design] → task → dev → test → review → integration → idle
 \`\`\`
 
-每个阶段有门禁（前置工件必须存在）和 checkpoint（人工确认点）。
-
 ---
 
-## 可用斜杠命令
+## 可用 Skills
 
-### 编排命令 (/gantry:*)
+所有 gantry skills 位于 \`.claude/skills/gantry-*/\`。Claude 会根据 description 自动匹配，也可用 \`/gantry-<name>\` 显式调用。
 
-| 命令 | 用途 | 来源 |
-|---|---|---|
-${orchCmds}
-
-### 阶段命令（直接执行）
-
-| 命令 | 用途 | 来源 |
-|---|---|---|
-${listCommands(core.phases)}
-
-调用方式：\`/gantry:change\`、\`/change\`、\`/design\` 等。
+核心命令：\`/gantry-change\`、\`/gantry-next\`、\`/gantry-exec\`、\`/gantry-verify\`、\`/gantry-archive\`。
 `;
 }
 
-function listCommands(phases) {
-  return Object.keys(phases)
-    .map((name) => {
-      const cmd = toCommandName(name);
-      const purpose = extractTitle(phases[name]) ?? name;
-      return `| \`/${cmd}\` | ${purpose} | \`phases/${name}\` |`;
-    })
-    .join('\n');
-}
+// --- Skill file builders ---
 
-function claudeCommand(name, content) {
-  const title = extractTitle(content) ?? name;
+/**
+ * Orchestration skill that references an external phase file.
+ * The phase content lives in .gantry/core/phases/<fileName> — skill tells
+ * the agent to read it at execution time.
+ */
+function skillWithPhaseRef(skillName, skillContent, phaseFileName) {
+  const { frontmatter, body } = splitFrontmatter(skillContent);
+  const description = frontmatter.description || `gantry skill ${skillName}`;
+
+  const fmLines = [
+    `description: ${oneLine(description)}`,
+    `disable-model-invocation: true`,
+  ];
+
   return `---
-description: ${title}
-source: phases/${name}
+${fmLines.join('\n')}
 ---
 
-${content.trim()}
+${body.trim()}
+
+## 阶段执行指令
+
+读取并严格执行 \`.gantry/core/phases/${phaseFileName}\` 中的完整阶段协议。
 `;
 }
+
+/**
+ * Orchestration skill without a matching phase.
+ */
+function flowSkill(skillName, cmdName, content) {
+  const { frontmatter, body } = splitFrontmatter(content);
+  const description = frontmatter.description
+    ?? extractTitle(body)
+    ?? `gantry 编排命令 ${skillName}`;
+
+  const fmLines = [
+    `description: ${oneLine(description)}`,
+    `disable-model-invocation: true`,
+  ];
+
+  return `---
+${fmLines.join('\n')}
+---
+
+${body.trim()}
+`;
+}
+
+/**
+ * Phase without a matching skill → standalone skill that references the phase file.
+ */
+function phaseRefSkill(skillName, fileName, content) {
+  const title = extractTitle(content) ?? fileName;
+  const description = `gantry 阶段：${title}`;
+
+  return `---
+description: ${oneLine(description)}
+disable-model-invocation: true
+---
+
+读取并严格执行 \`.gantry/core/phases/${fileName}\` 中的完整阶段协议。
+`;
+}
+
+// --- Utilities ---
 
 function toCommandName(phaseFile) {
-  // 0-change.md → change
-  // 2a-ui-design.md → ui-design
-  // A-architect.md → architect
-  // K-knowledge.md → knowledge
   return phaseFile
     .replace(/\.md$/, '')
     .replace(/^\d+[a-z]?-/, '')
@@ -125,4 +208,19 @@ function toCommandName(phaseFile) {
 function extractTitle(md) {
   const m = md.match(/^#\s+(.+)$/m);
   return m ? m[1].trim() : null;
+}
+
+function splitFrontmatter(md) {
+  const m = md.match(/^---\s*\n([\s\S]*?)\n---\s*\n?([\s\S]*)$/);
+  if (!m) return { frontmatter: {}, body: md };
+  const fm = {};
+  for (const line of m[1].split('\n')) {
+    const kv = line.match(/^(\w[\w-]*):\s*(.+?)\s*$/);
+    if (kv) fm[kv[1]] = kv[2].replace(/^['"]|['"]$/g, '');
+  }
+  return { frontmatter: fm, body: m[2] };
+}
+
+function oneLine(s) {
+  return s.replace(/\s+/g, ' ').replace(/"/g, '\\"').trim();
 }

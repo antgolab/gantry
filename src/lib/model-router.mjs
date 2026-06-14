@@ -47,11 +47,15 @@ const COMPLEXITY_KEYWORDS = {
  * @returns {{ tier: ModelTier, reason: string }}
  */
 export function selectModel(task, context = {}) {
-  const { stage, pipeline, retryCount = 0 } = context;
+  const { stage, pipeline, retryCount = 0, risk } = context;
 
   // Auto-escalation on retry
   if (retryCount >= 2) {
     return { tier: 'deep', reason: 'auto-escalation after 2+ retries' };
+  }
+
+  if (risk === 'high') {
+    return { tier: 'deep', reason: 'high risk task requires deep reasoning' };
   }
 
   // Stage-based default

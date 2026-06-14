@@ -38,7 +38,7 @@ fresh_context: false
 
 ## 退出协议
 
-1. 产出工件写入 .specs/<change-id>/
+1. 产出工件写入 .gantry/specs/<change-id>/
 2. § 9 沉淀建议（如有）写入 DESIGN.md 末尾
 3. 创建 checkpoint（human-verify）等待确认
 

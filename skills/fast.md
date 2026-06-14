@@ -22,7 +22,7 @@ stage: dev
 2. 创建 fast-<slug> change-id
 3. 直接进入 dev 阶段
 4. 加载 `phases/F-fast.md`
-5. 完成后 → review → ship
+5. 完成后 → review → archive
 
 ## Agent 指令
 

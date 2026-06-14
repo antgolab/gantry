@@ -12,7 +12,7 @@
 | 检查项 | 结果 | 证据 |
 |---|---|---|
 | 每条 AC 都已实现 | ✅ / ❌ | <文件:行 或 测试名> |
-| 每条 AC 都有测试 | ✅ / ❌ | `@.specs/<id>/TEST.md#AC-N` |
+| 每条 AC 都有测试 | ✅ / ❌ | `@.gantry/specs/<id>/TEST.md#AC-N` |
 | 未引入 `out of scope` 内容 | ✅ / ❌ | |
 | 未范围蔓延（无 REQUIREMENT 外的功能） | ✅ / ❌ | |
 | 未越过 DESIGN 边界 | ✅ / ❌ | |

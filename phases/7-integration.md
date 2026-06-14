@@ -15,9 +15,9 @@ gantry hook run before:integration
 
 ## 输入
 
-- `@.specs/<change-id>/REQUIREMENT.md`
-- `@.specs/<change-id>/TEST.md`（含 UAT 脚本）
-- `@.specs/<change-id>/REVIEW.md`
+- `@.gantry/specs/<change-id>/REQUIREMENT.md`
+- `@.gantry/specs/<change-id>/TEST.md`（含 UAT 脚本）
+- `@.gantry/specs/<change-id>/REVIEW.md`
 - 当前已合并/待合并的代码
 
 ## 你的职责
@@ -38,7 +38,7 @@ gantry hook run before:integration
 > UAT-1：深色模式手动切换。请按以下步骤操作：……
 > 通过 / 失败 / 描述问题：
 
-记录每条 UAT 的结果到 `.specs/<change-id>/UAT.md`。
+记录每条 UAT 的结果到 `.gantry/specs/<change-id>/UAT.md`。
 
 ### 3. 失败诊断（自动 + 人工）
 
@@ -61,16 +61,16 @@ gantry hook run before:integration
 - 6 个月内有合理概率被再次尝试 → 提名
 - 否则不入库（避免污染）
 
-把入选的失败按 LESSONS.md 的条目格式追加到 `.specs/LESSONS.md`，编号续上 `L-NNN`，必须填齐：标签 / 关键词 / 适用栈 / 状态。
+把入选的失败按 LESSONS.md 的条目格式追加到 `.gantry/specs/LESSONS.md`，编号续上 `L-NNN`，必须填齐：标签 / 关键词 / 适用栈 / 状态。
 **复核**：扫一眼现有 active 条目，看是否有本次 change 让它们 `superseded` 或 `deprecated`，标注上。
 
 ### 5. 收尾（CLOSE）— 不在此阶段归档
 
 全部通过后：
 
-- 在 `.specs/CHANGELOG.md` 追加一行（日期 / change-id / 一句话摘要 / PR 链接 / 新增 LESSONS 条目编号）
+- 在 `.gantry/specs/CHANGELOG.md` 追加一行（日期 / change-id / 一句话摘要 / PR 链接 / 新增 LESSONS 条目编号）
 - 运行 `gantry ship` 收尾（归档到 `_archive` 并重置 STATE 到 idle）
-- **`.specs/<change-id>/` 保留在原位**；`_archive` 保存一份归档副本
+- **`.gantry/specs/<change-id>/` 保留在原位**；`_archive` 保存一份归档副本
 
 #### 5.0 收尾与归档
 
@@ -80,7 +80,7 @@ gantry hook run before:integration
 
 ```
 ✅ INTEGRATION 完成。运行 gantry ship 归档并把状态重置为 idle。
-   change 目录仍在 .specs/<change-id>/，归档副本在 .specs/_archive/<change-id>/。
+   change 目录仍在 .gantry/specs/<change-id>/，归档副本在 .gantry/specs/_archive/<change-id>/。
 
    只收尾不归档：gantry ship --no-archive
    补归档/重新归档：gantry archive <change-id>
@@ -103,27 +103,27 @@ gantry hook run before:integration
   ```
 
   N = `grep -c '^### 9\\.' DESIGN.md`，如果整段是"无架构层面沉淀建议"则 N=0，不必提示
-- **禁止**在本步直接修改 `.specs/CONTEXT.md`——它的更新统一走 `A-evolve` 或 `I-intel-scan`
+- **禁止**在本步直接修改 `.gantry/specs/CONTEXT.md`——它的更新统一走 `A-evolve` 或 `I-intel-scan`
 
 ### 6. 出 PR（可选）
 
 如果用户用 git 流水线：
 - 检查 PR 标题/正文已自动从 CHANGE.md + SUMMARY.md 拼装
 - 列出涉及的文件、AC 覆盖、UAT 结论
-- 把 `.specs/` 内的文件归类到 PR 描述（不污染代码 diff）
+- 把 `.gantry/specs/` 内的文件归类到 PR 描述（不污染代码 diff）
 
 ## 输出
 
-- `.specs/<change-id>/UAT.md`
-- 更新的 `.specs/CHANGELOG.md`
+- `.gantry/specs/<change-id>/UAT.md`
+- 更新的 `.gantry/specs/CHANGELOG.md`
 - 0~N 个 fix-plan（如有失败）
-- `gantry ship` 会把 change 副本归档到 `.specs/_archive/<change-id>/`（除非传 `--no-archive`）
+- `gantry ship` 会把 change 副本归档到 `.gantry/specs/_archive/<change-id>/`（除非传 `--no-archive`）
 
 ## 约束（强制）
 
 - **R2.6**：UAT 失败的自动重试 ≤ 3 轮
 - **R4.4**：禁止声称"通过"而没贴真实输出
-- **不在本阶段移动 / 删除 `.specs/<change-id>/`**——ship 归档只复制，源目录保留
+- **不在本阶段移动 / 删除 `.gantry/specs/<change-id>/`**——ship 归档只复制，源目录保留
 
 ## 自检
 
@@ -131,7 +131,7 @@ gantry hook run before:integration
 - [ ] 每条 UAT 都有人工通过/失败标注
 - [ ] 失败的项目都已经过最多 3 轮自动重试，超限的已暂停
 - [ ] CHANGELOG 已追加
-- [ ] `ship` 后源 `.specs/<change-id>/` 仍保留；默认存在 `_archive/<change-id>/` 副本
+- [ ] `ship` 后源 `.gantry/specs/<change-id>/` 仍保留；默认存在 `_archive/<change-id>/` 副本
 
 ## Post-hook（可选）
 

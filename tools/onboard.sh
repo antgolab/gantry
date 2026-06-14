@@ -51,12 +51,12 @@ echo "[onboard] target=$TARGET tool=$TOOL"
 ( cd "$DIST" && tar cf - . ) | ( cd "$TARGET" && tar xf - )
 echo "[onboard] copied dist/$TOOL -> $TARGET"
 
-# 2. team/*.md -> target/.specs/
-mkdir -p "$TARGET/.specs"
+# 2. team/*.md -> target/.gantry/specs/
+mkdir -p "$TARGET/.gantry/specs"
 for f in CONVENTIONS.md STATE.md LESSONS.md; do
-  if [[ -f "$TEAM/$f" && ! -f "$TARGET/.specs/$f" ]]; then
-    cp "$TEAM/$f" "$TARGET/.specs/$f"
-    echo "[onboard] seeded $TARGET/.specs/$f"
+  if [[ -f "$TEAM/$f" && ! -f "$TARGET/.gantry/specs/$f" ]]; then
+    cp "$TEAM/$f" "$TARGET/.gantry/specs/$f"
+    echo "[onboard] seeded $TARGET/.gantry/specs/$f"
   fi
 done
 

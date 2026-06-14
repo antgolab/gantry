@@ -5,12 +5,7 @@ export function render(core, commands, agents) {
   const files = {};
 
   files['.cursor/rules/00-system.mdc'] = mdc(
-    { alwaysApply: true, description: 'gantry 常驻系统规则' },
-    core.methodology,
-  );
-
-  files['.cursor/rules/99-rules.mdc'] = mdc(
-    { alwaysApply: true, description: 'gantry 硬规则 R1~R8' },
+    { alwaysApply: true, description: 'gantry 硬规则 R1~R8 + 流程概览' },
     core.rules,
   );
 

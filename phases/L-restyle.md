@@ -45,7 +45,7 @@ UI Director + Refactor Specialist。**保留功能不变**，只换视觉。
 
 ### 2. 识别现有调性（v1）
 
-**优先**：读 `.specs/_archive/<old-change-id>/UI-DESIGN.md` 或仓库里现存的 UI-DESIGN.md，提取调性字段
+**优先**：读 `.gantry/specs/_archive/<old-change-id>/UI-DESIGN.md` 或仓库里现存的 UI-DESIGN.md，提取调性字段
 **降级**（无 UI-DESIGN）：从代码反向提取
 - 扫 CSS variables / theme.ts 看主色饱和度、字体家族、圆角值
 - 按以下信号推断：
@@ -96,7 +96,7 @@ UI Director + Refactor Specialist。**保留功能不变**，只换视觉。
 
 ### 5. 写新 UI-DESIGN.md（标 v2）
 
-- 路径：`.specs/<change-id>/UI-DESIGN.md`
+- 路径：`.gantry/specs/<change-id>/UI-DESIGN.md`
 - 在 frontmatter 加：
   ```yaml
   version: 2

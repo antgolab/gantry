@@ -4,10 +4,11 @@
 
 import { readFileSync, appendFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
+import { PLANNING_DIR } from './paths.mjs';
 
 /**
  * 开工前自动查询 LESSONS.md 中与当前任务相关的条目
- * @param {string} specsDir - .specs/<change-id>/ 目录路径
+ * @param {string} specsDir - .gantry/specs/<change-id>/ 目录路径
  * @param {object} task - 任务对象 { id, title, writeFiles, body }
  * @returns {{ hits: string[], context: string }}
  */
@@ -47,7 +48,7 @@ export function queryBeforeWork(specsDir, task) {
 
 /**
  * 任务失败后记录到 LESSONS.md
- * @param {string} specsDir - .specs/<change-id>/ 目录路径
+ * @param {string} specsDir - .gantry/specs/<change-id>/ 目录路径
  * @param {object} entry - { taskId, reason, excludedApproaches, timestamp }
  */
 export function recordFailure(specsDir, { taskId, reason, excludedApproaches, timestamp }) {
@@ -65,7 +66,7 @@ export function recordFailure(specsDir, { taskId, reason, excludedApproaches, ti
 
 /**
  * --force bypass 时记录到 LESSONS.md
- * @param {string} specsDir - .specs/<change-id>/ 目录路径
+ * @param {string} specsDir - .gantry/specs/<change-id>/ 目录路径
  * @param {object} entry - { taskId, reason, timestamp }
  */
 export function recordBypass(specsDir, { taskId, reason, timestamp }) {
@@ -83,7 +84,7 @@ export function recordBypass(specsDir, { taskId, reason, timestamp }) {
 
 function resolveLessonsPath(specsDir) {
   if (!specsDir) return null;
-  // LESSONS.md lives at .specs/ level (parent of change dir)
+  // LESSONS.md lives at .gantry/specs/ level (parent of change dir)
   const parentDir = dirname(specsDir);
   const atParent = join(parentDir, 'LESSONS.md');
   if (existsSync(atParent)) return atParent;
@@ -92,8 +93,8 @@ function resolveLessonsPath(specsDir) {
   const atSpecs = join(specsDir, 'LESSONS.md');
   if (existsSync(atSpecs)) return atSpecs;
 
-  // Fallback: .planning/LESSONS.md
-  const planningDir = join(dirname(parentDir), '.planning');
+  // Fallback: .gantry/planning/LESSONS.md
+  const planningDir = join(dirname(parentDir), PLANNING_DIR);
   const atPlanning = join(planningDir, 'LESSONS.md');
   if (existsSync(atPlanning)) return atPlanning;
 

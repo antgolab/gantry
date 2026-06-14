@@ -39,6 +39,6 @@ stage: lateral
 
 ## 输出
 
-- `.specs/metrics/<YYYY-MM>.md`
-- `.specs/LESSONS.md`（状态更新）
-- `.specs/knowledge/*.md`（状态更新）
+- `.gantry/specs/metrics/<YYYY-MM>.md`
+- `.gantry/specs/LESSONS.md`（状态更新）
+- `.gantry/specs/knowledge/*.md`（状态更新）

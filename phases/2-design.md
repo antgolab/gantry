@@ -15,19 +15,19 @@ gantry hook run before:design
 
 ## 输入
 
-- `@.specs/<change-id>/REQUIREMENT.md`
-- `@.specs/<change-id>/CHANGE.md`（含项目类型与调性信息）
+- `@.gantry/specs/<change-id>/REQUIREMENT.md`
+- `@.gantry/specs/<change-id>/CHANGE.md`（含项目类型与调性信息）
 - **项目上下文文档**（从 `STATE.md` 读 `ai_context_doc` 字段决定）：
   - 有 `ai_context_doc: <path>` → 读那个文档（如 `AGENTS.md` / `CLAUDE.md`）
-  - 没 `ai_context_doc` 或 `ai_context_doc: CONTEXT.md` → 读 `@.specs/CONTEXT.md`
+  - 没 `ai_context_doc` 或 `ai_context_doc: CONTEXT.md` → 读 `@.gantry/specs/CONTEXT.md`
   - `ai_context_doc: none` → 跳过此输入（AI "盲飞"，必须在 DESIGN.md 顶部贴警告）
-- **项目级架构文档**（如存在 · brownfield 强烈推荐）：`@.specs/ARCHITECTURE.md`
+- **项目级架构文档**（如存在 · brownfield 强烈推荐）：`@.gantry/specs/ARCHITECTURE.md`
   - 重点读 `§ 2 模块清单 + 依赖规则`（决定本 change 能不能引入新模块 / 跨模块依赖）
   - 重点读 `§ 3 ADR 列表`（看本 change 是否撞已有不可逆决策——撞了必须显式说"延续 ADR-NNN"或"申请 supersede ADR-NNN"）
   - 重点读 `§ 4 跨模块契约`（本 change 改 API / 事件 / Schema 时必查）
   - 不存在则跳过；如果用户从未跑过 `A-architect` 但项目复杂度已较高，提醒一句"建议先跑 `@A-architect.md` 建立项目级架构文档"
 - `@gantry/reference/tech-stacks.md`（技术栈卡片）
-- 已有项目（如有）：`@DESIGN.md`、`@.specs/ARCHITECTURE.md`（已有时）、相关源码（按需）
+- 已有项目（如有）：`@DESIGN.md`、`@.gantry/specs/ARCHITECTURE.md`（已有时）、相关源码（按需）
 
 ## 你的职责
 
@@ -43,8 +43,8 @@ gantry hook run before:design
 
 **首次到这步的判定**：
 
-- 命中 + `.specs/ARCHITECTURE.md` 存在 → 检查 ADR 是否冲突。冲突则提示一次："⚠️ 本次设计可能 supersede ADR-NNN，请在 § 1 决策清单显式声明 supersede 关系"。**不阻塞继续**（因为用户已到 design 阶段）
-- 命中 + `.specs/ARCHITECTURE.md` 不存在 → 反问用户：
+- 命中 + `.gantry/specs/ARCHITECTURE.md` 存在 → 检查 ADR 是否冲突。冲突则提示一次："⚠️ 本次设计可能 supersede ADR-NNN，请在 § 1 决策清单显式声明 supersede 关系"。**不阻塞继续**（因为用户已到 design 阶段）
+- 命中 + `.gantry/specs/ARCHITECTURE.md` 不存在 → 反问用户：
 
   ```
   🏛️ 本次设计涉及项目级架构变更（拆模块 / 换数据库 / 改鉴权方案 / ...），但项目无 ARCHITECTURE.md。
@@ -194,7 +194,7 @@ gantry hook run before:design
 
 ## 输出
 
-- `.specs/<change-id>/DESIGN.md`（含 ## ADR 段）
+- `.gantry/specs/<change-id>/DESIGN.md`（含 ## ADR 段）
 
 ## 约束
 

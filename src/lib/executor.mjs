@@ -6,10 +6,10 @@
 
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { parseTasks, groupWaves } from './tasks.mjs';
+import { parseTasks, groupWaves, scheduleWaves } from './tasks.mjs';
 import { assemblePrompt } from './agents.mjs';
-import { selectModel } from './model-router.mjs';
 import { queryBeforeWork } from './failure-memory.mjs';
+import { planExecution } from './execution-planner.mjs';
 
 /**
  * @typedef {Object} PromptPackage
@@ -29,9 +29,9 @@ import { queryBeforeWork } from './failure-memory.mjs';
  * @returns {PromptPackage[]}
  */
 export function assembleWave(wave, options) {
-  const { specsDir, projectRoot, stage = 'dev', pipeline = 'standard' } = options;
+  const { specsDir, projectRoot, stage = 'dev', pipeline = 'standard', repairedTaskIds = new Set() } = options;
 
-  return wave.map(task => buildPromptPackage(task, { specsDir, projectRoot, stage, pipeline }));
+  return wave.map(task => buildPromptPackage(task, { specsDir, projectRoot, stage, pipeline, repairedTaskIds }));
 }
 
 /**
@@ -41,10 +41,9 @@ export function assembleWave(wave, options) {
  * @returns {PromptPackage}
  */
 export function buildPromptPackage(task, options) {
-  const { specsDir, projectRoot, stage = 'dev', pipeline = 'standard', retryCount = 0 } = options;
-
-  // Model selection
-  const { tier, reason } = selectModel(task, { stage, pipeline, retryCount });
+  const { specsDir, projectRoot, stage = 'dev', pipeline = 'standard', retryCount = 0, repairedTaskIds = new Set() } = options;
+  const repaired = repairedTaskIds.has(task.id);
+  const executionPlan = planExecution(task, { stage, pipeline, retryCount, repaired });
 
   // Assemble base prompt (includes lessonsContext)
   const assembled = assemblePrompt(stage, {
@@ -65,13 +64,14 @@ export function buildPromptPackage(task, options) {
 
   return {
     taskId: task.id,
-    agentName: assembled.agentName,
+    agentName: executionPlan.agent || assembled.agentName,
     agentDef,
     phaseFile: assembled.phaseFile,
     taskFiles,
     lessonsContext: assembled.lessonsContext || '',
-    model: tier,
-    modelReason: reason,
+    model: executionPlan.model,
+    modelReason: executionPlan.modelReason,
+    executionPlan,
     constraints: assembled.constraints,
     metadata: {
       stage,
@@ -80,13 +80,14 @@ export function buildPromptPackage(task, options) {
       taskTitle: task.title,
       writeFiles: task.writeFiles || [],
       readFiles: task.readFiles || [],
+      executionPlan,
     },
   };
 }
 
 /**
  * 从 TASK.md 加载任务并按 wave 生成全部 prompt 包
- * @param {string} specsDir - .specs/<change-id>/ 路径
+ * @param {string} specsDir - .gantry/specs/<change-id>/ 路径
  * @param {object} options - { projectRoot, stage, pipeline }
  * @returns {{ waves: PromptPackage[][], progress: object }}
  */
@@ -97,10 +98,11 @@ export function assembleAllWaves(specsDir, options = {}) {
   }
 
   const tasks = parseTasks(taskMdPath);
-  const waves = groupWaves(tasks);
+  const plan = scheduleWaves(tasks);
+  const repairedTaskIds = new Set((plan.repairs || []).map(r => r.taskId).filter(Boolean));
 
-  const promptWaves = waves.map(wave =>
-    assembleWave(wave, { ...options, specsDir })
+  const promptWaves = plan.waves.map(wave =>
+    assembleWave(wave, { ...options, specsDir, repairedTaskIds })
   );
 
   const total = tasks.length;
@@ -108,6 +110,8 @@ export function assembleAllWaves(specsDir, options = {}) {
 
   return {
     waves: promptWaves,
+    diagnostics: plan.diagnostics,
+    repairs: plan.repairs,
     progress: { total, done, pending: total - done, percent: Math.round((done / total) * 100) },
   };
 }

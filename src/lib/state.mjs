@@ -5,9 +5,9 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { PLANNING_DIR } from './paths.mjs';
 
 const STATE_FILE = 'STATE.md';
-const PLANNING_DIR = '.planning';
 
 /**
  * 默认状态结构
@@ -26,6 +26,10 @@ function defaultState() {
     retries: 0,
     maxRetries: 3,
     pauseReason: null,
+    contextUsage: {
+      tokens: null,
+      windowPercent: null,
+    },
     checkpoints: [],
     decisions: [],
   };
@@ -145,6 +149,8 @@ function parseStateMd(content) {
       case '已执行阶段数': state.stagesRun = parseInt(kv.value) || 0; break;
       case '重试计数': state.retries = parseInt(kv.value) || 0; break;
       case '暂停原因': state.pauseReason = kv.value === '—' ? null : kv.value; break;
+      case '上下文 token': state.contextUsage.tokens = kv.value === '—' ? null : parseInt(kv.value) || null; break;
+      case '窗口使用率': state.contextUsage.windowPercent = kv.value === '—' ? null : parseFloat(kv.value) || null; break;
     }
   }
 
@@ -228,6 +234,8 @@ ${checkpointRows}
 - **已执行阶段数**: \`${state.stagesRun} / ${state.maxStages}\`
 - **重试计数**: \`${state.retries} / ${state.maxRetries}\`
 - **暂停原因**: \`${state.pauseReason ?? '—'}\`
+- **上下文 token**: \`${state.contextUsage?.tokens ?? '—'}\`
+- **窗口使用率**: \`${state.contextUsage?.windowPercent ?? '—'}\`
 
 ## 决策日志（最近 10 条）
 

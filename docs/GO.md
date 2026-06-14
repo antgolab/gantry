@@ -11,7 +11,7 @@ Gantry 的文件分两类，**加载策略不同**：
 
 | 类型 | 路径 | 长度 | 加载方式 |
 |---|---|---|---|
-| **SPEC**（项目产物）| `.specs/<id>/*.md` | 通常 < 200 行 | 整读 OK |
+| **SPEC**（项目产物）| `.gantry/specs/<id>/*.md` | 通常 < 200 行 | 整读 OK |
 | **REFERENCE**（查阅型）| `gantry/reference/*.md` | 75~470 行 | **禁止默认整读**，只 grep / read offset 需要的那一节 |
 | **TEMPLATE / PROMPT** | `gantry/templates/*.md` / `gantry/phases/*.md` | < 150 行 | 整读 OK |
 
@@ -144,7 +144,7 @@ Forge adapter: detected / not detected
 
 | 文档 | 路径 | 来自哪个生态 |
 |---|---|---|
-| `CONTEXT.md` | 仓库根 / `.specs/` | Gantry 自己 |
+| `CONTEXT.md` | 仓库根 / `.gantry/specs/` | Gantry 自己 |
 | `AGENTS.md` | 仓库根 | OpenAI Codex / 标准 agents 协议 |
 | `CLAUDE.md` | 仓库根 / `.claude/` | Anthropic Claude Code |
 | `.cursor/rules/*.md` | `.cursor/` | Cursor IDE |
@@ -226,7 +226,7 @@ Gantry 后续阶段需要项目上下文给 AI 用。请选择：
 进入对应阶段前，AI 必须自行完成：
 
 - **新 CHANGE**：按 `phases/0-change.md` 的步骤 0 自动生成 `change-id`（kebab-case，2~4 词），并在第一条回复里显式声明
-- **目录不存在**：自行 `mkdir -p .specs/<id>/`，不要让用户先建
+- **目录不存在**：自行 `mkdir -p .gantry/specs/<id>/`，不要让用户先建
 - **规则加载**：若 IDE 未注入全局规则，读 `docs/RULES.md`（）
 - **检测外部扩展**（阶段 4/5/6/M 需要）：进入阶段前检查是否装了以下并在路由声明里表明走「外部路径」还是「内置回退」：
   - [`brooks-lint`](https://github.com/hyhmrright/brooks-lint)：4-dev self-review / 5-test 测试质量 / 6-review 代码质量 / M-health 巡检都会优先用
@@ -242,16 +242,16 @@ Gantry 后续阶段需要项目上下文给 AI 用。请选择：
 | 阶段 | 全读（SPEC） | 查表（REFERENCE，只读指定节） | 按需 |
 |---|---|---|---|
 | 0 / 1 | —（新建）| `gantry/reference/ui-aesthetics.md` 只查「给 AI 在 0-change 阶段展示用的标准模板」一节（仅前端项目）| — |
-| 2 | `<id>/CHANGE.md` + `<id>/REQUIREMENT.md` + `.specs/CONTEXT.md` + `.specs/ARCHITECTURE.md`（如存在 · brownfield 强烈推荐 · 重点读 § 2/§ 3/§ 4）| `gantry/reference/tech-stacks.md` 只查「适用矩阵」+ 过滤出的 5~6 张卡片 | ADR 阶段某项要深谈时再读 |
-| 2a | `<id>/CHANGE.md` + `<id>/REQUIREMENT.md` + `<id>/DESIGN.md` `## 0` 段 + `.specs/CONTEXT.md` + `gantry/reference/ui-anti-patterns.md`（仅 75 行可全读）| `gantry/reference/ui-aesthetics.md` 查「5 维度」+ 「给 AI 的模板」 | uipro / impeccable 查询（装了才调）|
-| 3 | `<id>/REQUIREMENT.md` + `<id>/DESIGN.md` + `<id>/UI-DESIGN.md`（前端项目）+ `.specs/CONTEXT.md` | — | 任务模板查询 |
-| 4 | `<id>/TASK.md`（只读当前 task 块）+ `<id>/DESIGN.md` `## 0` 段 + `<id>/UI-DESIGN.md`（UI 任务）+ `.specs/CONTEXT.md` + `.specs/LESSONS.md` | `gantry/reference/ui-anti-patterns.md`（UI 任务 · 75 行可全读）| — |
+| 2 | `<id>/CHANGE.md` + `<id>/REQUIREMENT.md` + `.gantry/specs/CONTEXT.md` + `.gantry/specs/ARCHITECTURE.md`（如存在 · brownfield 强烈推荐 · 重点读 § 2/§ 3/§ 4）| `gantry/reference/tech-stacks.md` 只查「适用矩阵」+ 过滤出的 5~6 张卡片 | ADR 阶段某项要深谈时再读 |
+| 2a | `<id>/CHANGE.md` + `<id>/REQUIREMENT.md` + `<id>/DESIGN.md` `## 0` 段 + `.gantry/specs/CONTEXT.md` + `gantry/reference/ui-anti-patterns.md`（仅 75 行可全读）| `gantry/reference/ui-aesthetics.md` 查「5 维度」+ 「给 AI 的模板」 | uipro / impeccable 查询（装了才调）|
+| 3 | `<id>/REQUIREMENT.md` + `<id>/DESIGN.md` + `<id>/UI-DESIGN.md`（前端项目）+ `.gantry/specs/CONTEXT.md` | — | 任务模板查询 |
+| 4 | `<id>/TASK.md`（只读当前 task 块）+ `<id>/DESIGN.md` `## 0` 段 + `<id>/UI-DESIGN.md`（UI 任务）+ `.gantry/specs/CONTEXT.md` + `.gantry/specs/LESSONS.md` | `gantry/reference/ui-anti-patterns.md`（UI 任务 · 75 行可全读）| — |
 | 5 | `<id>/REQUIREMENT.md` + `<id>/DESIGN.md` `## 0` 段 + `<id>/TASK.md` + 各 `*-SUMMARY.md` | `gantry/reference/test-pyramid.md` 只查「适用矩阵」+ 需要的那几轮详情 | — |
 | 6 | `<id>/REQUIREMENT.md` + `<id>/DESIGN.md` + `<id>/TASK.md` + `<id>/TEST.md` + `git diff` | `gantry/reference/ui-anti-patterns.md`（前端项目第三轮 · 75 行可全读）| — |
-| 7 | `.specs/<id>/` 全部产物 + `.specs/LESSONS.md` | — | — |
-| **M** (health) | `.specs/CONTEXT.md` + `.specs/LESSONS.md` + 最近 1 份 `.specs/health/*.md`（如有，做对比基线）| — | 抽样 5 个最近改动频繁的 src/ 模块 + 5 个测试文件 + 最近 30 天 git log |
-| **A** (evolve) | `.specs/STATE.md` + `.specs/CONTEXT.md` + `.specs/ARCHITECTURE.md`（如存在）+ 范围内每个 `.specs/_archive/<change>/DESIGN.md` 的 § 9 段（仅 § 9，非整份 DESIGN）| — | 仅扫 `last_evolve_at` 之后归档的 change，禁止越界读 § 9 以外的 DESIGN 内容 |
-| **A** (architect) | `.specs/CONTEXT.md` + `.specs/ARCHITECTURE.md`（如存在）+ `.specs/CHANGELOG.md` + `gantry/templates/ARCHITECTURE.md`（模板）| — | `src/` 顶层结构 + `package.json` / 依赖文件 + 抽样几份 `.specs/archive/*/DESIGN.md` |
+| 7 | `.gantry/specs/<id>/` 全部产物 + `.gantry/specs/LESSONS.md` | — | — |
+| **M** (health) | `.gantry/specs/CONTEXT.md` + `.gantry/specs/LESSONS.md` + 最近 1 份 `.gantry/specs/health/*.md`（如有，做对比基线）| — | 抽样 5 个最近改动频繁的 src/ 模块 + 5 个测试文件 + 最近 30 天 git log |
+| **A** (evolve) | `.gantry/specs/STATE.md` + `.gantry/specs/CONTEXT.md` + `.gantry/specs/ARCHITECTURE.md`（如存在）+ 范围内每个 `.gantry/specs/_archive/<change>/DESIGN.md` 的 § 9 段（仅 § 9，非整份 DESIGN）| — | 仅扫 `last_evolve_at` 之后归档的 change，禁止越界读 § 9 以外的 DESIGN 内容 |
+| **A** (architect) | `.gantry/specs/CONTEXT.md` + `.gantry/specs/ARCHITECTURE.md`（如存在）+ `.gantry/specs/CHANGELOG.md` + `gantry/templates/ARCHITECTURE.md`（模板）| — | `src/` 顶层结构 + `package.json` / 依赖文件 + 抽样几份 `.gantry/specs/archive/*/DESIGN.md` |
 
 ### 查 reference 某一节的实际动作示例
 
@@ -285,9 +285,9 @@ read_file path="gantry/reference/tech-stacks.md" offset=380 limit=60
 ✅ 路由：2-design
 ✅ Change-ID：companion-platform
 ✅ 已加载：
-   - .specs/companion-platform/CHANGE.md（全读，52 行）
-   - .specs/companion-platform/REQUIREMENT.md（全读，98 行）
-   - .specs/CONTEXT.md（全读，41 行）
+   - .gantry/specs/companion-platform/CHANGE.md（全读，52 行）
+   - .gantry/specs/companion-platform/REQUIREMENT.md（全读，98 行）
+   - .gantry/specs/CONTEXT.md（全读，41 行）
    - gantry/reference/tech-stacks.md（仅查「适用矩阵」，line 380-405，提取出 5 张候选卡）
 ✅ 未加载：ui-aesthetics.md / test-pyramid.md / ui-anti-patterns.md（后面阶段才需）
 ✅ 第一动作：按 2-design 步骤 0，列 5 张技术栈卡片 + 推荐 + 排除，等用户选定后才出 ADR。

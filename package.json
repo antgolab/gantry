@@ -8,6 +8,8 @@
   },
   "files": [
     "src/",
+    "tools/lib/",
+    "tools/renderers/",
     "phases/",
     "skills/",
     "templates/",
@@ -26,7 +28,16 @@
     "metrics": "node tools/metrics.mjs",
     "prepublishOnly": "npm run build && npm run verify"
   },
-  "keywords": ["ai", "workflow", "agent", "orchestration", "claude", "codex", "phase-gate", "artifact-driven"],
+  "keywords": [
+    "ai",
+    "workflow",
+    "agent",
+    "orchestration",
+    "claude",
+    "codex",
+    "phase-gate",
+    "artifact-driven"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",

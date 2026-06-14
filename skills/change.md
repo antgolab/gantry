@@ -12,12 +12,12 @@ checkpoint: human-verify
 
 ## 执行协议
 
-1. 读取 `.planning/STATE.md`，确认无活跃 change
+1. 读取 `.gantry/planning/STATE.md`，确认无活跃 change
 2. 接收用户描述（一句话需求）
 3. 生成 change-id（slugify 描述）
-4. 创建 `.specs/<change-id>/` 目录
+4. 创建 `.gantry/specs/<change-id>/` 目录
 5. 加载 `phases/0-change.md` 执行完整流程
-6. 产出 `.specs/<change-id>/CHANGE.md`
+6. 产出 `.gantry/specs/<change-id>/CHANGE.md`
 7. 更新 STATE.md（stage=change, agent=planner）
 8. 创建 checkpoint（human-verify）等待确认
 

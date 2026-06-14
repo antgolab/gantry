@@ -18,7 +18,7 @@ stage: auto
 
 ### 1. 读取中断状态
 
-读 `.planning/STATE.md`，提取：
+读 `.gantry/planning/STATE.md`，提取：
 - `currentStage` — 中断在哪个阶段
 - `activeChange` — 哪个 change
 - `currentTask` — 哪个 task（如果在 dev 阶段）
@@ -34,7 +34,7 @@ stage: auto
 
 ### 3. 检查 PROGRESS.md（task 中断时）
 
-如果存在 `.specs/<change-id>/<task-id>-PROGRESS.md`：
+如果存在 `.gantry/specs/<change-id>/<task-id>-PROGRESS.md`：
 1. 读「已排除的方案」— 确认接下来的计划不撞车
 2. 读「当前正在做」— 确定续接点
 3. 读「待确认的假设」— 如有未解决项，先向用户确认

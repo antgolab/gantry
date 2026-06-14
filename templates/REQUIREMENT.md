@@ -1,7 +1,7 @@
 # REQUIREMENT: <change 标题>
 
 - **Change ID**: <id>
-- **关联**: `@.specs/<id>/CHANGE.md`、`@.specs/CONTEXT.md`
+- **关联**: `@.gantry/specs/<id>/CHANGE.md`、`@.gantry/specs/CONTEXT.md`
 
 ---
 

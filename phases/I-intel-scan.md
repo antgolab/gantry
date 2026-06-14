@@ -13,11 +13,11 @@
 ## 输入
 
 - 项目根目录（grep / find / read 各种探针）
-- 不需要 `.specs/` 任何文件（这是入场前命令）
+- 不需要 `.gantry/specs/` 任何文件（这是入场前命令）
 
 ## 输出
 
-- `templates/CONTEXT.md` 填好的版本，写到仓库根 `CONTEXT.md`（或 `.specs/CONTEXT.md`）
+- `templates/CONTEXT.md` 填好的版本，写到仓库根 `CONTEXT.md`（或 `.gantry/specs/CONTEXT.md`）
 - `STATE.md` 的 `last_intel_scan: <YYYY-MM-DD>` 字段更新
 
 ## 步骤
@@ -32,7 +32,7 @@
 
 | 文档 | 路径 | 来自哪个生态 |
 |---|---|---|
-| `CONTEXT.md` | 仓库根 / `.specs/` | Gantry 自己 |
+| `CONTEXT.md` | 仓库根 / `.gantry/specs/` | Gantry 自己 |
 | `AGENTS.md` | 仓库根 | OpenAI Codex / 标准 agents 协议 |
 | `CLAUDE.md` | 仓库根 / `.claude/` | Anthropic Claude Code |
 | `.cursor/rules/*.md` | `.cursor/` | Cursor IDE |

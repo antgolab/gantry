@@ -6,10 +6,6 @@ export function render(core, commands, agents) {
 
   files['.github/copilot-instructions.md'] = `# Copilot instructions · gantry
 
-${core.methodology.trim()}
-
----
-
 ${core.rules.trim()}
 
 ---
@@ -22,7 +18,7 @@ ${core.rules.trim()}
 |---|---|
 ${Object.keys(core.phases).map((n) => `| \`${toPromptSlug(n)}\` | \`phases/${n}\` |`).join('\n')}
 
-查完整规则与方法论：\`docs/RULES.md\` · \`docs/METHODOLOGY.md\`。
+查完整方法论：\`docs/METHODOLOGY.md\`。
 `;
 
   for (const [name, content] of Object.entries(core.phases)) {

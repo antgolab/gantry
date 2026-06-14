@@ -7,7 +7,7 @@ stage: current
 
 # /gantry:revise
 
-`revise` 已降级为兼容入口。持续修订的主路径是 `/gantry:adjust` / `gantry adjust "<发生了什么>"`，并通过 `.specs/<change-id>/PATCH.md` 做闭环。
+`revise` 已降级为兼容入口。持续修订的主路径是 `/gantry:adjust` / `gantry adjust "<发生了什么>"`，并通过 `.gantry/specs/<change-id>/PATCH.md` 做闭环。
 
 ## 用法
 
@@ -26,6 +26,6 @@ stage: current
 ## 新主路径
 
 1. 调用 `gantry adjust "<发生了什么>"`
-2. 在 `.specs/<change-id>/PATCH.md` 查看或补充「变更记录」和「必须更新」
+2. 在 `.gantry/specs/<change-id>/PATCH.md` 查看或补充「变更记录」和「必须更新」
 3. 完成阶段工作后勾选对应检查项
-4. `gantry next` / `gantry ship` 会检查 patch 是否闭环
+4. `gantry next` / `gantry archive` 会检查 patch 是否闭环

@@ -15,9 +15,9 @@ gantry hook run before:task
 
 ## 输入
 
-- `@.specs/<change-id>/REQUIREMENT.md`
-- `@.specs/<change-id>/DESIGN.md`（**必读 `## 0. 技术栈选定`**——任务的 verify 命令、依赖管理、目录结构必须按选定的栈写）
-- `@.specs/CONTEXT.md`
+- `@.gantry/specs/<change-id>/REQUIREMENT.md`
+- `@.gantry/specs/<change-id>/DESIGN.md`（**必读 `## 0. 技术栈选定`**——任务的 verify 命令、依赖管理、目录结构必须按选定的栈写）
+- `@.gantry/specs/CONTEXT.md`
 
 ## 你的职责
 
@@ -106,7 +106,7 @@ Wave 3:            T05 (depends on T03, T04)
 
 ## 输出
 
-- `.specs/<change-id>/TASK.md`，包含所有任务的 XML 块 + 波次划分图
+- `.gantry/specs/<change-id>/TASK.md`，包含所有任务的 XML 块 + 波次划分图
 
 ## 约束（强制）
 

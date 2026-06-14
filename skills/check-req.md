@@ -20,7 +20,7 @@ stage: change
 ## 输入
 
 - 目标文件内容（CHANGE.md / PRD / 需求文档）
-- 如有：`@.specs/CONTEXT.md`（术语表 + 已锁业务决策）
+- 如有：`@.gantry/specs/CONTEXT.md`（术语表 + 已锁业务决策）
 - 如有：既有 REQUIREMENT.md 中与本次需求相关的业务约束
 
 ## 你的角色

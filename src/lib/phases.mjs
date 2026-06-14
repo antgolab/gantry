@@ -66,7 +66,7 @@ export const STAGE_ARTIFACTS = {
 /**
  * 检查阶段门禁是否满足
  * @param {string} targetStage - 目标阶段
- * @param {string} specsDir - .specs/<change-id>/ 目录
+ * @param {string} specsDir - .gantry/specs/<change-id>/ 目录
  * @param {object} config - 项目配置
  * @param {object} [state] - 当前状态
  * @returns {{ passed: boolean, reason?: string, skipReason?: string }}
