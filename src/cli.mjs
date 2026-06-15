@@ -12,9 +12,11 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
-import { readState, writeState, updateState } from './lib/state.mjs';
-import { STAGES, getNextStage } from './lib/phases.mjs';
+import { readState, writeState, updateState, transitionStage } from './lib/state.mjs';
+import { STAGES, getNextStage, checkGate, PHASE_FILES } from './lib/phases.mjs';
 import { PLANNING_DIR, SPECS_DIR, specsPath } from './lib/paths.mjs';
+import { route, checkUpgrade } from './lib/router.mjs';
+import { parseTasks, getProgress } from './lib/tasks.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -50,7 +52,7 @@ const SKILL_DIRS = [
 const [,, command, ...args] = process.argv;
 
 const commands = {
-  init, status, change, install, uninstall, archive, unarchive, version,
+  init, status, change, next, install, uninstall, archive, unarchive, version,
   help,
 };
 
@@ -206,13 +208,26 @@ function status(args) {
     }
   }
 
+  // 任务进度（dev 阶段且有 TASK.md 时显示）
+  if (state.activeChange && state.currentStage === 'dev') {
+    const taskFile = join(projectRoot, SPECS_DIR, state.activeChange, 'TASK.md');
+    if (existsSync(taskFile)) {
+      const tasks = parseTasks(taskFile);
+      const prog = getProgress(tasks);
+      if (prog.total > 0) {
+        const bar = '█'.repeat(Math.round(prog.percent / 10)) + '░'.repeat(10 - Math.round(prog.percent / 10));
+        console.log(`\n任务进度: [${bar}] ${prog.done}/${prog.total} (${prog.percent}%)`);
+      }
+    }
+  }
+
   // 提示下一步
   if (state.currentStage === 'idle') {
     console.log(`\n下一步: gantry change "<描述>"`);
   } else {
-    const next = getNextStage(state.currentStage, readConfig(projectRoot));
-    if (next) {
-      console.log(`\n下一阶段: ${next}`);
+    const nextSt = getNextStage(state.currentStage, readConfig(projectRoot));
+    if (nextSt) {
+      console.log(`\n下一步: gantry next  →  ${nextSt}`);
     }
   }
 }
@@ -278,6 +293,15 @@ function change(args) {
     process.exit(1);
   }
 
+  // 智能路由：意图识别 → 管线深度选择
+  const flagPipeline = getFlag(args, '--pipeline');
+  let pipeline = flagPipeline || 'full';
+  let routeInfo = null;
+  if (!flagPipeline) {
+    routeInfo = route(description, { projectRoot });
+    pipeline = routeInfo.pipeline;
+  }
+
   // 生成 change-id
   const changeId = slugify(description);
   const specsDir = join(projectRoot, SPECS_DIR, changeId);
@@ -285,12 +309,17 @@ function change(args) {
 
   // 更新状态
   updateState(projectRoot, {
+    pipeline,
     activeChange: changeId,
     currentStage: 'change',
     activeAgent: 'planner',
   });
 
   console.log(`✓ 变更已创建: ${changeId}`);
+  if (routeInfo) {
+    console.log(`  路由: ${routeInfo.scale} → ${pipeline} (${routeInfo.rationale})`);
+  }
+  console.log(`  管线: ${pipeline}`);
   console.log(`  工件目录: ${specsPath(changeId)}/`);
   console.log(`  当前阶段: change (变更提案)`);
   console.log(`\n请执行阶段 0 (CHANGE):`);
@@ -309,6 +338,84 @@ function change(args) {
 
 
 
+
+/**
+ * gantry next — 执行门禁检查并推进到下一个阶段
+ *
+ * 这是管线循环的推进算子：
+ *   检查目标阶段的前置工件 → 通过则转换 → 失败则增加重试计数
+ *   超过 maxRetries 时拒绝自动推进，要求人工决策（--force 可强制跳过，写入 timeline）
+ */
+function next(args) {
+  const projectRoot = process.cwd();
+  ensureInit(projectRoot);
+
+  const state = readState(projectRoot);
+
+  if (state.currentStage === 'idle') {
+    console.log('当前无活跃变更。运行 gantry change "<描述>" 开始。');
+    return;
+  }
+  if (state.currentStage === 'integration') {
+    console.log('已在 integration 阶段。运行 gantry archive 完成变更。');
+    return;
+  }
+
+  const config = readConfig(projectRoot);
+  const nextStage = getNextStage(state.currentStage, config);
+  if (!nextStage) {
+    console.log(`阶段 ${state.currentStage} 没有后续阶段。`);
+    return;
+  }
+
+  const specsDir = join(projectRoot, SPECS_DIR, state.activeChange);
+  const gateResult = checkGate(nextStage, specsDir, config, state);
+
+  if (!gateResult.passed) {
+    const newRetries = state.retries + 1;
+    updateState(projectRoot, { retries: newRetries, pauseReason: gateResult.reason });
+
+    if (newRetries > state.maxRetries && !args.includes('--force')) {
+      console.error(`规则 R2 触发：门禁已连续失败 ${state.retries} 次（上限 ${state.maxRetries}），需要人工决策。`);
+      console.error(`  原因: ${gateResult.reason}`);
+      console.error(`  使用 --force 强制跳过（绕过行为会写入 timeline）`);
+      process.exit(1);
+    }
+
+    if (args.includes('--force')) {
+      console.log(`⚠  门禁强制跳过 [${newRetries}/${state.maxRetries}]: ${gateResult.reason}`);
+    } else {
+      console.error(`✗ 门禁未通过 [${newRetries}/${state.maxRetries}]: ${gateResult.reason}`);
+      console.error(`  完成工件后重新运行 gantry next`);
+      process.exit(1);
+    }
+  }
+
+  // 运行时升级检查：如果 TASK.md 已存在，检查任务数是否超过当前管线阈值
+  if (nextStage === 'dev' && state.activeChange) {
+    const taskFile = join(specsDir, 'TASK.md');
+    if (existsSync(taskFile)) {
+      const tasks = parseTasks(taskFile);
+      const { upgraded, newPipeline, reason } = checkUpgrade(config.pipeline || state.pipeline, tasks.length);
+      if (upgraded) {
+        updateState(projectRoot, { pipeline: newPipeline });
+        console.log(`  管线升级: ${state.pipeline} → ${newPipeline} (${reason})`);
+      }
+    }
+  }
+
+  transitionStage(projectRoot, state.currentStage, nextStage);
+
+  if (gateResult.skipReason) {
+    console.log(`  ⚠  ${gateResult.skipReason}`);
+  }
+
+  const phaseFile = PHASE_FILES[nextStage];
+  console.log(`✓ ${state.currentStage} → ${nextStage}`);
+  if (phaseFile) {
+    console.log(`  执行: phases/${phaseFile}`);
+  }
+}
 
 /**
  * gantry install [--tool T] [--init] [-g|--global]
@@ -631,7 +738,10 @@ function help() {
   status              查看当前状态
     --json              输出 JSON 格式
 
-  change "<描述>"     开始新变更（从描述生成 change-id）
+  change "<描述>"     开始新变更（自动路由管线深度）
+
+  next                执行门禁检查并推进到下一个阶段
+    --force             跳过未通过的门禁（绕过行为写入 timeline）
 
   archive             收尾并归档当前 change（仅 integration 阶段可用）
     --force             跳过阶段检查强制收尾

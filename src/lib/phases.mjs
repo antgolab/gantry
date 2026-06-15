@@ -3,8 +3,9 @@
  * 零依赖，纯 Node.js
  */
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { parseTasks, allTasksDone } from './tasks.mjs';
 
 // 固定管线阶段定义
 export const STAGES = {
@@ -129,8 +130,15 @@ function checkAllTasksDone(specsDir) {
   if (!existsSync(taskFile)) {
     return { passed: false, reason: '缺少 TASK.md' };
   }
-  // TODO: 解析 TASK.md XML 检查所有 task status="done"
-  return { passed: true };
+  const tasks = parseTasks(taskFile);
+  if (tasks.length === 0) {
+    return { passed: false, reason: 'TASK.md 中没有解析到任务' };
+  }
+  if (allTasksDone(tasks)) {
+    return { passed: true };
+  }
+  const pending = tasks.filter(t => t.status !== 'done').map(t => t.id);
+  return { passed: false, reason: `任务未全部完成: ${pending.join(', ')}` };
 }
 
 function checkReviewPassed(specsDir) {
@@ -138,6 +146,12 @@ function checkReviewPassed(specsDir) {
   if (!existsSync(reviewFile)) {
     return { passed: false, reason: '缺少 REVIEW.md' };
   }
-  // TODO: 解析 REVIEW.md 检查是否通过
-  return { passed: true };
+  const content = readFileSync(reviewFile, 'utf-8');
+  if (/\b(BLOCKED|REJECTED|阻塞|驳回)\b/i.test(content)) {
+    return { passed: false, reason: 'REVIEW.md 存在阻塞标记，需修复后推进' };
+  }
+  if (/\b(APPROVED|PASSED|通过)\b/i.test(content)) {
+    return { passed: true };
+  }
+  return { passed: true, skipReason: 'REVIEW.md 未见明确通过标记，请确认审查已完成' };
 }
