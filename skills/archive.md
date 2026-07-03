@@ -3,7 +3,7 @@ name: gantry:archive
 description: 完成当前 change 收尾并归档
 agent: integrator
 stage: integration
-checkpoint: human-verify
+checkpoint: approval
 ---
 
 # /gantry:archive
@@ -32,7 +32,6 @@ CLI 行为：
 
 ## 与其他命令的关系
 
-- `ship`：兼容入口，执行同一套 archive 逻辑
 - `adjust`：对当前活跃 change 打开或追加 `PATCH.md`，不直接读写归档
 - `unarchive`：把归档恢复到 `.gantry/specs/<id>/` 并重新激活 change
 

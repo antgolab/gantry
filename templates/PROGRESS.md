@@ -47,6 +47,6 @@
 1. 读完本文件「已排除的方案」
 2. 检查接下来计划的方案是否撞车（R1.6）
 3. 如果不撞车，从「当前正在做」的下一步起步
-4. 完成本任务后，删除本 PROGRESS.md（产出迁移到 SUMMARY.md）
+4. 完成本任务后，删除本 PROGRESS.md（产出迁移到 `EXECUTION.md`；例外任务同步迁移到 `SUMMARY.md`）
 
-> PROGRESS.md 是**临时**文件，任务完成后必须清理；SUMMARY.md 才是长期归档。
+> PROGRESS.md 是**临时**文件，任务完成后必须清理；默认长期归档在 `EXECUTION.md`，仅例外任务保留 `SUMMARY.md`。

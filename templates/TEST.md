@@ -1,7 +1,7 @@
 # TEST: <change 标题>
 
 - **Change ID**: <id>
-- **关联**: `@.gantry/specs/<id>/REQUIREMENT.md`、`@gantry/reference/test-pyramid.md`
+- **关联**: `@.gantry/specs/<id>/SPEC.md`（兼容期接受 `REQUIREMENT.md`）、`@gantry/reference/test-pyramid.md`
 - **项目类型**: <Web 前端 / 后端 API / 全栈 / 移动 / CLI / 库>
 
 ---
@@ -99,7 +99,7 @@
 
 > 跳过则整段标 N/A 并说明理由。
 
-### 2.1 性能预算（来自 REQUIREMENT.md 非功能性需求）
+### 2.1 性能预算（来自 `SPEC.md` 非功能性需求）
 
 ```yaml
 frontend:

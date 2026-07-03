@@ -649,17 +649,17 @@
             <div class="layer-item">/gantry:change</div>
             <div class="layer-item">/gantry:next</div>
             <div class="layer-item">/gantry:exec</div>
-            <div class="layer-item">/gantry:ship</div>
+            <div class="layer-item">/gantry:archive</div>
           </div>
         </div>
         <div class="arch-arrow">↕</div>
         <div class="arch-layer l2">
           <div class="layer-title">CLI 状态机层</div>
           <div class="layer-items">
+            <div class="layer-item">gantry status</div>
             <div class="layer-item">gantry change</div>
             <div class="layer-item">gantry next</div>
-            <div class="layer-item">gantry exec</div>
-            <div class="layer-item">gantry ship</div>
+            <div class="layer-item">gantry archive</div>
           </div>
         </div>
         <div class="arch-arrow">↕</div>
@@ -686,11 +686,11 @@
       <div class="artifact-tree">
         <div class="dir">.gantry/specs/my-feature/</div>
         <div class="indent">
-          <div class="file"><span class="fname">CHANGE.md</span><span class="fdesc">变更动机 · 影响面评估</span></div>
-          <div class="file"><span class="fname">REQUIREMENT.md</span><span class="fdesc">AC Given/When/Then · v1·v2·out</span></div>
+          <div class="file"><span class="fname">PROPOSAL.md</span><span class="fdesc">变更动机 · 影响面评估</span></div>
+          <div class="file"><span class="fname">SPEC.md</span><span class="fdesc">AC Given/When/Then · v1·v2·out</span></div>
           <div class="file"><span class="fname">DESIGN.md</span><span class="fdesc">技术决策 · ADR · 风险矩阵</span></div>
-          <div class="file"><span class="fname">TASK.md</span><span class="fdesc">原子任务 · 并行波次 · verify</span></div>
-          <div class="file"><span class="fname">T01-SUMMARY.md</span><span class="fdesc">完成报告 · verify 输出 · 决策偏离</span></div>
+          <div class="file"><span class="fname">TASKS.md</span><span class="fdesc">原子任务 · 并行波次 · verify</span></div>
+          <div class="file"><span class="fname">EXECUTION.md</span><span class="fdesc">change 级完成报告 · verify 输出 · 决策偏离</span></div>
           <div class="file"><span class="fname">TEST.md</span><span class="fdesc">5 轮测试金字塔</span></div>
           <div class="file"><span class="fname">REVIEW.md</span><span class="fdesc">双轮审查 · 跨模型 spot-check</span></div>
         </div>
@@ -747,7 +747,7 @@
       </div>
       <div class="mech-row">
         <div class="mech-cell label">知识库 + 月度维护</div>
-        <div class="mech-cell how">LESSONS.md UAT 提名，C-curator 月度整理 + 过期检测</div>
+        <div class="mech-cell how">LESSONS.md UAT 提名，knowledge curate 月度整理 + 过期检测</div>
         <div class="mech-cell why">知识流失 · 踩坑经验无法复用</div>
       </div>
       <div class="mech-row">
@@ -757,7 +757,7 @@
       </div>
       <div class="mech-row">
         <div class="mech-cell label">入场扫描护栏</div>
-        <div class="mech-cell how">intel-scan 生成 CONTEXT.md，DESIGN 强制对齐既有架构</div>
+        <div class="mech-cell how">context scan 生成 CONTEXT.md，DESIGN 强制对齐既有架构</div>
         <div class="mech-cell why">范围侵蚀 · 新代码破坏既有抽象</div>
       </div>
     </div>
@@ -794,7 +794,7 @@
         <tr>
           <td>接手老项目，需要快速建立 AI 上下文</td>
           <td><span class="badge yes">✓ 主力场景</span></td>
-          <td>I-intel-scan Brownfield 护栏专为此设计</td>
+          <td>context scan Brownfield 护栏专为此设计</td>
         </tr>
         <tr>
           <td>个人长期项目，不想每次从头讲上下文</td>
@@ -845,7 +845,7 @@
           <br />
           <span class="comment"># 自动生成：</span><br />
           <span class="comment"># .gantry/planning/STATE.md</span><br />
-          <span class="comment"># .claude/commands/gantry:*.md</span><br />
+          <span class="comment"># .claude/skills/gantry-*/SKILL.md</span><br />
           <span class="comment"># CLAUDE.md Gantry 规则块</span>
         </div>
       </div>
@@ -857,7 +857,7 @@
           /gantry:change <span class="str">"给订单列表加导出功能"</span><br />
           /gantry:next<br />
           /gantry:exec<br />
-          /gantry:ship
+          /gantry:archive
         </div>
       </div>
       <div class="qs-card">
@@ -865,7 +865,7 @@
         <h3>老项目入场扫描</h3>
         <div class="code-block">
           <span class="comment"># 仅首次，生成 CONTEXT.md</span><br />
-          <span class="cmd">gantry</span> intel-scan<br />
+          /gantry-context scan<br />
           <br />
           <span class="comment"># 之后正常走流程</span><br />
           <span class="cmd">gantry</span> change <span class="str">"描述需求"</span>
@@ -1013,7 +1013,7 @@
       <div style="padding:24px 26px;border:1px solid var(--border);border-radius:var(--r-lg);background:var(--surface);">
         <div style="font-family:var(--mono);font-size:11px;color:var(--cyan);margin-bottom:8px;">P3</div>
         <div style="font-size:14.5px;font-weight:600;color:var(--text-bright);margin-bottom:8px;">任务必带 verify 命令</div>
-        <div style="font-size:13.5px;color:var(--text-dim);">TASK.md 每项含可执行验证命令，不允许声称"完成"而没跑过。</div>
+        <div style="font-size:13.5px;color:var(--text-dim);">TASKS.md 每项含可执行验证命令，不允许声称"完成"而没跑过。</div>
       </div>
       <div style="padding:24px 26px;border:1px solid var(--border);border-radius:var(--r-lg);background:var(--surface);">
         <div style="font-family:var(--mono);font-size:11px;color:var(--cyan);margin-bottom:8px;">P4</div>

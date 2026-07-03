@@ -17,7 +17,7 @@ stage: dev
 
 ## 执行协议
 
-1. 读取 TASK.md 中对应任务的 verify 字段
+1. 读取 `TASKS.md` 中对应任务的 verify 字段（兼容期接受 `TASK.md`）
 2. 执行 verify 命令
 3. 报告结果（通过/失败）
 4. 如果失败：提示修复方向

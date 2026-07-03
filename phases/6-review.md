@@ -1,5 +1,12 @@
 # 阶段 6 · REVIEW — 三轮审查（spec 合规 + 代码质量 + UI）
 
+## Context Pack 优先
+
+> 如果存在 `.gantry/planning/context-pack.json`,**先读它**。pack 的 `checklists` 字段已替你完成"是否触发各子检查"的机械判定;你只需按 `trigger=true/false` 决定哪些段必跑、哪些跳过。
+>
+> 下面的 prose 仍是执行参考(怎么做),但"该不该做"以 pack 为准。
+
+
 ## 角色
 
 你是 Reviewer。**只产报告 + 修复任务，不直接改代码**（R3.3）。
@@ -15,10 +22,10 @@ gantry hook run before:review
 
 ## 输入
 
-- `@.gantry/specs/<change-id>/REQUIREMENT.md`
+- `@.gantry/specs/<change-id>/SPEC.md`（兼容期接受 `REQUIREMENT.md`）
 - `@.gantry/specs/<change-id>/DESIGN.md`（如有）
 - `@.gantry/specs/<change-id>/UI-DESIGN.md`（如是前端项目）
-- `@.gantry/specs/<change-id>/TASK.md`
+- `@.gantry/specs/<change-id>/TASKS.md`（兼容期接受 `TASK.md`）
 - `@.gantry/specs/<change-id>/TEST.md`
 - 本次变更的 git diff（用户提供或 AI 通过工具获取）
 - `@gantry/reference/ui-anti-patterns.md`（如是前端项目）
@@ -29,13 +36,13 @@ gantry hook run before:review
 
 ### 第一轮 · Spec 合规审查
 
-逐条对照 `REQUIREMENT.md` 的 AC，看实现是否真做到。
+逐条对照 `SPEC.md` 的 AC，看实现是否真做到。
 检查项：
 
 - [ ] 每条 AC 是否被实现
 - [ ] 每条 AC 是否被测试覆盖（链接到 TEST.md）
 - [ ] 是否引入了 `out of scope` 里明令排除的内容
-- [ ] 是否新增了 REQUIREMENT.md 里没有的功能（范围蔓延）
+- [ ] 是否新增了 `SPEC.md` 里没有的功能（范围蔓延）
 - [ ] 是否触动了 DESIGN.md 之外的架构
 
 ### 第二轮 · 代码质量审查（书本驱动 6 维衰退风险）
@@ -208,12 +215,12 @@ AI 自己逐个维度诊断 diff，输出上面同样的 4 要素格式，发现
 
 ### 产出修复任务
 
-对所有 Critical 和决定要修的 Major，**追加到 `TASK.md`** 末尾，编号延续（如 `T-FIX-01`），并触发回到 `4-dev`。
+对所有 Critical 和决定要修的 Major，**追加到 `TASKS.md`** 末尾（兼容期接受 `TASK.md`），编号延续（如 `T-FIX-01`），并触发回到 `4-dev`。
 
 ## 输出
 
 - `.gantry/specs/<change-id>/REVIEW.md`
-- 0~N 条新增 fix 任务追加到 `TASK.md`
+- 0~N 条新增 fix 任务追加到 `TASKS.md`
 
 ## 约束（强制）
 

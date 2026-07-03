@@ -13,13 +13,13 @@ stage: auto
 
 - `/gantry:auto` — 默认推进 3 个阶段
 - `/gantry:auto --stages 5` — 推进 5 个阶段
-- `/gantry:auto --trust` — 全信任模式，跳过所有 human-verify checkpoint，一路执行到管线结束
+- `/gantry:auto --trust` — 全信任模式，跳过所有 `approval` checkpoint，一路执行到管线结束
 
 ## 模式对比
 
 | 模式 | 暂停条件 | 适用场景 |
 |---|---|---|
-| 标准（默认） | human-verify checkpoint / 门禁阻塞 / 达到 maxStages | 团队协作、需要审计 |
+| 标准（默认） | `approval` checkpoint / 门禁阻塞 / 达到 maxStages | 团队协作、需要审计 |
 | 全信任 `--trust` | 仅门禁阻塞（缺少前置工件） | 个人快速迭代、信任 AI 自主决策 |
 
 ## 执行协议
@@ -29,12 +29,12 @@ stage: auto
    a. 计算下一阶段
    b. 检查门禁（硬性，trust 模式也不跳过）
    c. 检查 checkpoint 类型
-   d. 标准模式：human-verify → 暂停，创建 checkpoint
+   d. 标准模式：`approval` → 暂停，创建 checkpoint
    e. 全信任模式：跳过 checkpoint，直接推进
    f. 执行阶段，推进
 3. 暂停条件：
    - 门禁阻塞（缺少工件）— 两种模式都会暂停
-   - human-verify checkpoint — 仅标准模式
+   - `approval` checkpoint — 仅标准模式
    - 达到 maxStages — 仅标准模式
    - 管线到达 idle（完成）
 

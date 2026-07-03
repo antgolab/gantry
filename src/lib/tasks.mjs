@@ -1,6 +1,6 @@
 /**
- * tasks.mjs — TASK.md XML 解析 + wave 分组 + 执行调度
- * 解析 gantry 的 TASK.md 格式，支持 wave 并行执行
+ * tasks.mjs — TASKS.md XML 解析 + wave 分组 + 执行调度
+ * 解析 gantry 的 TASKS.md 格式（兼容 TASK.md），支持 wave 并行执行
  */
 
 import { readFileSync, existsSync } from 'node:fs';
@@ -14,9 +14,9 @@ const DEFAULT_SCHEDULER_OPTIONS = {
 };
 
 /**
- * 解析 TASK.md 中的任务列表
+ * 解析 TASKS.md/TASK.md 中的任务列表
  * 支持 XML 格式: <task id="T01" status="pending" parallel="true" depends="T00">
- * @param {string} taskMdPath - TASK.md 文件路径
+ * @param {string} taskMdPath - TASKS.md/TASK.md 文件路径
  * @returns {Array} 任务数组
  */
 export function parseTasks(taskMdPath) {
@@ -54,16 +54,6 @@ export function parseTasks(taskMdPath) {
   }
 
   return tasks;
-}
-
-/**
- * 将任务分组为 waves（基于依赖关系）
- * @param {Array} tasks - 任务数组
- * @param {object} options - { maxParallelism, respectParallel }
- * @returns {Array<Array>} waves 数组，每个 wave 包含可并行执行的任务
- */
-export function groupWaves(tasks, options = {}) {
-  return scheduleWaves(tasks, options).waves;
 }
 
 /**
@@ -118,24 +108,6 @@ export function scheduleWaves(tasks, options = {}) {
   }
 
   return { waves, diagnostics, repairs };
-}
-
-/**
- * 获取下一个待执行的任务
- */
-export function getNextTask(tasks) {
-  const waves = groupWaves(tasks);
-  if (waves.length === 0) return null;
-  return waves[0][0];
-}
-
-/**
- * 获取当前 wave 中的所有任务
- */
-export function getCurrentWave(tasks) {
-  const waves = groupWaves(tasks);
-  if (waves.length === 0) return [];
-  return waves[0];
 }
 
 /**

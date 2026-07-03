@@ -1,14 +1,14 @@
 # DESIGN: <change 标题>
 
 - **Change ID**: <id>
-- **关联**: `@.gantry/specs/<id>/REQUIREMENT.md`、`@.gantry/specs/CONTEXT.md`、`@gantry/reference/tech-stacks.md`
+- **关联**: `@.gantry/specs/<id>/SPEC.md`（兼容期接受 `REQUIREMENT.md`）、`@.gantry/specs/CONTEXT.md`、`@gantry/reference/tech-stacks.md`
 - **作者**: AI（Architect 角色）+ 人工 review
 
 ---
 
 ## 0. 技术栈选定
 
-> 由 2-design 步骤 0 锁定。变栈视为开新 CHANGE（R7.1）。
+> 由 2-design 步骤 0 锁定。变栈视为开新 `PROPOSAL`（兼容期接受 `CHANGE`，R7.1）。
 
 - **选定**：<编号 + 名称>（例：1 Next.js 全栈）
 - **前端**：<具体框架 + 版本>（例：Next.js 14.2 / React 18 / TypeScript 5）

@@ -1,7 +1,7 @@
 # C-curator · 知识库维护 + 团队健康巡检
 
 > **定位**：横向命令，不推进主管线。
-> **触发方式**：`gantry curator` / `/gantry:curator` / `phases/C-curator.md`
+> **触发方式**：`/gantry-knowledge curate` / `/gantry:knowledge curate` / `phases/C-curator.md`
 > **频率**：月度（标准）+ 季度（深度）+ 事件触发（见第 5 节）
 
 ---
@@ -28,8 +28,8 @@ Curator 是**月度低频高价值**的角色，阻止上述熵增。
 
 | 频率 | 内容 | 命令 |
 |---|---|---|
-| 月度 | 标准 checklist（1.2~1.7）| `gantry curator` |
-| 季度 | 标准 + CONVENTIONS 漂移检测 + 规则 retro | `gantry curator --quarterly` |
+| 月度 | 标准 checklist（1.2~1.7）| `/gantry-knowledge curate` |
+| 季度 | 标准 + CONVENTIONS 漂移检测 + 规则 retro | `/gantry-knowledge curate --quarterly` |
 
 ### 1.2 事件触发（提前触发，不等月度）
 
@@ -90,13 +90,13 @@ gantry metrics --since "1 month ago"
 
 - `active` → `superseded`：有更新条目取代（填 `supersededBy: L-NNN`）
 - `active` → `deprecated`：技术栈 / 库已更换，不再适用
-- `active` → `stale`：6 个月未被任何 PROGRESS / SUMMARY 引用过
+- `active` → `stale`：6 个月未被任何 PROGRESS / EXECUTION / 例外 SUMMARY 引用过
 
 检测 stale 的命令：
 
 ```bash
-# 近 6 个月 SUMMARY / PROGRESS 引用过的 L-NNN
-git log --since='6 months ago' --all -p -- '.gantry/specs/**/*SUMMARY.md' '.gantry/specs/**/*PROGRESS.md' \
+# 近 6 个月 EXECUTION / SUMMARY / PROGRESS 引用过的 L-NNN
+git log --since='6 months ago' --all -p -- '.gantry/specs/**/*EXECUTION.md' '.gantry/specs/**/*SUMMARY.md' '.gantry/specs/**/*PROGRESS.md' \
   | grep -oE 'L-[0-9]+' | sort -u
 ```
 
@@ -131,7 +131,7 @@ find .gantry/specs/knowledge -name '*.md' -mtime +180 -exec grep -l 'status: rev
 ```
 
 - 引用版本仍适用 → 追加一行 `YYYY-MM-DD · 仍适用 · by Curator`
-- 已过期 → 跑 `gantry knowledge <topic>` 产新条目，老条目标 `superseded`
+- 已过期 → 跑 `/gantry-knowledge capture <topic>` 产新条目，老条目标 `superseded`
 
 #### C. 重复合并
 
@@ -176,7 +176,7 @@ git log --since='1 month ago' --grep='^fast:' --stat | head -50
 ### 2.5 CONTEXT / CONVENTIONS 同步检查（10 分钟）
 
 - 扫本月新归档 change 的 `DESIGN.md § 9 架构沉淀建议`
-- 如果 ≥ 3 条 architecture-level 建议未同步 → 提示跑 `gantry architect` 或 `A-evolve`
+- 如果 ≥ 3 条 architecture-level 建议未同步 → 提示跑 `/gantry-context architect` 或 `/gantry-context evolve`
 - **Curator 不自己跑 A-evolve**（那是 Architect 的工作）
 
 ### 2.6 写 month report（10 分钟）

@@ -22,11 +22,11 @@ stage: current
 
 ## 执行协议
 
-1. 调用 `gantry adjust "<发生了什么>"`
-2. CLI 行为：
-   - 创建或追加 `.gantry/specs/<change-id>/PATCH.md`
-   - 根据描述推断必须更新项，例如 `REQUIREMENT.md`、`DESIGN.md`、`TASK.md`、`DEV`、`TEST.md`
-   - 如影响上游阶段，回退 `STATE.md` 的当前阶段
+1. 读取 `.gantry/planning/STATE.md`，确认存在当前活跃 change。
+2. 创建或追加 `.gantry/specs/<change-id>/PATCH.md`：
+   - 记录本次新发现。
+   - 根据描述推断必须更新项，例如 `SPEC.md`、`DESIGN.md`、`TASKS.md`、`DEV`、`TEST.md`（兼容期接受旧命名）。
+   - 如影响上游阶段，更新 `.gantry/planning/STATE.md` 的当前阶段。
 3. 后续阶段完成对应工作后，在 `PATCH.md` 勾选检查项
 4. `/gantry:next` 会阻止未关闭的当前阶段 patch 项
 5. `/gantry:archive` 会阻止未闭环的 open patch
@@ -34,6 +34,6 @@ stage: current
 ## 用户心智
 
 - 正常推进：`gantry next`
-- 发现变化：`gantry adjust "..."`
+- 发现变化：`/gantry-adjust "..."`
 - 完成受影响工作后勾选 `PATCH.md`
 - 收尾：`gantry archive`

@@ -1,6 +1,6 @@
 {
   "name": "@mmmjk/gantry",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Protocol-driven AI engineering framework for traceable, reviewable, and verifiable AI-assisted development",
   "type": "module",
   "bin": {

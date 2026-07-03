@@ -13,7 +13,7 @@
   3. AI 在同一会话内复读已说过的内容（自我提示症状）
   4. 同一类错误连续出现 ≥ 2 次（说明它没记住失败原因）
   5. 用户感觉对话开始"打转"
-- **R1.2** 阶段切换时，AI 必须输出本阶段的 `SUMMARY.md` 或对应工件文件，作为后续阶段的唯一上下文来源。
+- **R1.2** 阶段切换时，AI 必须输出本阶段工件；DEV 阶段默认写 `EXECUTION.md`，仅高风险任务才单独写 `<task-id>-SUMMARY.md`。
 - **R1.3** 引用历史决策必须用 `@文件路径` 形式，禁止粘贴正文复述。
 - **R1.4** 不允许"我记得我们之前说过……"这类对话依赖。所有决策必须可在 `.md` 里查到。
 - **R1.5 · 重启协议（清窗前后必须严格执行）**
@@ -24,28 +24,25 @@
   3. 输出一段"重启指令"给用户，形如：
      ```
       已写入 PROGRESS。请在新会话开头粘贴：
-     docs/METHODOLOGY.md
-     docs/RULES.md
-     phases/4-dev.md
+     .gantry/planning/context-pack.json
      @.gantry/specs/CONTEXT.md
-     @.gantry/specs/<id>/REQUIREMENT.md
-     @.gantry/specs/<id>/TASK.md
      @.gantry/specs/<id>/<task-id>-PROGRESS.md
      继续 task <task-id>
      ```
 
-  **清窗后** AI 接手时必须按以下顺序加载，不允许"凭印象继续"：
+  **清窗后** AI 接手时必须先读 `.gantry/planning/context-pack.json`，再按 `loadOrder` 顺序加载，不允许"凭印象继续"：
   ```
-  METHODOLOGY → RULES → 当前阶段 prompt → CONTEXT → REQUIREMENT
-  → DESIGN（≥阶段2时）→ TASK（≥阶段3时）→ <task-id>-PROGRESS（中途断的）
+  context-pack.json → 当前阶段 prompt → 必要工件 / context-doc
+  → <task-id>-PROGRESS（中途断的）
   ```
+  `docs/RULES.md` / `docs/METHODOLOGY.md` 是规则源文件，不默认进入每阶段运行时上下文；需要解释规则或审查框架本身时才按需回查。
 
 - **R1.6 · 反重复检查（清窗恢复后第一件事）**
   1. 读 PROGRESS.md 的「已排除方案」段
   2. 确认接下来要尝试的方案**不在该清单里**
   3. 若新方案与已排除方案相同或近似，必须在尝试前显式回答："本次与第 N 次失败的差异是 X，因此预期不同。"无法回答必须停下反问，禁止盲目重试。
 
-- **R1.7 · 任务过大早期信号** 一个 task 在执行到一半就触发 R1.1 清窗 → 说明该 task 在 TASK 阶段就拆得不够细。恢复后第一动作不是继续干，而是把它在 `TASK.md` 里**就地拆为 ≥ 2 个子任务**（编号沿用 `<task-id>-1` / `<task-id>-2`），然后从最近一个未完成子任务起步。
+- **R1.7 · 任务过大早期信号** 一个 task 在执行到一半就触发 R1.1 清窗 → 说明该 task 在 TASK 阶段就拆得不够细。恢复后第一动作不是继续干，而是把它在 `TASKS.md` 里**就地拆为 ≥ 2 个子任务**（编号沿用 `<task-id>-1` / `<task-id>-2`），然后从最近一个未完成子任务起步。
 
 - **R1.8 · 跨任务失败检查（任何 DEV 任务进入实现前必跑）**
   1. AI 用当前任务的 `files` + `action` 关键词 grep `.gantry/specs/LESSONS.md`
@@ -53,7 +50,7 @@
      - "已查阅 L-NNN，本次方案与之的差异是 X" 或
      - "已查阅 L-NNN，本次确认仍适用，因此不重试该方案"
   3. 若计划方案与某条 active 条目**完全相同** → 触发 R1.6，禁止直接重试，必须先回答"本次与上次的差异是什么"
-  4. INTEGRATION 阶段 ARCHIVE 前，AI 必须按 LESSONS.md 末尾「提名条件」扫描本次 change 的 SUMMARY 与遗留 PROGRESS，把符合条件的失败提名进库
+  4. INTEGRATION 阶段 ARCHIVE 前，AI 必须按 LESSONS.md 末尾「提名条件」扫描本次 change 的 `EXECUTION.md`、例外 `*-SUMMARY.md` 与遗留 PROGRESS，把符合条件的失败提名进库
 
 - **R1.9 · 工件加载预算（任何阶段首轮强制）**
 
@@ -73,9 +70,9 @@
 
 ## R2 · 阶段门（Stage Gates）
 
-- **R2.1** 没有 `CHANGE.md` 不能进 `REQUIREMENT`（迭代模式）。
-- **R2.2** 没有 `REQUIREMENT.md` 不能进 `DESIGN`。
-- **R2.3** 没有 `TASK.md` 不能写代码。每个任务必须含可执行的 `verify` 命令。
+- **R2.1** 没有 `PROPOSAL.md` 不能进 `REQUIREMENT`（兼容期接受 `CHANGE.md`）。
+- **R2.2** 没有 `SPEC.md` 不能进 `DESIGN`（兼容期接受 `REQUIREMENT.md`）。
+- **R2.3** 没有 `TASKS.md` 不能写代码（兼容期接受 `TASK.md`）。每个任务必须含可执行的 `verify` 命令。
 - **R2.4** 任何任务在 `verify` 通过前不能勾选完成。
 - **R2.5** `REVIEW.md` 标为「严重」的项目，必须修复或显式标注「已知接受」并经人工确认，否则不能进 `INTEGRATION`。
 - **R2.6** `INTEGRATION` 阶段的 UAT 失败时，自动生成 fix-plan 回到 `DEV`，**最多重试 3 轮**，超限必须暂停。
@@ -83,7 +80,7 @@
 ## R3 · 角色红线
 
 - **R3.1** Architect 角色不允许直接写实现代码。
-- **R3.2** Dev 角色不允许修改 `REQUIREMENT.md` 或 `DESIGN.md`。如发现需求/设计有问题，必须开新 CHANGE。
+- **R3.2** Dev 角色不允许修改 `SPEC.md` 或 `DESIGN.md`。如发现需求/设计有问题，必须开新 CHANGE。
 - **R3.3** Reviewer 角色不允许修改代码，只允许产出 `REVIEW.md` 和修复任务。
 - **R3.4** 同一会话同一时间只扮演一个角色，切换角色必须清窗。
 
@@ -103,7 +100,7 @@
   3. **必须**生成可逆迁移（含 `up` / `down` 或对应框架的 migrate / rollback）
   4. **必须**检测项目有无 DB 凭据（grep `.env*` / `config/database.*` / `application.yml` / `docker-compose.yml` / `prisma/schema.prisma` 的 datasource 段）：
      - 找到凭据 → **反问用户**「是否现在执行迁移」，三选一：现在跑 / 只生成 SQL / 看 SQL 再决定
-     - 未找到凭据 → 生成 SQL 文件 + 在 `SUMMARY.md`「数据库迁移」段**显式提醒**用户手动在 local / dev / staging / prod 各环境执行
+     - 未找到凭据 → 生成 SQL 文件 + 在 `EXECUTION.md` 或任务例外 `SUMMARY.md` 的「数据库迁移」段**显式提醒**用户手动在 local / dev / staging / prod 各环境执行
   5. **禁止**只改 model 不写迁移就提交。这种提交直接判违规，AI 自己回滚
 
   详细操作步骤见 `phases/4-dev.md` 第 1.7 节。
@@ -119,7 +116,7 @@
 
   必须做的事：
 
-  - **grep 引用图**：列出所有调用点（贴入 SUMMARY.md「破坏性变更」段）
+  - **grep 引用图**：列出所有调用点（贴入 `EXECUTION.md` 或例外 `SUMMARY.md` 的「破坏性变更」段）
   - **反问用户**：删除还是兼容？删除则提供 codemod / 兼容期方案
   - **回归测试覆盖**：确保删除/改动的旧路径有测试卡住，避免静默 break
 
@@ -127,7 +124,7 @@
 
 ## R5 · 测试纪律
 
-- **R5.1** 测试用例必须从 `REQUIREMENT.md` 的 AC 派生，禁止直接从实现代码派生。
+- **R5.1** 测试用例必须从 `SPEC.md` 的 AC 派生，禁止直接从实现代码派生。
 - **R5.2** 不允许用 mock 屏蔽真实失败。如必须 mock，须在测试上方注释说明 mock 的原因与假设。
 - **R5.3** 不允许通过删除/弱化测试来"修复"失败。
 - **R5.4** TEST.md 必须声明 5 轮金字塔（功能 / 性能 / 安全 / 兼容 / 可观测）的状态。跳过任意一轮必须给理由（"暂时跳过"不算理由）。详见 `@gantry/reference/test-pyramid.md`。
@@ -148,24 +145,24 @@
   - 要发 HTTP 请求 → grep `axios|fetch|httpClient|apiClient` → 找到既有客户端 → 用它 → 不直接 `fetch(...)`
   - 要写状态管理 → 看 `package.json` 确认是 zustand / redux / mobx → 用现有 store 范式 → 不引入新框架
 
-  **必须**在 `SUMMARY.md`「6 维自查」段贴 grep 命令和结果（含"找到了 X，沿用之"或"找不到，新建 Y，理由：..."）。
+  **必须**在 `EXECUTION.md`（或例外 `SUMMARY.md`）的「6 维自查」段贴 grep 命令和结果（含"找到了 X，沿用之"或"找不到，新建 Y，理由：..."）。
 
 - **R6.5 · 提交前 diff 边界 verify（强制）**
 
   4-dev 步骤 5（提交前）必须 verify：
 
   1. 跑 `git diff --name-only` 列出实际改动文件
-  2. 与 `TASK.md` 当前任务的 `write_files` 字段比对
-  3. 有超出 → 停下来：要么更新 TASK，要么回滚多余的改动
-  4. 把 verify 结果贴入 SUMMARY「越界检查」段（即使无越界也要写"已检查 / 0 越界"）
+  2. 与 `TASKS.md` 当前任务的 `write_files` 字段比对
+  3. 有超出 → 停下来：要么更新 TASKS，要么回滚多余的改动
+  4. 把 verify 结果贴入 `EXECUTION.md`（或例外 `SUMMARY.md`）的「越界检查」段（即使无越界也要写"已检查 / 0 越界"）
 
   **禁止**："顺手改了一下" / "顺便修了个 bug"——这些必须开新 task 或新 CHANGE。
 
 ## R7 · 范围控制
 
-- **R7.1** 严禁在执行任务时悄悄扩大范围。发现需要超出 `TASK.md` 的改动时，必须先停下来更新 TASK 或开新 CHANGE。
+- **R7.1** 严禁在执行任务时悄悄扩大范围。发现需要超出 `TASKS.md` 的改动时，必须先停下来更新 TASKS 或开新 CHANGE。
 - **R7.2** 不允许同一次提交里混入多个无关任务。
-- **R7.3** TASK.md 每个任务必须声明 `read_files`（参考边界）和 `write_files`（修改边界）两组路径。`read_files` 是 AI 在做这个任务时**允许读**的范围；`write_files` 是 AI **允许改**的范围。R6.5 的 diff 边界 verify 就是基于此字段。
+- **R7.3** `TASKS.md` 每个任务必须声明 `read_files`（参考边界）和 `write_files`（修改边界）两组路径。`read_files` 是 AI 在做这个任务时**允许读**的范围；`write_files` 是 AI **允许改**的范围。R6.5 的 diff 边界 verify 就是基于此字段。
 
 ## R8 · 中文/英文
 

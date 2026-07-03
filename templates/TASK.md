@@ -1,7 +1,9 @@
 # TASK: <change 标题>
 
+> 兼容模板。新 change 应优先使用 `TASKS.md`；本文件仅供旧流程或兼容读取。
+
 - **Change ID**: <id>
-- **关联**: `@.gantry/specs/<id>/REQUIREMENT.md`、`@.gantry/specs/<id>/DESIGN.md`
+- **关联**: `@.gantry/specs/<id>/SPEC.md`（兼容期接受 `REQUIREMENT.md`）、`@.gantry/specs/<id>/DESIGN.md`
 
 ---
 

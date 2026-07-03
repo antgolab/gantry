@@ -24,17 +24,17 @@ fresh_context: false
 
 ## 入场协议
 
-1. 读取 REQUIREMENT.md（AC 列表）
+1. 读取 `SPEC.md`（AC 列表；兼容期接受 `REQUIREMENT.md`）
 2. 读取 git diff（代码变更）
 3. 读取 DESIGN.md（技术决策）
 4. 如果有 UI：读取 UI-DESIGN.md
 
 ## 执行协议
 
-- test → 按 `phases/5-test.md`
+- test → 按 `.gantry/core/phases/5-test.md`
   - 5 层金字塔：功能 / 性能 / 安全 / 兼容 / 可观测
   - 产出 TEST.md（测试矩阵 + 覆盖率审查）
-- review → 按 `phases/6-review.md`
+- review → 按 `.gantry/core/phases/6-review.md`
   - 第 1 轮：规格合规（AC 逐条对照）
   - 第 2 轮：代码质量（SOLID / DRY / 安全）
   - 第 3 轮（可选）：跨模型审查
@@ -44,7 +44,7 @@ fresh_context: false
 
 1. 产出 TEST.md 或 REVIEW.md
 2. 如果发现 critical/major 问题 → 创建修复任务回退到 dev
-3. 如果全部通过 → 创建 checkpoint（human-verify）
+3. 如果全部通过且需要人工确认 → 创建 `approval` checkpoint
 
 ## 强制引用规则
 

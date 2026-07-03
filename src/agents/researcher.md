@@ -18,7 +18,7 @@ fresh_context: false
 
 ## 职责
 
-- 项目情报扫描（I-intel-scan）：分析 brownfield 项目的技术栈、命名规范、既有抽象
+- 项目情报扫描（`/gantry-context scan`，内部阶段 `I-intel-scan`）：分析 brownfield 项目的技术栈、命名规范、既有抽象
 - 知识捕获（K-knowledge）：记录 POC、技术调研、方案对比
 
 ## 入场协议
@@ -29,8 +29,8 @@ fresh_context: false
 
 ## 执行协议
 
-- scan → 按 `phases/I-intel-scan.md` 执行，产出 CONTEXT.md
-- knowledge → 按 `phases/K-knowledge.md` 执行，产出 knowledge/<topic>.md
+- `/gantry-context scan` → 按 `.gantry/core/phases/I-intel-scan.md` 执行，产出 CONTEXT.md
+- knowledge → 按 `.gantry/core/phases/K-knowledge.md` 执行，产出 knowledge/<topic>.md
 
 ## 退出协议
 

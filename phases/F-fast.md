@@ -1,7 +1,7 @@
 # 横向命令 · F-fast — <50 行快速闭环
 
 > **触发方式**：`docs/GO.md` + `快速 / 一行改动 / typo / hotfix / 小修 / 改 README / 改个默认值 / fast`
-> 微型闭环：`CHANGE（一句话）→ DEV → REVIEW`。规则保留，产物减免。
+> 微型闭环：`PROPOSAL（一句话）→ DEV → REVIEW`。规则保留，产物减免。
 
 ---
 
@@ -148,9 +148,9 @@ git commit -m "fast: <subject>
 
 **豁免**：
 
-- R2.1 / R2.2 / R2.3 阶段门（F 无 CHANGE.md / REQUIREMENT.md / TASK.md）
+- R2.1 / R2.2 / R2.3 阶段门（F 无 `PROPOSAL.md` / `SPEC.md` / `TASKS.md`；兼容期旧命名同理）
 - R3 角色红线中的"切换角色必须清窗"（F 就一个角色 · 一窗内完成）
-- 产物文件：REQUIREMENT / DESIGN / TASK / TEST / REVIEW.md 全部免写
+- 产物文件：`SPEC.md` / `DESIGN.md` / `TASKS.md` / `TEST.md` / `REVIEW.md` 全部免写
 
 ## 自检
 

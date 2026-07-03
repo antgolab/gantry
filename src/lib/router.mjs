@@ -6,7 +6,7 @@
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 
 const SCALE_THRESHOLDS = {
   trivial: { maxFiles: 2, maxLines: 10 },
@@ -122,13 +122,17 @@ export function estimateFromCode(intent, projectRoot) {
   let totalHits = 0;
   for (const kw of keywords.slice(0, 3)) {
     try {
-      const result = execSync(
-        `grep -rl "${kw}" --include="*.mjs" --include="*.js" --include="*.ts" --include="*.tsx" . 2>/dev/null | wc -l`,
-        { cwd: projectRoot, encoding: 'utf-8', timeout: 5000 }
-      ).trim();
-      totalHits += parseInt(result, 10) || 0;
+      // 数组传参 + 走 execFile（不经 shell），关键词作为 grep 的独立参数，
+      // 彻底消除命令注入与中文/特殊字符导致的 shell 解析崩溃。
+      // -F 固定字符串匹配，避免 kw 被当正则；-l 只列文件名，按行计数即命中文件数。
+      const result = execFileSync(
+        'grep',
+        ['-rlF', kw, '--include=*.mjs', '--include=*.js', '--include=*.ts', '--include=*.tsx', '.'],
+        { cwd: projectRoot, encoding: 'utf-8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'] }
+      );
+      totalHits += result.split('\n').filter(Boolean).length;
     } catch {
-      // grep failed or timed out
+      // grep 无匹配时退出码非 0（execFileSync 抛错）或超时 → 视作 0 命中
     }
   }
 
@@ -162,6 +166,75 @@ export function checkUpgrade(currentPipeline, taskCount) {
   return { upgraded: false, newPipeline: currentPipeline, reason: '' };
 }
 
+/**
+ * Reroute — 基于累积工件重新评估规模。
+ *
+ * 修复"路由是一次性决策"的反馈环漏洞：每次推进前用 CHANGE+REQUIREMENT+DESIGN+TASK
+ * 的累积文本作为新输入，对比当前 pipeline 是否仍匹配实际规模。
+ *
+ * 设计约束：
+ *   - 只升级、不降级（避免在 estimate 抖动时乒乓）
+ *   - taskCount 是真实信号，权重高于关键词
+ *   - 文本太稀疏时（< 200 字符）不做意图升级，避免 default=medium 引发的虚假升级
+ *   - 返回 advisory，由调用方决定是否实际改 state
+ *
+ * @param {string} currentPipeline - 当前 pipeline
+ * @param {object} signals - { artifactsText, taskCount }
+ * @returns {{ shouldUpgrade: boolean, newPipeline: Pipeline, scale: Scale, reason: string }}
+ */
+export function reroute(currentPipeline, signals = {}) {
+  const { artifactsText = '', taskCount = 0 } = signals;
+  const PIPELINE_RANK = { light: 0, standard: 1, full: 2 };
+  const MIN_TEXT_FOR_REROUTE = 200; // 文本不足 200 字符时不做意图升级
+
+  // 信号 1：从累积工件文本估算规模
+  // 防误升：文本太短或没有任何关键词命中时，跳过本路径
+  let intentPipeline = null;
+  let intentScale = null;
+  if (artifactsText.length >= MIN_TEXT_FOR_REROUTE) {
+    intentScale = estimateScaleConservative(artifactsText);
+    if (intentScale) {
+      intentPipeline = PIPELINE_MAP[intentScale];
+    }
+  }
+
+  // 信号 2：任务数升级
+  const { upgraded, newPipeline: taskPipeline, reason: taskReason } = checkUpgrade(currentPipeline, taskCount);
+
+  // 取两个信号中的最高
+  let target = currentPipeline;
+  const reasons = [];
+  if (intentPipeline && PIPELINE_RANK[intentPipeline] > PIPELINE_RANK[target]) {
+    target = intentPipeline;
+    reasons.push(`artifacts indicate ${intentScale} (→ ${intentPipeline})`);
+  }
+  if (upgraded && PIPELINE_RANK[taskPipeline] > PIPELINE_RANK[target]) {
+    target = taskPipeline;
+    reasons.push(taskReason);
+  }
+
+  const shouldUpgrade = PIPELINE_RANK[target] > PIPELINE_RANK[currentPipeline];
+  return {
+    shouldUpgrade,
+    newPipeline: target,
+    scale: intentScale,
+    reason: shouldUpgrade ? reasons.join('; ') : 'no upgrade needed',
+  };
+}
+
+/**
+ * 保守版本的 estimateFromIntent：仅在确实命中关键词时返回，否则 null
+ * （estimateFromIntent 在无命中时默认返回 'medium'，对累积工件文本会引发误升级）
+ */
+function estimateScaleConservative(text) {
+  for (const [scale, patterns] of INTENT_SIGNALS_ORDERED) {
+    for (const pattern of patterns) {
+      if (pattern.test(text)) return scale;
+    }
+  }
+  return null;
+}
+
 // --- 内部辅助 ---
 
 function resolveScale(intentScale, codeScale) {
@@ -174,10 +247,23 @@ function resolveScale(intentScale, codeScale) {
 
 function extractSearchTerms(intent) {
   const stopwords = new Set(['the', 'a', 'an', 'is', 'are', 'to', 'for', 'in', 'on', 'of', 'and', 'or', 'with', 'this', 'that', '的', '了', '是', '在', '把', '将', '和', '与']);
-  return intent
-    .split(/[\s,;.!?]+/)
-    .filter(w => w.length > 2 && !stopwords.has(w.toLowerCase()))
-    .slice(0, 5);
+  // 同时按 ASCII 空白/标点分词，并把连续的中日韩字符切成 2 字段对作为粗略关键词。
+  const tokens = [];
+  for (const part of intent.split(/[\s,;.!?，。；：、!?]+/)) {
+    if (!part) continue;
+    if (/^[一-鿿]+$/.test(part)) {
+      // 纯中文片段：用 2-gram 抽取关键词候选
+      for (let i = 0; i + 1 < part.length; i++) {
+        tokens.push(part.slice(i, i + 2));
+      }
+      if (part.length <= 4) tokens.push(part);
+    } else {
+      tokens.push(part);
+    }
+  }
+  return tokens
+    .filter(w => w.length > 1 && !stopwords.has(w.toLowerCase()))
+    .slice(0, 8);
 }
 
 function buildRationale(intentScale, codeScale, finalScale) {

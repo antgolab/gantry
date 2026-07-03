@@ -12,7 +12,7 @@ stage: health
 ## 执行协议
 
 1. 分配 Curator agent
-2. 加载 `phases/M-health.md`
+2. 加载 `.gantry/core/phases/M-health.md`
 3. 执行 6+6 衰退诊断
 4. 产出 HEALTH.md（技术债务优先级排序）
 

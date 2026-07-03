@@ -28,7 +28,7 @@ fresh_context: false
 
 ## 执行协议
 
-按 `phases/7-integration.md`：
+按 `.gantry/core/phases/7-integration.md`：
 
 1. UAT 执行（按 AC 逐条验证）
 2. 集成冒烟测试（跨模块交互）

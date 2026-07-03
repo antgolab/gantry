@@ -12,11 +12,15 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
-import { readState, writeState, updateState, transitionStage } from './lib/state.mjs';
+import { readState, writeState, updateState, transitionStage, logPhaseEvent, readGateBypasses } from './lib/state.mjs';
 import { STAGES, getNextStage, checkGate, PHASE_FILES } from './lib/phases.mjs';
 import { PLANNING_DIR, SPECS_DIR, specsPath } from './lib/paths.mjs';
-import { route, checkUpgrade } from './lib/router.mjs';
+import { route, checkUpgrade, reroute } from './lib/router.mjs';
 import { parseTasks, getProgress } from './lib/tasks.mjs';
+import { runHook, listHooks } from './lib/hooks.mjs';
+import { writeContextPack, readContextPack, PACK_PATH } from './lib/context-pack.mjs';
+import { artifactCandidates, getPreferredArtifactName, resolveArtifactPath } from './lib/artifacts.mjs';
+import { readConfig } from './lib/config.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -52,7 +56,7 @@ const SKILL_DIRS = [
 const [,, command, ...args] = process.argv;
 
 const commands = {
-  init, status, change, next, install, uninstall, archive, unarchive, version,
+  init, status, change, auto, next, context, done, hook, install, uninstall, archive, unarchive, version,
   help,
 };
 
@@ -88,22 +92,22 @@ function init(args) {
   const pipeline = getFlag(args, '--pipeline') || 'full';
 
   // 创建目录结构
-  mkdirSync(join(planningDir, 'checkpoints'), { recursive: true });
+  mkdirSync(planningDir, { recursive: true });
 
   // 写入 config.json
   const config = {
     pipeline,
     tool,
     stages: {
-      change:       { enabled: true, checkpoint: 'human-verify' },
-      requirement:  { enabled: true, checkpoint: 'human-verify' },
-      design:       { enabled: true, checkpoint: 'human-verify' },
+      change:       { enabled: true, checkpoint: 'approval' },
+      requirement:  { enabled: true, checkpoint: 'approval' },
+      design:       { enabled: true, checkpoint: 'approval' },
       'ui-design':  { enabled: 'auto', condition: 'frontend' },
       task:         { enabled: true, checkpoint: 'auto' },
-      dev:          { enabled: true, checkpoint: 'per-wave' },
+      dev:          { enabled: true, checkpoint: null },
       test:         { enabled: true, checkpoint: 'auto' },
-      review:       { enabled: true, checkpoint: 'human-verify' },
-      integration:  { enabled: true, checkpoint: 'human-verify' },
+      review:       { enabled: true, checkpoint: 'approval' },
+      integration:  { enabled: true, checkpoint: 'approval' },
     },
     agents: {
       primary: tool === 'all' ? 'claude-code' : tool,
@@ -132,26 +136,10 @@ function init(args) {
     retries: 0,
     maxRetries: config.autonomous.maxRetries,
     pauseReason: null,
-    checkpoints: [],
-    decisions: [],
   });
 
-  // 写入 ROADMAP.md
-  writeFileSync(join(planningDir, 'ROADMAP.md'), `# ROADMAP — 变更积压
-
-## 活跃变更
-
-（暂无）
-
-## 积压队列
-
-| 优先级 | Change | 状态 | 依赖 |
-|--------|--------|------|------|
-
-## 已完成
-
-（暂无）
-`, 'utf-8');
+  // 写入 ROADMAP.md 已移除 — 当前没有任何命令读取它。Loop engineering 原则：
+  // 工件必须有消费者，否则只是装饰。需要变更积压视图时，扫描 .gantry/specs/_archive/ 目录。
 
   console.log(`✓ ${PLANNING_DIR}/ 初始化完成`);
   console.log(`  管线: ${pipeline}`);
@@ -199,19 +187,28 @@ function status(args) {
   }
   printBox('gantry 状态', lines);
 
-  // 显示待处理 checkpoints
-  const pending = state.checkpoints.filter(cp => cp.status === 'pending');
-  if (pending.length > 0) {
-    console.log(`\n待处理 Checkpoints:`);
-    for (const cp of pending) {
-      console.log(`  [${cp.id}] ${cp.stage} — ${cp.type}`);
+  // 当前阶段是否为 approval 关卡（从 currentStage + config 派生，非独立状态）
+  const cfg = readConfig(projectRoot);
+  if (state.currentStage !== 'idle'
+      && cfg?.stages?.[state.currentStage]?.checkpoint === 'approval') {
+    console.log(`\n⏸  当前阶段 ${state.currentStage} 需人工确认：审阅本阶段产物后运行 gantry next 推进。`);
+  }
+
+  // 门禁绕过留痕（兑现 --skip 的"已写入 timeline"承诺，消费者=事后排查者）
+  if (state.activeChange) {
+    const bypasses = readGateBypasses(projectRoot, state.activeChange);
+    if (bypasses.length > 0) {
+      console.log(`\n⚠  本 change 有 ${bypasses.length} 次门禁绕过记录:`);
+      for (const b of bypasses) {
+        console.log(`   [${(b.ts || '').slice(0, 10)}] → ${b.stage}: ${b.reason}`);
+      }
     }
   }
 
-  // 任务进度（dev 阶段且有 TASK.md 时显示）
+  // 任务进度（dev 阶段且有 TASKS.md/TASK.md 时显示）
   if (state.activeChange && state.currentStage === 'dev') {
-    const taskFile = join(projectRoot, SPECS_DIR, state.activeChange, 'TASK.md');
-    if (existsSync(taskFile)) {
+    const taskFile = resolveArtifactPath(join(projectRoot, SPECS_DIR, state.activeChange), 'tasks')?.path;
+    if (taskFile && existsSync(taskFile)) {
       const tasks = parseTasks(taskFile);
       const prog = getProgress(tasks);
       if (prog.total > 0) {
@@ -225,7 +222,7 @@ function status(args) {
   if (state.currentStage === 'idle') {
     console.log(`\n下一步: gantry change "<描述>"`);
   } else {
-    const nextSt = getNextStage(state.currentStage, readConfig(projectRoot));
+    const nextSt = getNextStage(state.currentStage, { ...cfg, pipeline: state.pipeline });
     if (nextSt) {
       console.log(`\n下一步: gantry next  →  ${nextSt}`);
     }
@@ -280,7 +277,8 @@ function change(args) {
   const projectRoot = process.cwd();
   ensureInit(projectRoot);
 
-  const description = args.filter(a => !a.startsWith('--')).join(' ');
+  // 提取描述：跳过 --flag 及其值
+  const description = stripFlags(args, ['--pipeline', '--tool']).join(' ');
   if (!description) {
     console.error('用法: gantry change "<变更描述>"');
     process.exit(1);
@@ -315,6 +313,9 @@ function change(args) {
     activeAgent: 'planner',
   });
 
+  // 写一次 pack,让 skill 立刻有可消费的上下文
+  try { writeContextPack(projectRoot); } catch { /* non-blocking */ }
+
   console.log(`✓ 变更已创建: ${changeId}`);
   if (routeInfo) {
     console.log(`  路由: ${routeInfo.scale} → ${pipeline} (${routeInfo.rationale})`);
@@ -322,8 +323,9 @@ function change(args) {
   console.log(`  管线: ${pipeline}`);
   console.log(`  工件目录: ${specsPath(changeId)}/`);
   console.log(`  当前阶段: change (变更提案)`);
+  console.log(`  上下文: ${PACK_PATH}`);
   console.log(`\n请执行阶段 0 (CHANGE):`);
-  console.log(`  加载 phases/0-change.md 并产出 ${specsPath(changeId, 'CHANGE.md')}`);
+  console.log(`  加载 .gantry/core/phases/0-change.md 并产出 ${specsPath(changeId, getPreferredArtifactName('proposal'))}`);
 }
 
 
@@ -340,71 +342,167 @@ function change(args) {
 
 
 /**
- * gantry next — 执行门禁检查并推进到下一个阶段
+ * gantry next — 手动单步推进一个阶段
  *
- * 这是管线循环的推进算子：
- *   检查目标阶段的前置工件 → 通过则转换 → 失败则增加重试计数
- *   超过 maxRetries 时拒绝自动推进，要求人工决策（--force 可强制跳过，写入 timeline）
+ * 设计原则：CLI 只做机械检查，人工守护交给 AI skill（如 /gantry:auto）
+ * 多阶段自主推进由 gantry auto 独占；next 只推进一步即停，职责唯一。
+ *
+ *   gantry next                  推进一步
+ *   gantry next --skip           跳过当前门禁（写 timeline 留痕，每次都要显式）
+ *
+ * 核心闭环：
+ *   reroute → checkGate → transitionStage
+ *   失败 → retries+=1，连续 > maxRetries 拒推
+ *   --skip → 不阻塞，但 type=gate-bypass 写入 timeline.jsonl
  */
 function next(args) {
   const projectRoot = process.cwd();
   ensureInit(projectRoot);
 
+  // next 是「手动单步」入口：推进一步即停。多阶段自主推进用 gantry auto。
+  const isSkip = args.includes('--skip');
+  const result = nextOnce(projectRoot, { isSkip });
+  if (result.stop && result.exitCode) process.exit(result.exitCode);
+  if (result.reachedEnd) {
+    console.log(`  管线已到达 ${result.reachedEnd}`);
+  }
+}
+
+/**
+ * gantry auto [--stages N] [--trust]
+ *   按 autonomous.maxStagesPerRun 自动推进,遇门禁阻塞或终态即停。
+ */
+function auto(args) {
+  const projectRoot = process.cwd();
+  ensureInit(projectRoot);
+
+  const config = readConfig(projectRoot);
+  const state = readState(projectRoot);
+  const stagesFlag = parseStagesFlag(args);
+  if (stagesFlag.error) {
+    console.error(stagesFlag.error);
+    process.exit(1);
+  }
+
+  const trust = args.includes('--trust');
+  const maxStages = stagesFlag.value ?? getConfiguredMaxStages(config, state.maxStages || 3);
+  const maxSteps = trust ? 50 : maxStages;
+
+  updateState(projectRoot, {
+    autonomous: true,
+    stagesRun: 0,
+    maxStages,
+    pauseReason: null,
+  });
+
+  if (trust) {
+    console.log(`自主模式: trust (配置上限 ${maxStages}, 本次按管线终态推进)`);
+  } else {
+    console.log(`自主模式: 最多推进 ${maxStages} 个阶段`);
+  }
+
+  for (let step = 0; step < maxSteps; step++) {
+    const result = nextOnce(projectRoot);
+    if (result.stop) {
+      console.log(`  自动推进在 ${step}/${trust ? '∞' : maxSteps} 步停止`);
+      if (result.exitCode) process.exit(result.exitCode);
+      return;
+    }
+    if (result.reachedEnd) {
+      console.log(`  管线已到达 ${result.reachedEnd}`);
+      return;
+    }
+    updateState(projectRoot, { stagesRun: step + 1, maxStages });
+    if (result.pausedForApproval) {
+      console.log(`⏸  已进入 ${result.pausedForApproval}（需人工确认）。审阅后运行 gantry next 继续。`);
+      return;
+    }
+  }
+
+  if (!trust) {
+    console.log(`  已达到本次自动推进上限: ${maxStages}`);
+  }
+}
+
+/**
+ * 单步推进。返回 { stop, reachedEnd, exitCode }
+ */
+function nextOnce(projectRoot, { isSkip = false } = {}) {
   const state = readState(projectRoot);
 
   if (state.currentStage === 'idle') {
     console.log('当前无活跃变更。运行 gantry change "<描述>" 开始。');
-    return;
+    return { stop: true };
   }
   if (state.currentStage === 'integration') {
     console.log('已在 integration 阶段。运行 gantry archive 完成变更。');
-    return;
+    return { reachedEnd: 'integration' };
   }
 
   const config = readConfig(projectRoot);
-  const nextStage = getNextStage(state.currentStage, config);
+  const effectiveConfig = { ...config, pipeline: state.pipeline || config.pipeline };
+  const nextStage = getNextStage(state.currentStage, effectiveConfig);
   if (!nextStage) {
-    console.log(`阶段 ${state.currentStage} 没有后续阶段。`);
-    return;
+    return { reachedEnd: state.currentStage };
   }
 
   const specsDir = join(projectRoot, SPECS_DIR, state.activeChange);
-  const gateResult = checkGate(nextStage, specsDir, config, state);
+
+  // === Reroute：基于累积工件重新评估 pipeline ===
+  const rerouteResult = runReroute(specsDir, state);
+  if (rerouteResult.shouldUpgrade) {
+    updateState(projectRoot, { pipeline: rerouteResult.newPipeline });
+    logPhaseEvent(projectRoot, {
+      type: 'pipeline-upgrade',
+      from: state.pipeline,
+      to: rerouteResult.newPipeline,
+      reason: rerouteResult.reason,
+      stage: state.currentStage,
+    });
+    console.log(`↑ 管线升级: ${state.pipeline} → ${rerouteResult.newPipeline}`);
+    console.log(`  原因: ${rerouteResult.reason}`);
+  }
+
+  // === Gate ===
+  const gateResult = checkGate(nextStage, specsDir, effectiveConfig, state);
 
   if (!gateResult.passed) {
     const newRetries = state.retries + 1;
     updateState(projectRoot, { retries: newRetries, pauseReason: gateResult.reason });
 
-    if (newRetries > state.maxRetries && !args.includes('--force')) {
-      console.error(`规则 R2 触发：门禁已连续失败 ${state.retries} 次（上限 ${state.maxRetries}），需要人工决策。`);
+    if (isSkip) {
+      logPhaseEvent(projectRoot, {
+        type: 'gate-bypass',
+        changeId: state.activeChange,
+        stage: nextStage,
+        reason: gateResult.reason,
+      });
+      console.log(`⚠  跳过门禁: ${gateResult.reason}`);
+      console.log(`  已写入 ${PLANNING_DIR}/timeline.jsonl`);
+    } else if (newRetries > state.maxRetries) {
+      console.error(`✗ 门禁连续失败 ${state.retries} 次（上限 ${state.maxRetries}）`);
       console.error(`  原因: ${gateResult.reason}`);
-      console.error(`  使用 --force 强制跳过（绕过行为会写入 timeline）`);
-      process.exit(1);
-    }
-
-    if (args.includes('--force')) {
-      console.log(`⚠  门禁强制跳过 [${newRetries}/${state.maxRetries}]: ${gateResult.reason}`);
+      const hint = gateRecoveryHint(gateResult.reason);
+      if (hint) console.error(hint);
+      console.error(`  修复后重试，或用 gantry next --skip 显式跳过`);
+      return { stop: true, exitCode: 1 };
     } else {
       console.error(`✗ 门禁未通过 [${newRetries}/${state.maxRetries}]: ${gateResult.reason}`);
-      console.error(`  完成工件后重新运行 gantry next`);
-      process.exit(1);
-    }
-  }
-
-  // 运行时升级检查：如果 TASK.md 已存在，检查任务数是否超过当前管线阈值
-  if (nextStage === 'dev' && state.activeChange) {
-    const taskFile = join(specsDir, 'TASK.md');
-    if (existsSync(taskFile)) {
-      const tasks = parseTasks(taskFile);
-      const { upgraded, newPipeline, reason } = checkUpgrade(config.pipeline || state.pipeline, tasks.length);
-      if (upgraded) {
-        updateState(projectRoot, { pipeline: newPipeline });
-        console.log(`  管线升级: ${state.pipeline} → ${newPipeline} (${reason})`);
-      }
+      const hint = gateRecoveryHint(gateResult.reason);
+      if (hint) console.error(hint);
+      return { stop: true, exitCode: 1 };
     }
   }
 
   transitionStage(projectRoot, state.currentStage, nextStage);
+
+  // 推进成功后,刷新 context-pack.json 给 AI client 消费
+  try {
+    writeContextPack(projectRoot);
+  } catch (e) {
+    // 不阻塞主流程,但警告
+    console.error(`  ⚠  context-pack 刷新失败: ${e.message}`);
+  }
 
   if (gateResult.skipReason) {
     console.log(`  ⚠  ${gateResult.skipReason}`);
@@ -413,7 +511,258 @@ function next(args) {
   const phaseFile = PHASE_FILES[nextStage];
   console.log(`✓ ${state.currentStage} → ${nextStage}`);
   if (phaseFile) {
-    console.log(`  执行: phases/${phaseFile}`);
+    console.log(`  执行: .gantry/core/phases/${phaseFile}`);
+  }
+  console.log(`  上下文: ${PACK_PATH}`);
+
+  // Approval checkpoint（派生策略，非独立状态）：
+  // 若刚进入的阶段配了 checkpoint=approval，自动推进到此为止，把控制权交还给人。
+  // "停下来"就是 checkpoint 本身；人审阅后再敲一次 gantry next 即 resolve。
+  // 单步 gantry next 不受影响——它推进这一步后本就停下等下一次调用。
+  if (effectiveConfig?.stages?.[nextStage]?.checkpoint === 'approval') {
+    return { stop: false, pausedForApproval: nextStage };
+  }
+  return { stop: false };
+}
+
+/**
+ * 针对特定门禁失败原因，给出可操作的补救指引。
+ * 未决问题阻断时，明确告诉用户怎么回到 change 反问。
+ */
+function gateRecoveryHint(reason) {
+  if (reason && /unresolved question/.test(reason)) {
+    return [
+      `  → 当前仍在 change 阶段（未推进）。回到反问澄清：`,
+      `     1. 运行 /gantry-change（或让 agent 按 0-change.md 继续）逐条反问用户`,
+      `     2. 把答案并入 PROPOSAL 正文，将「## 待澄清问题」段改为「无」`,
+      `     3. 再次运行 gantry next 推进到 requirement`,
+    ].join('\n');
+  }
+  return null;
+}
+
+
+function parseStagesFlag(args) {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--stages' || arg === '--max-stages') {
+      const parsed = parsePositiveInt(args[i + 1]);
+      if (!parsed) return { error: `${arg} 需要正整数，例如: gantry auto ${arg} 5` };
+      return { value: parsed };
+    }
+    const m = arg.match(/^--(?:stages|max-stages)=(.+)$/);
+    if (m) {
+      const parsed = parsePositiveInt(m[1]);
+      if (!parsed) return { error: `${arg.split('=')[0]} 需要正整数` };
+      return { value: parsed };
+    }
+  }
+  return { value: null };
+}
+
+function parsePositiveInt(value) {
+  if (!/^\d+$/.test(String(value ?? ''))) return null;
+  const parsed = parseInt(value, 10);
+  return parsed > 0 ? parsed : null;
+}
+
+function getConfiguredMaxStages(config = {}, fallback = 3) {
+  const configured = Number(config?.autonomous?.maxStagesPerRun);
+  return Number.isInteger(configured) && configured > 0 ? configured : fallback;
+}
+
+/**
+ * 收集 reroute 的输入信号：累积工件文本 + 任务数
+ */
+function runReroute(specsDir, state) {
+  if (!existsSync(specsDir)) return { shouldUpgrade: false };
+
+  const artifactFiles = [
+    ...artifactCandidates('proposal'),
+    ...artifactCandidates('spec'),
+    'DESIGN.md',
+    ...artifactCandidates('tasks'),
+  ];
+  let artifactsText = '';
+  for (const name of artifactFiles) {
+    const p = join(specsDir, name);
+    if (existsSync(p)) {
+      try { artifactsText += '\n' + readFileSync(p, 'utf-8').slice(0, 8000); }
+      catch { /* skip */ }
+    }
+  }
+
+  let taskCount = 0;
+  const taskFile = resolveArtifactPath(specsDir, 'tasks')?.path;
+  if (taskFile && existsSync(taskFile)) {
+    taskCount = parseTasks(taskFile).length;
+  }
+
+  return reroute(state.pipeline, { artifactsText, taskCount });
+}
+
+/**
+ * gantry context [stage] [--task T03] [--json]
+ *   生成 / 重写 .gantry/planning/context-pack.json
+ *
+ * 不带参数时按当前 STATE 阶段生成。可显式指定 stage 与 task。
+ * --json 把 pack 内容打到 stdout(供 CI / 调试)。
+ */
+function context(args) {
+  const projectRoot = process.cwd();
+  ensureInit(projectRoot);
+  const overrides = {};
+
+  // 解析 --task / --stage / --json
+  const cleaned = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--task' || a === '-t') { overrides.taskId = args[++i]; continue; }
+    if (a === '--stage' || a === '-s') { overrides.stage = args[++i]; continue; }
+    if (a === '--json') { overrides._json = true; continue; }
+    cleaned.push(a);
+  }
+  // 第一个位置参数当 stage(向后兼容 `gantry context dev`)
+  if (cleaned[0] && !overrides.stage) overrides.stage = cleaned[0];
+  if (cleaned[1] && !overrides.taskId) overrides.taskId = cleaned[1];
+
+  const wantJson = overrides._json;
+  delete overrides._json;
+
+  const pack = writeContextPack(projectRoot, overrides);
+  if (wantJson) {
+    console.log(JSON.stringify(pack, null, 2));
+    return;
+  }
+  console.log(`✓ context pack 已写入: ${PACK_PATH}`);
+  console.log(`  stage:    ${pack.stage}`);
+  if (pack.changeId) console.log(`  change:   ${pack.changeId}`);
+  if (pack.taskId)  console.log(`  task:     ${pack.taskId}`);
+  console.log(`  loadOrder: ${pack.loadOrder.length} 项`);
+  console.log(`  checklists: ${pack.checklists.filter(c => c.trigger).length} 触发 / ${pack.checklists.length} 总`);
+  if (pack.lessons.length) console.log(`  lessons:  ${pack.lessons.length} 条命中`);
+}
+
+
+/**
+ * gantry done <task-id>
+ *   标记 task 完成 + 在 EXECUTION.md 不存在时落模板骨架。
+ *   不写"实际内容"——那是 AI 的事;CLI 只做机械操作。
+ */
+function done(args) {
+  const projectRoot = process.cwd();
+  ensureInit(projectRoot);
+  const state = readState(projectRoot);
+
+  const taskId = args.find(a => !a.startsWith('-'));
+  if (!taskId) {
+    console.error('用法: gantry done <task-id>');
+    process.exit(1);
+  }
+  const changeId = state.activeChange;
+  if (!changeId) {
+    console.error('当前无活跃 change');
+    process.exit(1);
+  }
+  const taskResolved = resolveArtifactPath(join(projectRoot, SPECS_DIR, changeId), 'tasks');
+  const taskFile = taskResolved?.path;
+  if (!taskFile || !existsSync(taskFile)) {
+    console.error(`${getPreferredArtifactName('tasks')} 不存在: ${specsPath(changeId, getPreferredArtifactName('tasks'))}`);
+    process.exit(1);
+  }
+
+  const content = readFileSync(taskFile, 'utf-8');
+  const taskRe = new RegExp(`(<task\\s+[^>]*id="${taskId}"[^>]*?)(\\sstatus="[^"]*")?(\\s*>)`, 'g');
+  let matched = false;
+  const updated = content.replace(taskRe, (full, head, _statusAttr, tail) => {
+    matched = true;
+    return `${head} status="done"${tail}`;
+  });
+  if (!matched) {
+    console.error(`task ${taskId} 未在 ${taskResolved.name} 中找到`);
+    process.exit(1);
+  }
+  writeFileSync(taskFile, updated, 'utf-8');
+
+  const executionPath = join(projectRoot, specsPath(changeId, getPreferredArtifactName('execution')));
+  if (!existsSync(executionPath)) {
+    const skeleton = `# EXECUTION: ${changeId}
+
+> 变更级执行日志。默认不再为每个 task 自动生成单独 SUMMARY。
+
+## Entries
+
+### ${taskId}
+
+- status: done
+- completed_at: ${new Date().toISOString()}
+- summary: TODO
+- verify: TODO
+- evidence: TODO
+`;
+    writeFileSync(executionPath, skeleton, 'utf-8');
+  } else {
+    const existing = readFileSync(executionPath, 'utf-8');
+    if (!existing.includes(`### ${taskId}`)) {
+      writeFileSync(executionPath, `${existing.trimEnd()}\n\n### ${taskId}\n\n- status: done\n- completed_at: ${new Date().toISOString()}\n- summary: TODO\n- verify: TODO\n- evidence: TODO\n`, 'utf-8');
+    }
+  }
+
+  logPhaseEvent(projectRoot, { type: 'task-done', taskId, changeId });
+
+  console.log(`✓ task ${taskId} 已标记完成`);
+  console.log(`  EXECUTION: ${specsPath(changeId, getPreferredArtifactName('execution'))}`);
+}
+
+/**
+ * gantry hook run <event> — 执行已配置的阶段 hook
+ * gantry hook list         — 列出全部已配置的 hook
+ *
+ * 在 phases/*.md 里被引用 18 次（before:dev / after:integration 等），
+ * 接通 lib/hooks.mjs 已实现的 runHook()。无配置则静默成功（exit 0）。
+ */
+async function hook(args) {
+  const projectRoot = process.cwd();
+  ensureInit(projectRoot);
+  const config = readConfig(projectRoot);
+
+  const sub = args[0];
+  if (sub === 'list') {
+    const hooks = listHooks(config);
+    const keys = Object.keys(hooks);
+    if (keys.length === 0) {
+      console.log('未配置任何 hook');
+      console.log(`  在 ${PLANNING_DIR}/config.json 的 hooks 字段添加，例如:`);
+      console.log(`  "hooks": { "before:dev": "npm run lint" }`);
+      return;
+    }
+    for (const key of keys) {
+      const def = hooks[key];
+      const cmd = typeof def === 'string' ? def : def.cmd;
+      console.log(`  ${key.padEnd(22)} → ${cmd}`);
+    }
+    return;
+  }
+
+  if (sub !== 'run') {
+    console.error('用法: gantry hook run <event>  |  gantry hook list');
+    console.error('  事件示例: before:dev, after:test, before:integration');
+    process.exit(1);
+  }
+
+  const event = args[1];
+  if (!event) {
+    console.error('缺少事件名: gantry hook run <event>');
+    process.exit(1);
+  }
+
+  const result = await runHook(config, event, projectRoot);
+  if (result.skipped) {
+    // 无配置静默通过：phases/*.md 的语义就是 "退出码 0 或无配置 → 继续"
+    return;
+  }
+  if (!result.ok) {
+    process.exit(1);
   }
 }
 
@@ -662,6 +1011,8 @@ function archive(args) {
     stagesRun: 0,
     retries: 0,
     pauseReason: null,
+    pipeline: 'full',
+    contextUsage: { tokens: null, windowPercent: null },
   });
 
   console.log(`✓ 变更已收尾: ${finishedChange}`);
@@ -730,26 +1081,28 @@ function help() {
 
 用法: gantry <command> [options]
 
-命令:
+核心流程（日常按此循环）:
   init                初始化 .gantry/planning/ 目录
     --tool <T>          IDE 工具: claude|cursor|codex|copilot|all（默认 all）
     --pipeline <P>      管线深度: full|standard|light（默认 full）
 
-  status              查看当前状态
-    --json              输出 JSON 格式
-
   change "<描述>"     开始新变更（自动路由管线深度）
 
-  next                执行门禁检查并推进到下一个阶段
-    --force             跳过未通过的门禁（绕过行为写入 timeline）
+  next                手动单步推进一个阶段（内含门禁）
+    --skip              跳过当前门禁（写 timeline 留痕，每次需显式）
+
+  auto                自动多阶段推进，遇门禁失败 / approval 关卡 / 终态即停
+    --stages <N>        本次最多推进 N 个阶段（默认取 config）
+    --trust             推进到管线终态为止（上限 50 步）
+
+  status              查看当前状态、待确认关卡、门禁绕过记录
+    --json              输出 JSON 格式
 
   archive             收尾并归档当前 change（仅 integration 阶段可用）
     --force             跳过阶段检查强制收尾
     --keep-history      保留旧归档，新归档加版本后缀
 
-  unarchive <id>      从归档恢复并重新激活 change
-    --from <name>       指定归档版本名（默认同 change-id）
-
+安装 / 分发:
   install             安装 gantry 到当前项目
     --tool <T>          claude|cursor|codex|copilot（默认自动检测）
     --init              同时初始化 .gantry/planning/
@@ -760,10 +1113,22 @@ function help() {
     -g, --global        从各工具全局目录卸载
     --all               同时删除 .gantry/planning/ 目录
 
-  version             显示版本号
-  help                显示本帮助
+辅助 / 调试:
+  context [stage] [task] 手动生成/刷新 context-pack.json（change/next 已自动刷新，此命令供调试）
+    --task <id>         指定 task id (dev 阶段必需)
+    --stage <s>         强制指定阶段 (默认从 STATE.md 读)
+    --json              把 pack 内容直接打到 stdout
 
-详情: gantry <command> --help`);
+  done <task-id>      标记任务完成 + 落 EXECUTION.md 执行日志
+
+  hook run <event>    执行已配置的阶段 hook（before:dev / after:test 等）
+  hook list           列出全部已配置的 hook
+
+  unarchive <id>      从归档恢复并重新激活 change
+    --from <name>       指定归档版本名（默认同 change-id）
+
+  version             显示版本号
+  help                显示本帮助`);
 }
 
 // --- install/uninstall 辅助 ---
@@ -1004,31 +1369,30 @@ function ensureInit(projectRoot) {
   }
 }
 
-function readConfig(projectRoot) {
-  const globalPath = join(homedir(), '.gantry', 'config.json');
-  const projectPath = join(projectRoot, PLANNING_DIR, 'config.json');
-  const global = existsSync(globalPath) ? JSON.parse(readFileSync(globalPath, 'utf-8')) : {};
-  const project = existsSync(projectPath) ? JSON.parse(readFileSync(projectPath, 'utf-8')) : {};
-  return deepMerge(global, project);
-}
-
-function deepMerge(base, override) {
-  const result = { ...base };
-  for (const key of Object.keys(override)) {
-    if (override[key] && typeof override[key] === 'object' && !Array.isArray(override[key])
-        && base[key] && typeof base[key] === 'object' && !Array.isArray(base[key])) {
-      result[key] = deepMerge(base[key], override[key]);
-    } else {
-      result[key] = override[key];
-    }
-  }
-  return result;
-}
 
 function getFlag(args, flag) {
   const idx = args.indexOf(flag);
   if (idx === -1) return null;
   return args[idx + 1] || null;
+}
+
+/**
+ * 移除指定的 flag 及其后续值，返回剩余的位置参数
+ *   stripFlags(['x', '--pipeline', 'light', 'y'], ['--pipeline']) → ['x', 'y']
+ */
+function stripFlags(args, flagsWithValue = []) {
+  const skip = new Set();
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (flagsWithValue.includes(arg)) {
+      skip.add(i);
+      if (i + 1 < args.length) skip.add(i + 1);
+    } else if (arg.startsWith('--')) {
+      // 无值 flag（如 --force）也跳过自身，但不吞下后面的位置参数
+      skip.add(i);
+    }
+  }
+  return args.filter((_, i) => !skip.has(i));
 }
 
 

@@ -32,7 +32,7 @@
 
 ### 任务完成后（INTEGRATION ARCHIVE 步骤）
 
-AI 扫本次 change 的所有 `*-SUMMARY.md` 与遗留 `*-PROGRESS.md`，按下面「提名条件」筛选并追加新条目。
+AI 扫本次 change 的 `EXECUTION.md`、例外 `*-SUMMARY.md` 与遗留 `*-PROGRESS.md`，按下面「提名条件」筛选并追加新条目。
 
 ---
 

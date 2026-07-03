@@ -1,5 +1,12 @@
 # 阶段 0 · CHANGE — 把模糊想法变成一份变更提案
 
+## Context Pack 优先
+
+> 如果存在 `.gantry/planning/context-pack.json`,**先读它**。pack 的 `checklists` 字段已替你完成"是否触发各子检查"的机械判定;你只需按 `trigger=true/false` 决定哪些段必跑、哪些跳过。
+>
+> 下面的 prose 仍是执行参考(怎么做),但"该不该做"以 pack 为准。
+
+
 ## 角色
 
 你是产品/技术对接人。你的任务**不是**立刻写需求，而是先**反问到清楚**。
@@ -69,7 +76,7 @@ gantry hook run before:change
    **各选项后续动作**：
 
    - **选 1**：暂停本工作流，引导用户跑 `phases/A-architect.md`。完成后用户回来重新跑 `docs/GO.md` + 同样意图，那时 ARCHITECTURE.md 已就绪，本步会通过。**已生成的 change-id 暂留**，A-architect 完成后复用
-   - **选 2**：继续步骤 0.5。但**强制**：在 CHANGE.md 末尾加一段「## 架构层影响声明」列出本次 change 会冲击哪些 ADR / 模块边界（这段会在 2-design § 0.5 被读到）
+   - **选 2**：继续步骤 0.5。但**强制**：在 `PROPOSAL.md` 末尾加一段「## 架构层影响声明」列出本次 change 会冲击哪些 ADR / 模块边界（这段会在 2-design § 0.5 被读到）
    - **选 3**：用户给出"这其实只是 X"的解释，AI 重新判断。如果合理则继续；如果用户解释牵强，AI **可以坚持**（"我仍判定为架构级，理由：…，请你选 1 或 2"）
 
    #### 0.4.3 ARCHITECTURE.md 不存在的特殊处理
@@ -124,18 +131,21 @@ gantry hook run before:change
 
    ### 选定后
 
-   - 写入 CHANGE.md 的 `视觉调性` 字段（前端项目必填）
+   - 写入 `PROPOSAL.md` 的 `视觉调性` 字段（前端项目必填）
    - 会**继承到 2a-ui-design**，2a 不再让用户重选调性
    - **进入步骤 1**（反问）
 
-1. **反问**：用户选定调性后（或非前端项目跳过 0.6 后），用结构化提问把"为什么 / 给谁 / 解决什么 / 何时算完"问清楚。每轮最多 3 个问题，等用户回答再继续。
+1. **反问（强制前置门 · 不可跳过）**：用户选定调性后（或非前端项目跳过 0.6 后），用结构化提问把"为什么 / 给谁 / 解决什么 / 何时算完"问清楚。每轮最多 3 个问题，等用户回答再继续。
    - **不允许与调性卡片同屏呈现**（以免信息超载）
+   - **这是产出 PROPOSAL 之前必须走完的门**：只要还有任何点没问清，就继续反问，**不准跳到步骤 4**。
+   - **禁止把未澄清的问题写进 PROPOSAL 当"已完成澄清"**——把疑问列进文件不等于澄清，澄清=问到用户给了答案。
 2. **影响面判定**：
-   - 是否需要新增/修改 `REQUIREMENT.md`？
+   - 是否需要新增/修改 `SPEC.md`？
    - 是否触及架构（需要更新 `DESIGN.md` / 新增 ADR）？
    - 是否影响现有 AC？
 3. **范围排除**：明确写出**这次不做什么**。
-4. **生成 CHANGE.md**：使用 `@gantry/templates/CHANGE.md` 模板，填好后保存到 `.gantry/specs/<change-id>/CHANGE.md`（id 来自步骤 0）。
+4. **生成 PROPOSAL.md**：使用 `@gantry/templates/PROPOSAL.md` 模板，填好后保存到 `.gantry/specs/<change-id>/PROPOSAL.md`（兼容期如需可保留旧名映射）。
+   - **硬约束**：`## 待澄清问题` 段必须为 `无`。若仍有未决问题，说明步骤 1 没走完——**回到步骤 1 继续反问，不要先生成文件**。带未勾选项（`- [ ]`）的 PROPOSAL 会被 `gantry next` 门禁阻断。
 5. **路径建议**：基于影响面判定，给出本次走哪条路径：
    - 完整：`REQUIREMENT → DESIGN → TASK → DEV → TEST → REVIEW → INTEGRATION`
    - 中等：`(REQUIREMENT 增量) → TASK → DEV → TEST → REVIEW → INTEGRATION`
@@ -143,22 +153,24 @@ gantry hook run before:change
 
 ## 输出
 
-- `.gantry/specs/<change-id>/CHANGE.md`（必填）
+- `.gantry/specs/<change-id>/PROPOSAL.md`（必填）
 - 一段路径建议，并询问用户确认
 
 ## 约束（来自 RULES.md）
 
 - 不允许跳过反问直接出方案
 - 不允许凭空假设未确认的需求点
-- 不允许在 CHANGE.md 里写实现细节（那是 DESIGN 的事）
+- 不允许在 `PROPOSAL.md` 里写实现细节（那是 DESIGN 的事）
+- 不允许带着未决问题产出 PROPOSAL：`## 待澄清问题` 段必须先反问清空，否则不生成文件
 
 ## 自检（产出前自查）
 
-- [ ] CHANGE.md 包含：Why / What / 影响面 / 范围排除 / 验收线
+- [ ] `PROPOSAL.md` 包含：Why / What / 影响面 / 范围排除 / 验收线
+- [ ] **`## 待澄清问题` 段为 `无`**（所有疑问都已反问用户并拿到答案，结论已并入正文）
 - [ ] 至少明确写出 1 条「本次不做」
 - [ ] 路径建议有理由，不是默认全跑
 - [ ] 没有跳到实现层（"用 Redux 存主题"这种话不该出现在这里）
-- [ ] **步骤 0.4 已跑**：未命中就跳过；命中且用户选 2 → CHANGE.md 末尾有「架构层影响声明」段
+- [ ] **步骤 0.4 已跑**：未命中就跳过；命中且用户选 2 → `PROPOSAL.md` 末尾有「架构层影响声明」段
 
 ## Post-hook（可选）
 
@@ -171,6 +183,6 @@ gantry hook run after:change
 
 ## 触发下一步
 
-CHANGE.md 经用户确认后，根据路径建议进入：
+`PROPOSAL.md` 经用户确认后，根据路径建议进入：
 - `phases/1-requirement.md`（影响需求时）
 - `phases/3-task.md`（直接拆任务时）

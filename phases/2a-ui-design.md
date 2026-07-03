@@ -1,5 +1,12 @@
 # 阶段 2a · UI-DESIGN — 把"看起来怎样"决策清楚
 
+## Context Pack 优先
+
+> 如果存在 `.gantry/planning/context-pack.json`,**先读它**。pack 的 `checklists` 字段已替你完成"是否触发各子检查"的机械判定;你只需按 `trigger=true/false` 决定哪些段必跑、哪些跳过。
+>
+> 下面的 prose 仍是执行参考(怎么做),但"该不该做"以 pack 为准。
+
+
 > **仅前端项目走此阶段**。后端 / CLI / lib 直接跳到 `3-task`。
 > 触发条件：项目涉及任何用户可见的 UI（web 页面、组件库、移动端、桌面端 GUI）。
 
@@ -9,8 +16,8 @@ UI Director。**只产视觉/交互方向，不产实现代码**（角色红线 
 
 ## 输入
 
-- `@.gantry/specs/<id>/CHANGE.md`（**必读**，含 0-change 阶段已选的「视觉调性」）
-- `@.gantry/specs/<id>/REQUIREMENT.md`
+- `@.gantry/specs/<id>/PROPOSAL.md`（**必读**；兼容期接受 `CHANGE.md`，含 0-change 阶段已选的「视觉调性」）
+- `@.gantry/specs/<id>/SPEC.md`（兼容期接受 `REQUIREMENT.md`）
 - `@.gantry/specs/<id>/DESIGN.md`（**必读 `## 0. 技术栈选定` 段**——字体 / UI 库 / 组件库 / 图标库的选择必须基于这个栈）
 - `@.gantry/specs/CONTEXT.md`
 - `@gantry/reference/ui-aesthetics.md`（决策框架）
@@ -24,16 +31,16 @@ UI Director。**只产视觉/交互方向，不产实现代码**（角色红线 
 - **greenfield**：空项目 / 第一个 UI change / 用户明说"重新做 UI" → 跳过 1.5，直接进 1
 - **brownfield**：已存在 UI，本次 change 是加新页面 / 新组件 / 改现有页面 → **必走 1.5 视觉语汇对齐**
 
-判定信号：`src/` 下已有 `.css` / `.scss` / `.tsx` / `theme` / `design-tokens` 文件，或 `CHANGE.md` 的视觉调性段标为"沿用现有"。
+判定信号：`src/` 下已有 `.css` / `.scss` / `.tsx` / `theme` / `design-tokens` 文件，或 `PROPOSAL.md`（兼容期接受 `CHANGE.md`）的视觉调性段标为"沿用现有"。
 
 ### 1. 美学方向决策（greenfield 最重要的一步）
 
 按 `ui-aesthetics.md` 的"4 个问题"显式回答，**缺一不可**：
 
 - **目的**：界面解决什么问题？谁用？核心动作？
-- **调性**：**从 `CHANGE.md` 的「视觉调性」段读取已选项**（在 0-change 步骤 0.6 已确定）。**不允许在本阶段让用户重选**。
-  - 如果 CHANGE.md 没有该字段（旧项目 / 跳过 0-change 直接进 2a）→ 才按 `ui-aesthetics.md` 的「调性」节展示卡片让用户选
-  - 如果用户在本阶段主动说"想换调性" → 引导回 0-change 改 CHANGE.md，不在 2a 内部改（避免与原始决策不一致）
+- **调性**：**从 `PROPOSAL.md` 的「视觉调性」段读取已选项**（兼容期接受 `CHANGE.md`，在 0-change 步骤 0.6 已确定）。**不允许在本阶段让用户重选**。
+  - 如果 `PROPOSAL.md` 没有该字段（旧项目 / 跳过 0-change 直接进 2a）→ 才按 `ui-aesthetics.md` 的「调性」节展示卡片让用户选
+  - 如果用户在本阶段主动说"想换调性" → 引导回 0-change 改 `PROPOSAL.md`，不在 2a 内部改（避免与原始决策不一致）
 - **约束**：技术栈 / 性能预算 / 无障碍等级 / 品牌限定
 - **差异化**：让人记住的"那一件事"是什么？三天后用户描述这个产品会用什么形容词？
 
@@ -222,7 +229,7 @@ v0 = 占位符 + 关键布局 + 步骤 2 决定的 token + 假设清单。
 
 检测：项目根 `src/ui-ux-pro-max/scripts/search.py` 存在，或全局装了 `uipro-cli`。
 
-- **步骤 1**（美学方向）：调性已从 CHANGE.md 读到，可补 `--domain product` 拿场景模式
+- **步骤 1**（美学方向）：调性已从 `PROPOSAL.md` 读到（兼容期接受 `CHANGE.md`），可补 `--domain product` 拿场景模式
 - **步骤 2**（5 维决策）：按上面表格，逐维度调 `--domain {typography|color|chart|ux}` 拿候选
 - **步骤 4**（组件规约）：按项目栈调 `--stack <stack>` 拿栈级建议（如 React + shadcn）
 - **步骤 6**（自检）：调 `--domain ux` 对照 99 UX guidelines 二次校验

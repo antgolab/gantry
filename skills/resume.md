@@ -29,7 +29,7 @@ stage: auto
 | 中断类型 | 判断条件 | 需要加载的文件 |
 |---|---|---|
 | **checkpoint 等待** | 有 pending checkpoint | checkpoint 文件 + 对应阶段产物 |
-| **task 执行中断** | currentStage=dev 且 currentTask 非空 | TASK.md + PROGRESS.md + DESIGN.md |
+| **task 执行中断** | currentStage=dev 且 currentTask 非空 | `TASKS.md`（兼容期接受 `TASK.md`）+ PROGRESS.md + DESIGN.md |
 | **阶段间中断** | currentStage 非 idle 且无 pending task | 当前阶段产物 + 下一阶段门禁检查 |
 
 ### 3. 检查 PROGRESS.md（task 中断时）
@@ -41,7 +41,7 @@ stage: auto
 
 如果不存在 PROGRESS.md 但 STATE 显示有中断 task：
 - 检查 git log 最近提交，推断执行进度
-- 检查 TASK.md 中该 task 的 verify 条件是否已满足
+- 检查 `TASKS.md`（兼容期接受 `TASK.md`）中该 task 的 verify 条件是否已满足
 
 ### 4. 恢复执行
 

@@ -1,5 +1,12 @@
 # 阶段 5 · TEST — 五轮测试金字塔
 
+## Context Pack 优先
+
+> 如果存在 `.gantry/planning/context-pack.json`,**先读它**。pack 的 `checklists` 字段已替你完成"是否触发各子检查"的机械判定;你只需按 `trigger=true/false` 决定哪些段必跑、哪些跳过。
+>
+> 下面的 prose 仍是执行参考(怎么做),但"该不该做"以 pack 为准。
+
+
 > **核心思想**：测试不是"跑一下单测"，是 5 个维度的金字塔。
 > 每轮按项目类型可裁剪。本 prompt 决定**做哪几轮**；具体怎么做查 `@gantry/reference/test-pyramid.md`。
 
@@ -18,10 +25,11 @@ gantry hook run before:test
 
 ## 输入
 
-- `@.gantry/specs/<change-id>/REQUIREMENT.md`（AC + 非功能性需求）
+- `@.gantry/specs/<change-id>/SPEC.md`（AC + 非功能性需求；兼容期接受 `REQUIREMENT.md`）
 - `@.gantry/specs/<change-id>/DESIGN.md`（**必读 `## 0. 技术栈选定`**——5 轮各项的工具选择必须匹配栈：JS 用 Vitest / Playwright / k6，Python 用 pytest / locust，Go 用 testing / vegeta）
-- `@.gantry/specs/<change-id>/TASK.md`
-- 各任务的 `*-SUMMARY.md`
+- `@.gantry/specs/<change-id>/TASKS.md`（兼容期接受 `TASK.md`）
+- `@.gantry/specs/<change-id>/EXECUTION.md`
+- 各任务的 `*-SUMMARY.md`（仅高风险/例外任务存在）
 - 已存在的测试代码
 - `@gantry/reference/test-pyramid.md`（5 轮的工具 / 标准 / 清单）
 
@@ -126,7 +134,7 @@ UAT-1：<场景>
 
 #### 2.1 性能预算确认
 
-从 `REQUIREMENT.md` 的「非功能性需求」提取性能预算。**没有就停下来**，让用户先补。
+从 `SPEC.md` 的「非功能性需求」提取性能预算。**没有就停下来**，让用户先补。
 
 #### 2.2 前端性能（Web 项目）
 
@@ -195,9 +203,9 @@ Semgrep / CodeQL / Bandit 选一。无 high；medium 有处理记录。
 
 #### 4.2 数据迁移测试（涉及 schema 变更必跑 · 关联 4-dev 1.7 / R4.5）
 
-**前置**：本任务在 4-dev 步骤 1.7 已生成迁移文件（如未生成，回退到 dev 阶段——R4.5 违规）。在 SUMMARY.md「数据库迁移」段 trace 文件路径，本步对这些文件做端到端验证。
+**前置**：本任务在 4-dev 步骤 1.7 已生成迁移文件（如未生成，回退到 dev 阶段——R4.5 违规）。优先从 `EXECUTION.md` 的相关 task 段追踪迁移文件路径；若该任务是例外任务，也可从 `<task-id>-SUMMARY.md`「数据库迁移」段追踪。本步对这些文件做端到端验证。
 
-- [ ] 迁移文件路径已 trace（来自 `<task-id>-SUMMARY.md`「数据库迁移」段）
+- [ ] 迁移文件路径已 trace（来自 `EXECUTION.md`，例外任务可来自 `<task-id>-SUMMARY.md`）
 - [ ] 在**生产数据快照**上预演迁移脚本（不能只在 dev 数据上跑）
 - [ ] 实测耗时 → 决定是否需要 maintenance window（> 30s 的 ALTER TABLE 必走窗口）
 - [ ] **回滚脚本（down）就位且测过**：跑 up → 跑 down → 数据 / schema 复原 → 再跑 up

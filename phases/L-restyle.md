@@ -31,7 +31,7 @@ UI Director + Refactor Specialist。**保留功能不变**，只换视觉。
 - 项目里已有的 `UI-DESIGN.md`（如有，作为 v1 调性来源）
 - `@gantry/reference/ui-aesthetics.md`（调性卡片）
 - `@gantry/reference/ui-anti-patterns.md`
-- 项目主 `REQUIREMENT.md`（确认要保留的 AC 不变）
+- 项目主 `SPEC.md`（兼容期可回退到 `REQUIREMENT.md`，用于确认要保留的 AC 不变）
 
 ---
 

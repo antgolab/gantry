@@ -1,4 +1,6 @@
-# SUMMARY: <T01 - 任务名> 
+# SUMMARY: <T01 - 任务名>
+
+> 兼容模板。默认长期记录已迁移到 `EXECUTION.md`；仅高风险/例外任务保留独立 `*-SUMMARY.md`。
 
 - **Change ID**: <id>
 - **Task ID**: <T01>
@@ -9,7 +11,7 @@
 
 ## 做了什么（一段话）
 
-<这次任务实际完成的事，避免照抄 TASK.md 的 action。重点：实际选择 / 偏离原计划的地方 / 任何遗留。>
+<这次任务实际完成的事，避免照抄 TASKS.md 的 action。重点：实际选择 / 偏离原计划的地方 / 任何遗留。>
 
 ## 改动文件
 
@@ -159,11 +161,11 @@ Tests: 3 passed, 3 total
 
 ## 是否触发新工作
 
-- [ ] 触发新 fix-plan（已追加到 TASK.md）
+- [ ] 触发新 fix-plan（已追加到 TASKS.md）
 - [ ] 触发 CONTEXT.md 更新（已更新）
 - [ ] 发现需求/设计问题，已暂停并提交给人工
 
 ## 完成判定
 
-- TASK.md 中对应任务已勾选：是
+- TASKS.md 中对应任务已勾选：是
 - 提交 hash：`<commit-sha>`

@@ -3,10 +3,31 @@
 //   AGENTS.md                                    — compact entry contract
 //   .agents/skills/gantry-<name>/SKILL.md        — merged skill (orchestration + phase)
 //
-// Strategy: orchestration commands that have a matching phase get the phase
-// content appended at install time. Phases without a skill become standalone.
-// All entry points are unified under gantry-* skills.
+// Strategy: public orchestration commands that have a matching phase get the
+// phase content appended at install time. Internal phases are not emitted as
+// standalone user-facing skills.
+// All public entry points are unified under gantry-* skills.
 // Source files (phases/*.md, skills/*.md) remain unchanged.
+
+const PUBLIC_SKILLS = new Set([
+  'init',
+  'status',
+  'change',
+  'next',
+  'exec',
+  'verify',
+  'adjust',
+  'resume',
+  'archive',
+  'unarchive',
+  'auto',
+  'review',
+  'health',
+  'context',
+  'knowledge',
+  'debug',
+  'fast',
+]);
 
 // Map skill stage → phase filename (without .md)
 const STAGE_PHASE_MAP = {
@@ -46,33 +67,28 @@ export function render(core, commands, agents) {
   // Orchestration commands: merge with matching phase
   if (commands) {
     for (const [name, content] of Object.entries(commands)) {
+      if (!PUBLIC_SKILLS.has(name)) continue;
       const { frontmatter, body } = splitFrontmatter(content);
       const stage = frontmatter.stage;
       const skillName = `gantry-${name}`;
 
       let phaseContent = null;
+      let phaseFileName = null;
       if (stage && STAGE_PHASE_MAP[stage]) {
         const phaseCmd = toSkillName(STAGE_PHASE_MAP[stage] + '.md');
         if (phaseLookup[phaseCmd]) {
           phaseContent = phaseLookup[phaseCmd].content;
+          phaseFileName = phaseLookup[phaseCmd].fileName;
           consumedPhases.add(phaseCmd);
         }
       }
 
       if (phaseContent) {
-        files[`.agents/skills/${skillName}/SKILL.md`] = mergedSkill(skillName, content, phaseContent);
+        files[`.agents/skills/${skillName}/SKILL.md`] = mergedSkill(skillName, content, phaseContent, phaseFileName);
       } else {
         files[`.agents/skills/${skillName}/SKILL.md`] = flowSkill(skillName, name, content);
       }
     }
-  }
-
-  // Remaining phases → standalone gantry-<name> skill
-  for (const [cmdName, { fileName, content }] of Object.entries(phaseLookup)) {
-    if (consumedPhases.has(cmdName)) continue;
-    if (commands && commands[cmdName]) continue;
-    const skillName = `gantry-${cmdName}`;
-    files[`.agents/skills/${skillName}/SKILL.md`] = phaseOnlySkill(skillName, fileName, content);
   }
 
   return files;
@@ -86,8 +102,9 @@ function codexRoot(core, commands) {
 ## 启动契约
 
 - 不依赖聊天记忆；以仓库工件为准。
-- 改文件前读取：\`docs/RULES.md\`、\`docs/METHODOLOGY.md\`、\`.gantry/planning/STATE.md\`、当前阶段 prompt、DEV 阶段的活动 \`TASK.md\`。
-- 严格遵守 \`TASK.md\` 的 \`read_files\` / \`write_files\` 边界。
+- 执行 gantry skill 前读取 \`.gantry/planning/context-pack.json\`，按 \`loadOrder\` 最小加载当前阶段所需文件。
+- \`docs/RULES.md\` / \`docs/METHODOLOGY.md\` 是规则源文件；仅在解释规则、修改 gantry 框架或 \`context-pack\` 明确要求时读取。
+- 严格遵守 \`TASKS.md\`（兼容期接受 \`TASK.md\`）的 \`read_files\` / \`write_files\` 边界。
 - 完成前必须运行并报告 verify 证据。
 - 累计 / 输入 token > 200k 或上下文窗口使用率 > 85% 时，写 \`<task-id>-PROGRESS.md\` 后清窗。
 - 禁止把长规则或长工件复制进聊天；用 \`@文件路径\` 引用。
@@ -101,15 +118,24 @@ function codexRoot(core, commands) {
 - \`$gantry-verify\`：运行任务验证
 - \`$gantry-resume\`：断点恢复
 - \`$gantry-archive\`：完成并归档
+- \`$gantry-auto\`：自主推进（保留 checkpoint 门禁）
+- \`$gantry-review\`：审查入口（代码 / 需求 / 对抗）
+- \`$gantry-health\`：代码库健康检查
+- \`$gantry-context\`：上下文与架构治理
+- \`$gantry-knowledge\`：知识捕获与维护
+- \`$gantry-debug\`：系统化调试
+- \`$gantry-fast\`：快速路径
 
-完整 skills 位于 \`.agents/skills/\`；优先使用 Codex 原生 \`/skills\` 发现，而不是把完整索引常驻上下文。
+公开 skills 位于 \`.agents/skills/\`；内部阶段协议由 \`gantry-next\` / \`gantry-exec\` / \`gantry-review\` 按需读取。
 `;
 }
 
 /**
- * Merge orchestration skill + phase into one SKILL.md
+ * Merge orchestration skill + phase reference + pack protocol.
+ * Phase content lives at .gantry/core/phases/<fileName> — skill tells
+ * agent to read it at execution time (thin transcoder mode).
  */
-function mergedSkill(skillName, skillContent, phaseContent) {
+function mergedSkill(skillName, skillContent, phaseContent, phaseFileName) {
   const { frontmatter, body } = splitFrontmatter(skillContent);
   const phaseTitle = extractTitle(phaseContent);
   const description = frontmatter.description || phaseTitle || `gantry skill ${skillName}`;
@@ -125,9 +151,22 @@ ${body.trim()}
 
 ---
 
+## Context Pack 协议
+
+每次执行此 skill 前先读取 \`.gantry/planning/context-pack.json\`,严格按 schema v2 行事:
+- 校验 \`schemaVersion === 2\`,否则停手。
+- 顺序消费 \`loadOrder\` (phase prompt / artifacts / context-doc / LESSONS)。
+- 子检查按**非对称信任**执行 \`checklists[]\`:
+  - \`trigger === true\`:必跑,不得跳过。
+  - \`trigger === false && confidence === "high"\`:确定不用跑,跳过。
+  - \`trigger === false && confidence === "low"\`:关键词判定可能漏,**据完整上下文复核**,涉及就补跑。
+  - 只能把 low 的 false 上调为"跑",不得把 true 下调为"跳过"。
+- 完成后执行 \`next.onSuccess\` (失败走 \`next.onFailure\`)。
+- 不允许在 v2 schema 上自行发明字段。
+
 ## 阶段执行指令
 
-${stripFrontmatter(phaseContent).trim()}
+读取并严格执行 \`.gantry/core/phases/${phaseFileName}\` 中的完整阶段协议。
 `;
 }
 
@@ -139,22 +178,6 @@ function flowSkill(skillName, cmdName, content) {
   const description = frontmatter.description
     ?? extractTitle(body)
     ?? `gantry 编排命令 /gantry:${cmdName}。`;
-  return `---
-name: ${skillName}
-description: ${oneLine(description)}
----
-
-${body.trim()}
-`;
-}
-
-/**
- * Phase without a matching skill → standalone skill.
- */
-function phaseOnlySkill(skillName, fileName, content) {
-  const body = stripFrontmatter(content);
-  const title = extractTitle(body) ?? fileName;
-  const description = `gantry 阶段：${title}`;
   return `---
 name: ${skillName}
 description: ${oneLine(description)}

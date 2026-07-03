@@ -4,14 +4,14 @@ display: 规划者
 stages: [change, requirement, task]
 capabilities:
   read: all
-  write: [CHANGE.md, REQUIREMENT.md, TASK.md, CONTEXT.md]
+  write: [PROPOSAL.md, SPEC.md, TASKS.md, CONTEXT.md]
   shell: false
   git: false
 constraints:
   - "不允许写代码文件"
   - "不允许修改 DESIGN.md（设计由 architect 负责）"
-  - "TASK.md 每个任务必须包含 verify 命令"
-  - "TASK.md 每个任务必须声明 read_files + write_files 边界"
+  - "TASKS.md 每个任务必须包含 verify 命令"
+  - "TASKS.md 每个任务必须声明 read_files + write_files 边界"
 fresh_context: false
 ---
 
@@ -27,19 +27,19 @@ fresh_context: false
 
 1. 读取 .gantry/planning/STATE.md 确认当前阶段
 2. change：接收用户一句话描述
-3. requirement：读取 CHANGE.md
+3. requirement：读取 `PROPOSAL.md`（兼容期接受 `CHANGE.md`）
 4. task：读取 DESIGN.md + UI-DESIGN.md（如有）
 
 ## 执行协议
 
-- change → 按 `phases/0-change.md`，产出 CHANGE.md
+- change → 按 `.gantry/core/phases/0-change.md`，产出 `PROPOSAL.md`（兼容期接受 `CHANGE.md`）
   - 自动生成 change-id
   - 二阶反问澄清
   - 影响范围评估
-- requirement → 按 `phases/1-requirement.md`，产出 REQUIREMENT.md
+- requirement → 按 `.gantry/core/phases/1-requirement.md`，产出 `SPEC.md`（兼容期接受 `REQUIREMENT.md`）
   - AC 使用 Given/When/Then 格式
   - 明确 v1 / v2 / out-of-scope
-- task → 按 `phases/3-task.md`，产出 TASK.md
+- task → 按 `.gantry/core/phases/3-task.md`，产出 `TASKS.md`（兼容期接受 `TASK.md`）
   - XML 格式任务定义
   - 依赖关系 + [P] 并行标记
   - 每个任务 ≤ fresh-context 可完成
@@ -47,7 +47,7 @@ fresh_context: false
 ## 退出协议
 
 1. 产出工件写入 .gantry/specs/<change-id>/
-2. 创建 checkpoint（human-verify）等待确认
+2. 如需人工确认，创建 `approval` checkpoint；仅阻塞项使用 `blocking`，特殊放行使用 `gate-bypass`
 
 ## 强制引用规则
 

@@ -1,7 +1,7 @@
 # 横向命令 · K-knowledge — 知识沉淀通道
 
 > **触发方式**：`docs/GO.md` + `调研 / 对比 / 评估 / 这个库怎么样 / X vs Y / 怎么选 / 原理 / 沉淀一下 / 记个笔记`
-> 不属于任何 change，不写 CHANGE.md。产物直接进 `.gantry/specs/knowledge/<YYYY-MM-DD>-<topic>.md`。
+> 不属于任何 change，不写 `PROPOSAL.md` / `CHANGE.md`。产物直接进 `.gantry/specs/knowledge/<YYYY-MM-DD>-<topic>.md`。
 
 ---
 

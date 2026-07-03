@@ -5,10 +5,10 @@
 // Each skill is a folder — can hold supporting files (templates, scripts, etc).
 //
 // Strategy:
-// - Orchestration commands (skills/) that have a matching phase get the phase
-//   content appended at install time → single merged SKILL.md.
-// - Phases without a matching skill are emitted as standalone gantry-<name> skills.
-// - All entry points unified under /gantry-* (user invokes /gantry-change, etc).
+// - Public orchestration commands (skills/) that have a matching phase reference
+//   that phase at install time.
+// - Internal phases are not emitted as standalone user-facing skills.
+// - All public entry points unified under /gantry-* (user invokes /gantry-change, etc).
 // - Source files (phases/*.md, skills/*.md) remain unchanged.
 
 import { readFileSync } from 'node:fs';
@@ -17,6 +17,26 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const systemPartial = readFileSync(join(__dirname, 'partials/patch-protocol.md'), 'utf8');
+
+const PUBLIC_SKILLS = new Set([
+  'init',
+  'status',
+  'change',
+  'next',
+  'exec',
+  'verify',
+  'adjust',
+  'resume',
+  'archive',
+  'unarchive',
+  'auto',
+  'review',
+  'health',
+  'context',
+  'knowledge',
+  'debug',
+  'fast',
+]);
 
 // Map skill stage field → phase filename (without .md)
 const STAGE_PHASE_MAP = {
@@ -56,6 +76,7 @@ export function render(core, commands, agents) {
   // Orchestration commands: reference matching phase file
   if (commands) {
     for (const [name, content] of Object.entries(commands)) {
+      if (!PUBLIC_SKILLS.has(name)) continue;
       const { frontmatter } = splitFrontmatter(content);
       const stage = frontmatter.stage;
 
@@ -75,14 +96,6 @@ export function render(core, commands, agents) {
         files[`.claude/skills/${skillName}/SKILL.md`] = flowSkill(skillName, name, content);
       }
     }
-  }
-
-  // Remaining phases → standalone skill that references the phase file
-  for (const [cmdName, { fileName }] of Object.entries(phaseLookup)) {
-    if (consumedPhases.has(cmdName)) continue;
-    if (commands && commands[cmdName]) continue;
-    const skillName = `gantry-${cmdName}`;
-    files[`.claude/skills/${skillName}/SKILL.md`] = phaseRefSkill(skillName, fileName, core.phases[fileName]);
   }
 
   return files;
@@ -124,9 +137,10 @@ idle → change → requirement → design → [ui-design] → task → dev → 
 
 ## 可用 Skills
 
-所有 gantry skills 位于 \`.claude/skills/gantry-*/\`。Claude 会根据 description 自动匹配，也可用 \`/gantry-<name>\` 显式调用。
+公开 gantry skills 位于 \`.claude/skills/gantry-*/\`。内部阶段协议由 \`/gantry-next\` / \`/gantry-exec\` / \`/gantry-review\` 按需读取。
 
 核心命令：\`/gantry-change\`、\`/gantry-next\`、\`/gantry-exec\`、\`/gantry-verify\`、\`/gantry-archive\`。
+扩展入口：\`/gantry-auto\`、\`/gantry-review\`、\`/gantry-health\`、\`/gantry-context\`、\`/gantry-knowledge\`、\`/gantry-debug\`、\`/gantry-fast\`。
 `;
 }
 
@@ -135,7 +149,8 @@ idle → change → requirement → design → [ui-design] → task → dev → 
 /**
  * Orchestration skill that references an external phase file.
  * The phase content lives in .gantry/core/phases/<fileName> — skill tells
- * the agent to read it at execution time.
+ * the agent to read it at execution time. The skill also reminds the agent
+ * to consume `.gantry/planning/context-pack.json` (the kernel ↔ client contract).
  */
 function skillWithPhaseRef(skillName, skillContent, phaseFileName) {
   const { frontmatter, body } = splitFrontmatter(skillContent);
@@ -151,6 +166,19 @@ ${fmLines.join('\n')}
 ---
 
 ${body.trim()}
+
+## Context Pack 协议
+
+每次执行此 skill 前先 \`Read .gantry/planning/context-pack.json\`,严格按 schema v2 行事:
+- 校验 \`schemaVersion === 2\`,否则停手并告知用户。
+- 顺序消费 \`loadOrder\`(phase prompt / artifacts / context-doc / LESSONS)。
+- 子检查按**非对称信任**执行 \`checklists[]\`:
+  - \`trigger === true\`:必跑,机器判定可信,不得跳过。
+  - \`trigger === false && confidence === "high"\`:确定不用跑(基于文件存在性等事实),跳过。
+  - \`trigger === false && confidence === "low"\`:关键词判定可能漏判,**你必须据完整上下文(DESIGN/task 全文)复核**——确实涉及就补跑并说明;不涉及才跳过。
+  - 你**只能把 low 的 false 上调为"跑"**,**不得把任何 true 下调为"跳过"**。
+- 完成后执行 \`next.onSuccess\` (失败走 \`next.onFailure\`)。
+- 不允许在 v2 schema 上自行发明字段。
 
 ## 阶段执行指令
 
@@ -177,22 +205,6 @@ ${fmLines.join('\n')}
 ---
 
 ${body.trim()}
-`;
-}
-
-/**
- * Phase without a matching skill → standalone skill that references the phase file.
- */
-function phaseRefSkill(skillName, fileName, content) {
-  const title = extractTitle(content) ?? fileName;
-  const description = `gantry 阶段：${title}`;
-
-  return `---
-description: ${oneLine(description)}
-disable-model-invocation: true
----
-
-读取并严格执行 \`.gantry/core/phases/${fileName}\` 中的完整阶段协议。
 `;
 }
 

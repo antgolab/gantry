@@ -1,5 +1,12 @@
 # 阶段 2 · DESIGN — 把需求变成可执行的技术设计
 
+## Context Pack 优先
+
+> 如果存在 `.gantry/planning/context-pack.json`,**先读它**。pack 的 `checklists` 字段已替你完成"是否触发各子检查"的机械判定;你只需按 `trigger=true/false` 决定哪些段必跑、哪些跳过。
+>
+> 下面的 prose 仍是执行参考(怎么做),但"该不该做"以 pack 为准。
+
+
 ## 角色
 
 你是 Architect。**只产出设计，不写实现代码**（角色红线 R3.1）。
@@ -15,8 +22,8 @@ gantry hook run before:design
 
 ## 输入
 
-- `@.gantry/specs/<change-id>/REQUIREMENT.md`
-- `@.gantry/specs/<change-id>/CHANGE.md`（含项目类型与调性信息）
+- `@.gantry/specs/<change-id>/SPEC.md`（兼容期接受 `REQUIREMENT.md`）
+- `@.gantry/specs/<change-id>/PROPOSAL.md`（兼容期接受 `CHANGE.md`，含项目类型与调性信息）
 - **项目上下文文档**（从 `STATE.md` 读 `ai_context_doc` 字段决定）：
   - 有 `ai_context_doc: <path>` → 读那个文档（如 `AGENTS.md` / `CLAUDE.md`）
   - 没 `ai_context_doc` 或 `ai_context_doc: CONTEXT.md` → 读 `@.gantry/specs/CONTEXT.md`
@@ -39,7 +46,7 @@ gantry hook run before:design
 
 **判定标准**：与 `phases/0-change.md` 步骤 0.4.1 完全一致（5 条命中条件 + 反例）。
 
-**已跑过 0-change 的不必重判**：如果 `<change-id>/CHANGE.md` 末尾有「## 架构层影响声明」段或「## 走 A-architect 后回来」标记，说明 0.4 已处理，**直接跳到步骤 0**。
+**已跑过 0-change 的不必重判**：如果 `<change-id>/PROPOSAL.md`（兼容期接受 `CHANGE.md`）末尾有「## 架构层影响声明」段或「## 走 A-architect 后回来」标记，说明 0.4 已处理，**直接跳到步骤 0**。
 
 **首次到这步的判定**：
 
@@ -73,7 +80,7 @@ gantry hook run before:design
 加载 `@gantry/reference/tech-stacks.md`，按其中的「适用矩阵」过滤出 **5~6 张最匹配项目类型**的卡片（不要 8 张全列），按「给 AI 在 2-design 阶段展示用的标准模板」**实际渲染**给用户：
 
 - 5~6 张卡片（编号 + 名称 + 一句话栈描述）
-- **必给 1 首选 + 1 备选**，理由结合 REQUIREMENT.md 的 AC + 非功能需求（QPS / 团队 / 部署环境 / 数据规模）
+- **必给 1 首选 + 1 备选**，理由结合 `SPEC.md` 的 AC + 非功能需求（QPS / 团队 / 部署环境 / 数据规模）
 - **显式排除** 1~2 个 + 理由
 - 末尾一句：`请回复数字（如 "1"）或描述偏好，选定后我才出具体 ADR 与架构图。`
 
@@ -91,7 +98,7 @@ gantry hook run before:design
 
 #### 0.5.1 列出本次 change 会触碰的既有模块
 
-基于 REQUIREMENT.md 和 CONTEXT.md，**grep 出实际会涉及的既有模块**（不是猜，是 grep）：
+基于 `SPEC.md` 和 `CONTEXT.md`，**grep 出实际会涉及的既有模块**（不是猜，是 grep）：
 
 ```
 本次 change 会触碰：

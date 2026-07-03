@@ -2,7 +2,8 @@
 // gantry verify pipeline
 // 1. dist/* 中的 banner sha256 与实际内容一致（检测手改）
 // 2. dist/* 中出现的每条 R 规则在 RULES.md 能 grep 到
-// 3. phases/*.md 每个在至少一个 dist/ 中有对应产物
+// 3. phases/*.md are either referenced by a public prompt/skill or covered by
+//    the local install copy into .gantry/core/phases/
 
 import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs';
 import { resolve, dirname, join, relative } from 'node:path';
@@ -64,6 +65,8 @@ for (const tool of readdirSync(DIST)) {
 
 // 3. phases 覆盖
 const phases = readdirSync(join(ROOT, 'phases')).filter((n) => n.endsWith('.md'));
+const cli = readFileSync(join(ROOT, 'src', 'cli.mjs'), 'utf8');
+const installCopiesCorePhases = cli.includes('files[`.gantry/core/phases/${fileName}`] = content');
 for (const phase of phases) {
   let covered = false;
   for (const tool of readdirSync(DIST)) {
@@ -77,6 +80,7 @@ for (const phase of phases) {
     });
     if (found) { covered = true; break; }
   }
+  if (!covered && installCopiesCorePhases) covered = true;
   if (!covered) {
     errors++;
     console.error(`[verify] phase not distributed: phases/${phase}`);

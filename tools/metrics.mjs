@@ -82,7 +82,7 @@ function loadChanges(specsRoot) {
   for (const name of readdirSync(specsRoot)) {
     const full = join(specsRoot, name);
     if (!statSync(full).isDirectory()) continue;
-    if (name === 'archive') {
+    if (name === '_archive' || name === 'archive') {
       for (const sub of readdirSync(full)) {
         const subFull = join(full, sub);
         if (statSync(subFull).isDirectory()) archived.push(inspectChange(subFull, sub));
@@ -96,9 +96,17 @@ function loadChanges(specsRoot) {
 }
 
 function inspectChange(dir, id) {
-  const want = ['CHANGE.md', 'REQUIREMENT.md', 'DESIGN.md', 'TASK.md', 'TEST.md', 'REVIEW.md'];
+  const want = {
+    PROPOSAL: ['PROPOSAL.md', 'CHANGE.md'],
+    SPEC: ['SPEC.md', 'REQUIREMENT.md'],
+    DESIGN: ['DESIGN.md'],
+    TASKS: ['TASKS.md', 'TASK.md'],
+    EXECUTION: ['EXECUTION.md', 'SUMMARY.md'],
+    TEST: ['TEST.md'],
+    REVIEW: ['REVIEW.md'],
+  };
   const present = {};
-  for (const f of want) present[f] = existsSync(join(dir, f));
+  for (const [key, names] of Object.entries(want)) present[key] = names.some((f) => existsSync(join(dir, f)));
   return { id, present };
 }
 
@@ -149,9 +157,9 @@ function render({ commits, changes, knowledge, lessons, since, target }) {
   }
 
   const changeIds = [...changes.active, ...changes.archived];
-  const coverage = { CHANGE: 0, REQUIREMENT: 0, DESIGN: 0, TASK: 0, TEST: 0, REVIEW: 0 };
+  const coverage = { PROPOSAL: 0, SPEC: 0, DESIGN: 0, TASKS: 0, EXECUTION: 0, TEST: 0, REVIEW: 0 };
   for (const ch of changeIds) {
-    for (const k of Object.keys(coverage)) if (ch.present[`${k}.md`]) coverage[k]++;
+    for (const k of Object.keys(coverage)) if (ch.present[k]) coverage[k]++;
   }
 
   const fastRatio = total ? ((fast / total) * 100).toFixed(1) : '0.0';
@@ -193,10 +201,11 @@ ${Object.entries(byAuthor)
 
 | 阶段产物 | 产出数 | 覆盖率 |
 |---|---|---|
-| CHANGE.md | ${coverage.CHANGE} | ${pct(coverage.CHANGE, changeIds.length)}% |
-| REQUIREMENT.md | ${coverage.REQUIREMENT} | ${pct(coverage.REQUIREMENT, changeIds.length)}% |
+| PROPOSAL.md（兼容 CHANGE.md） | ${coverage.PROPOSAL} | ${pct(coverage.PROPOSAL, changeIds.length)}% |
+| SPEC.md（兼容 REQUIREMENT.md） | ${coverage.SPEC} | ${pct(coverage.SPEC, changeIds.length)}% |
 | DESIGN.md | ${coverage.DESIGN} | ${pct(coverage.DESIGN, changeIds.length)}% |
-| TASK.md | ${coverage.TASK} | ${pct(coverage.TASK, changeIds.length)}% |
+| TASKS.md（兼容 TASK.md） | ${coverage.TASKS} | ${pct(coverage.TASKS, changeIds.length)}% |
+| EXECUTION.md（兼容 SUMMARY.md） | ${coverage.EXECUTION} | ${pct(coverage.EXECUTION, changeIds.length)}% |
 | TEST.md | ${coverage.TEST} | ${pct(coverage.TEST, changeIds.length)}% |
 | REVIEW.md | ${coverage.REVIEW} | ${pct(coverage.REVIEW, changeIds.length)}% |
 

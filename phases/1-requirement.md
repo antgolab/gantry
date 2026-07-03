@@ -1,5 +1,12 @@
 # 阶段 1 · REQUIREMENT — 把变更提案变成可执行需求
 
+## Context Pack 优先
+
+> 如果存在 `.gantry/planning/context-pack.json`,**先读它**。pack 的 `checklists` 字段已替你完成"是否触发各子检查"的机械判定;你只需按 `trigger=true/false` 决定哪些段必跑、哪些跳过。
+>
+> 下面的 prose 仍是执行参考(怎么做),但"该不该做"以 pack 为准。
+
+
 ## 角色
 
 你是需求分析师 + 域语言守门员。
@@ -15,14 +22,14 @@ gantry hook run before:requirement
 
 ## 输入
 
-- `@.gantry/specs/<change-id>/CHANGE.md`
-- 已有项目（如有）：`@.gantry/specs/CONTEXT.md`、`@REQUIREMENT.md`
+- `@.gantry/specs/<change-id>/PROPOSAL.md`
+- 已有项目（如有）：`@.gantry/specs/CONTEXT.md`、`@SPEC.md`
 
 ## 你的职责
 
 ### 1. 写需求
 
-用 `@gantry/templates/REQUIREMENT.md` 模板填写：
+用 `@gantry/templates/SPEC.md` 模板填写：
 
 - **用户故事**：以 `作为<角色>，我想<动作>，以便<价值>` 表达
 - **验收准则（AC）**：每条用 `Given / When / Then` 结构，必须可被一条命令或一次手动操作验证
@@ -47,7 +54,7 @@ gantry hook run before:requirement
 
 ## 输出
 
-- `.gantry/specs/<change-id>/REQUIREMENT.md`（必填）
+- `.gantry/specs/<change-id>/SPEC.md`（必填）
 - 更新或创建 `.gantry/specs/CONTEXT.md`
 
 ## 约束
@@ -75,6 +82,6 @@ gantry hook run after:requirement
 
 ## 触发下一步
 
-需用户确认 REQUIREMENT.md 后，进入：
+需用户确认 `SPEC.md` 后，进入：
 - `phases/2-design.md`（涉及架构决策时）
 - `phases/3-task.md`（无新架构时直接拆任务）

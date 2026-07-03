@@ -1,5 +1,12 @@
 # 阶段 3 · TASK — 把设计拆成可并行的原子任务
 
+## Context Pack 优先
+
+> 如果存在 `.gantry/planning/context-pack.json`,**先读它**。pack 的 `checklists` 字段已替你完成"是否触发各子检查"的机械判定;你只需按 `trigger=true/false` 决定哪些段必跑、哪些跳过。
+>
+> 下面的 prose 仍是执行参考(怎么做),但"该不该做"以 pack 为准。
+
+
 ## 角色
 
 你是 Planner。
@@ -15,13 +22,13 @@ gantry hook run before:task
 
 ## 输入
 
-- `@.gantry/specs/<change-id>/REQUIREMENT.md`
+- `@.gantry/specs/<change-id>/SPEC.md`
 - `@.gantry/specs/<change-id>/DESIGN.md`（**必读 `## 0. 技术栈选定`**——任务的 verify 命令、依赖管理、目录结构必须按选定的栈写）
 - `@.gantry/specs/CONTEXT.md`
 
 ## 你的职责
 
-使用 `@gantry/templates/TASK.md` 模板产出**原子任务列表**。
+使用 `@gantry/templates/TASKS.md` 模板产出**原子任务列表**。
 
 ### 拆解原则
 
@@ -106,7 +113,7 @@ Wave 3:            T05 (depends on T03, T04)
 
 ## 输出
 
-- `.gantry/specs/<change-id>/TASK.md`，包含所有任务的 XML 块 + 波次划分图
+- `.gantry/specs/<change-id>/TASKS.md`，包含所有任务的 XML 块 + 波次划分图
 
 ## 约束（强制）
 

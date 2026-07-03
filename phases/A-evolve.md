@@ -1,7 +1,7 @@
 # 横向命令 · A-evolve — 把 change 期间的架构沉淀同步到项目级文档
 
 > **触发方式**：`docs/GO.md` + `同步架构 / 整理沉淀 / sediment / evolve / 架构演进 / 同步 CONTEXT`
-> 不属于任何 change，不写 CHANGE.md / REQUIREMENT.md。直接产出沉淀同步报告 + patch CONTEXT.md（+ ARCHITECTURE.md如存在）。
+> 不属于任何 change，不写 `PROPOSAL.md` / `SPEC.md`（兼容期接受旧命名）。直接产出沉淀同步报告 + patch CONTEXT.md（+ ARCHITECTURE.md如存在）。
 
 ## 角色
 

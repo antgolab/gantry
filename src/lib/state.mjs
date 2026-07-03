@@ -30,8 +30,6 @@ function defaultState() {
       tokens: null,
       windowPercent: null,
     },
-    checkpoints: [],
-    decisions: [],
   };
 }
 
@@ -42,12 +40,10 @@ function defaultState() {
  */
 export function readState(projectRoot) {
   const statePath = join(projectRoot, PLANNING_DIR, STATE_FILE);
-  if (!existsSync(statePath)) {
-    return defaultState();
-  }
-
-  const content = readFileSync(statePath, 'utf-8');
-  return parseStateMd(content);
+  const state = existsSync(statePath)
+    ? parseStateMd(readFileSync(statePath, 'utf-8'))
+    : defaultState();
+  return state;
 }
 
 /**
@@ -85,6 +81,7 @@ export function transitionStage(projectRoot, fromStage, toStage) {
     currentWave: null,
     currentTask: null,
     retries: 0,
+    pauseReason: null,
   });
 }
 
@@ -98,34 +95,29 @@ export function logPhaseEvent(projectRoot, event) {
 }
 
 /**
- * 读取 timeline
+ * 读取 timeline 中的门禁绕过记录（gate-bypass）。
+ *
+ * timeline 的消费者是「事后排查的开发者」：`gantry next --skip` 会显式绕过门禁并留痕，
+ * 这个函数让那条留痕承诺可被兑现——status 据此提示"本 change 有 N 次绕过"。
+ * 纯读、确定性；文件不存在返回 []。
+ *
+ * @param {string} projectRoot
+ * @param {string} [changeId] - 只统计该 change 的绕过（省略则全部）
+ * @returns {Array<{stage:string, reason:string, ts:string}>}
  */
-export function readTimeline(projectRoot) {
+export function readGateBypasses(projectRoot, changeId) {
   const timelinePath = join(projectRoot, PLANNING_DIR, 'timeline.jsonl');
   if (!existsSync(timelinePath)) return [];
-  return readFileSync(timelinePath, 'utf-8')
-    .trim().split('\n').filter(Boolean)
-    .map(line => JSON.parse(line));
-}
-
-/**
- * 添加 checkpoint 记录
- */
-export function addCheckpoint(projectRoot, checkpoint) {
-  const state = readState(projectRoot);
-  state.checkpoints.push(checkpoint);
-  writeState(projectRoot, state);
-  return checkpoint;
-}
-
-/**
- * 添加决策记录
- */
-export function addDecision(projectRoot, decision) {
-  const state = readState(projectRoot);
-  state.decisions.unshift(decision);
-  if (state.decisions.length > 10) state.decisions = state.decisions.slice(0, 10);
-  writeState(projectRoot, state);
+  const bypasses = [];
+  for (const line of readFileSync(timelinePath, 'utf-8').split('\n')) {
+    if (!line.trim()) continue;
+    let ev;
+    try { ev = JSON.parse(line); } catch { continue; }
+    if (ev.type !== 'gate-bypass') continue;
+    if (changeId && ev.changeId && ev.changeId !== changeId) continue;
+    bypasses.push({ stage: ev.stage, reason: ev.reason, ts: ev.ts });
+  }
+  return bypasses;
 }
 
 // --- 解析 / 渲染 ---
@@ -146,18 +138,28 @@ function parseStateMd(content) {
       case '当前 Task': state.currentTask = kv.value === '—' ? null : kv.value; break;
       case '活跃 Agent': state.activeAgent = kv.value === '—' ? null : kv.value; break;
       case 'autonomous': state.autonomous = kv.value === 'true'; break;
-      case '已执行阶段数': state.stagesRun = parseInt(kv.value) || 0; break;
-      case '重试计数': state.retries = parseInt(kv.value) || 0; break;
+      case '已执行阶段数': {
+        // 支持 "3 / 5" 或 "3" 两种格式
+        const m = String(kv.value).match(/^(\d+)\s*(?:\/\s*(\d+))?/);
+        if (m) {
+          state.stagesRun = parseInt(m[1], 10) || 0;
+          if (m[2]) state.maxStages = parseInt(m[2], 10) || state.maxStages;
+        }
+        break;
+      }
+      case '重试计数': {
+        const m = String(kv.value).match(/^(\d+)\s*(?:\/\s*(\d+))?/);
+        if (m) {
+          state.retries = parseInt(m[1], 10) || 0;
+          if (m[2]) state.maxRetries = parseInt(m[2], 10) || state.maxRetries;
+        }
+        break;
+      }
       case '暂停原因': state.pauseReason = kv.value === '—' ? null : kv.value; break;
       case '上下文 token': state.contextUsage.tokens = kv.value === '—' ? null : parseInt(kv.value) || null; break;
       case '窗口使用率': state.contextUsage.windowPercent = kv.value === '—' ? null : parseFloat(kv.value) || null; break;
     }
   }
-
-  // 解析 checkpoint 表格
-  state.checkpoints = parseCheckpointTable(content);
-  // 解析决策日志
-  state.decisions = parseDecisionLog(content);
 
   return state;
 }
@@ -168,48 +170,8 @@ function parseKvLine(line) {
   return null;
 }
 
-function parseCheckpointTable(content) {
-  const checkpoints = [];
-  const tableMatch = content.match(/## Checkpoints\n\n\|[^\n]+\n\|[^\n]+\n([\s\S]*?)(?=\n##|\n$)/);
-  if (!tableMatch) return checkpoints;
-
-  const rows = tableMatch[1].trim().split('\n');
-  for (const row of rows) {
-    const cells = row.split('|').map(c => c.trim()).filter(Boolean);
-    if (cells.length >= 5) {
-      checkpoints.push({
-        id: cells[0], stage: cells[1], type: cells[2],
-        status: cells[3], created: cells[4],
-      });
-    }
-  }
-  return checkpoints;
-}
-
-function parseDecisionLog(content) {
-  const decisions = [];
-  const section = content.match(/## 决策日志[\s\S]*?\n([\s\S]*?)(?=\n##|\n$)/);
-  if (!section) return decisions;
-
-  const lines = section[1].trim().split('\n');
-  for (const line of lines) {
-    const match = line.match(/^-\s*`\[(.+?)\]`\s*(.+)/);
-    if (match) {
-      decisions.push({ date: match[1], content: match[2] });
-    }
-  }
-  return decisions;
-}
-
 function renderStateMd(state) {
   const now = new Date().toISOString().slice(0, 10);
-  const checkpointRows = state.checkpoints.map(cp =>
-    `| ${cp.id} | ${cp.stage} | ${cp.type} | ${cp.status} | ${cp.created} |`
-  ).join('\n');
-
-  const decisionRows = state.decisions.map(d =>
-    `- \`[${d.date}]\` ${d.content}`
-  ).join('\n');
 
   return `# STATE — 项目协作状态
 
@@ -222,12 +184,6 @@ function renderStateMd(state) {
 - **当前 Task**: \`${state.currentTask ?? '—'}\`
 - **活跃 Agent**: \`${state.activeAgent ?? '—'}\`
 
-## Checkpoints
-
-| ID | Stage | Type | Status | Created |
-|----|-------|------|--------|---------|
-${checkpointRows}
-
 ## 自动模式状态
 
 - **autonomous**: \`${state.autonomous}\`
@@ -236,10 +192,6 @@ ${checkpointRows}
 - **暂停原因**: \`${state.pauseReason ?? '—'}\`
 - **上下文 token**: \`${state.contextUsage?.tokens ?? '—'}\`
 - **窗口使用率**: \`${state.contextUsage?.windowPercent ?? '—'}\`
-
-## 决策日志（最近 10 条）
-
-${decisionRows || '（暂无）'}
 
 ---
 _最后更新: ${now}_

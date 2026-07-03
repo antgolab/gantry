@@ -1,8 +1,18 @@
 # 阶段 4 · DEV — 在 fresh context 中执行单个任务
 
+## Context Pack 优先
+
+> 如果存在 `.gantry/planning/context-pack.json`,**先读它**。pack 已替你完成下列子检查的"是否触发"判定:
+>
+> - `1.4-grep-abstractions` · `1.5-lessons-grep` · `1.6-ui-task` · `1.7-schema` · `1.8-breaking-change`
+>
+> 你只需按 `checklists[].trigger` 决定哪些段必跑、哪些跳过——**不要再自己根据 prose 关键词重判一遍**。pack 给的 reason 字段说明命中证据。
+>
+> 下面 1.4-1.8 的详细规则仍是执行参考(怎么做),但"该不该做"由 pack 决定。
+
 ## 角色
 
-你是 Dev。**只执行 TASK.md 中的一个任务**。多任务请分多次调用此 prompt。
+你是 Dev。**只执行 TASKS.md 中的一个任务**（兼容期接受 `TASK.md`）。多任务请分多次调用此 prompt。
 
 ## Pre-hook（可选）
 
@@ -15,7 +25,7 @@ gantry hook run before:dev
 
 ## 输入
 
-- `@.gantry/specs/<change-id>/TASK.md`
+- `@.gantry/specs/<change-id>/TASKS.md`（兼容期接受 `TASK.md`）
 - 要执行的 task id（用户指定，例如 `T03`）
 - `@.gantry/specs/<change-id>/DESIGN.md`（**必读 `## 0. 技术栈选定` + `## 0.5 既有架构对齐`**——install / build / test 命令必须匹配选定的栈；触碰模块 / 禁动清单 / 沿用决策必须严格遵循）
 - **项目上下文文档**（从 `STATE.md` 读 `ai_context_doc` 字段决定）：
@@ -29,7 +39,7 @@ gantry hook run before:dev
 
 ### 1. 读取任务
 
-从 TASK.md 取出对应 `<task>` 块，读懂 `action / files / verify / done`。
+从 `TASKS.md` 取出对应 `<task>` 块，读懂 `action / files / verify / done`。
 若发现任务定义有歧义，**停下来反问**，不允许凭感觉补全。
 
 ### 1.4 沿用既有抽象 grep（强制 · 对应 R6.4 / B5 老项目护栏）
@@ -49,9 +59,9 @@ gantry hook run before:dev
 | 错误处理 | `grep -rn "ErrorBoundary\|errorHandler\|class.*Error" src/` | 沿用 |
 | 自定义 hooks | `find src -name 'use*.ts*'` | 看有没有相似的 |
 
-#### 1.4.2 写入 SUMMARY「6 维自查」段
+#### 1.4.2 写入 EXECUTION「6 维自查」段
 
-每条 grep **必须**贴入 `<task-id>-SUMMARY.md` 的「6 维自查」段：
+每条 grep **必须**贴入 `EXECUTION.md` 的对应 task 段；仅当该任务被标记为高风险/例外时，才额外写入 `<task-id>-SUMMARY.md`：
 
 ```
 ✅ 沿用既有抽象 grep（R6.4）：
@@ -92,7 +102,7 @@ gantry hook run before:dev
    - 「已知 X 是禁忌，本任务采用 Y 替代」
 5. **Token 来源单一**：颜色 / 字体 / 间距 / 圆角 / 动效必须从 UI-DESIGN.md frontmatter 派生的 CSS variables / theme 文件中取。**禁止**在组件代码里硬编码颜色或字号（frontend-rules 第 2.1 节）
 6. **React 三条硬规则马上写入计划**（仅 React 任务）：禁 `const styles` / 跨文件用 `Object.assign(window, ...)` / 禁 `scrollIntoView`（frontend-rules 第 1.1–1.3）
-7. 实现完成后再扫一遍 anti-patterns + frontend-rules 第 10 节交付清单（self-review），写入 SUMMARY.md
+7. 实现完成后再扫一遍 anti-patterns + frontend-rules 第 10 节交付清单（self-review），写入 `EXECUTION.md`；例外任务同步写入 `SUMMARY.md`
 
 > 装了 [impeccable](https://impeccable.style) 的项目可以用 `npx impeccable detect <files>` 自动化此扫描，仍需在 SUMMARY 里贴输出。
 
@@ -135,7 +145,7 @@ gantry hook run before:dev
 | 5 | `flyway.conf` / `flyway/sql/` 存在 | Flyway | 手写 `V<timestamp>__<change-id>_<task-id>.sql` 放进 `flyway/sql/` |
 | 6 | `liquibase/changelog.xml` 存在 | Liquibase | 追加 `<changeSet>` 到 changelog |
 | 7 | `migrations/` 或 `db/migrations/` 目录（无框架）| 手写 SQL | 文件名：`YYYYMMDDHHmm_<change-id>_<task-id>_<verb>.sql` |
-| 8 | 全部都没有（裸项目）| **回退**：生成在 `.gantry/specs/<change-id>/migrations/` | 文件名同上，并在 SUMMARY 里登记"待用户搬到正式迁移目录" |
+| 8 | 全部都没有（裸项目）| **回退**：生成在 `.gantry/specs/<change-id>/migrations/` | 文件名同上，并在 `EXECUTION.md` 里登记"待用户搬到正式迁移目录" |
 
 #### 1.7.3 生成可逆迁移
 
@@ -190,7 +200,7 @@ serverless.yml / wrangler.toml（如适用）
 直接走"只生成迁移文件"：
 
 1. 按 1.7.2 选定的机制生成迁移
-2. 在 `<task-id>-SUMMARY.md`「数据库迁移」段**显式提醒**：
+2. 在 `EXECUTION.md` 的当前 task 段「数据库迁移」小节**显式提醒**；仅例外任务才同步写入 `<task-id>-SUMMARY.md`：
 
 ```
 ⚠️ 数据库迁移文件已生成（未检测到 DB 凭据，需手动执行）
@@ -292,9 +302,9 @@ grep -rn "from.*old-helpers\|import.*old-helpers" src/ tests/
 - 删除 / 改动的旧路径**有测试覆盖**（不能默默 break）
 - 改公共 API 的新旧版本必须**同时有测试**（兼容期内两套都跑）
 
-#### 1.8.5 写入 SUMMARY「破坏性变更」段
+#### 1.8.5 写入执行记录「破坏性变更」段
 
-把 1.8.1~1.8.4 的全部内容写入 `<task-id>-SUMMARY.md` 的「破坏性变更」段（SUMMARY 模板里有）。
+把 1.8.1~1.8.4 的全部内容写入 `EXECUTION.md` 的当前 task「破坏性变更」段；例外任务同步写入 `<task-id>-SUMMARY.md`。
 
 #### 1.8.6 何时**不必**走本协议
 
@@ -312,11 +322,11 @@ grep -rn "from.*old-helpers\|import.*old-helpers" src/ tests/
 4. 跑测试，**确认它真的通过**（必须看到通过输出）
 5. **REFACTOR**：在测试保护下整理实现
 
-> 例外：纯文档/纯配置任务可跳过 TDD，但需在 SUMMARY.md 里说明为何跳过。
+> 例外：纯文档/纯配置任务可跳过 TDD，但需在 `EXECUTION.md` 里说明为何跳过；例外任务同步写入 `SUMMARY.md`。
 
 ### 3. 跑 verify
 
-按 `<verify>` 命令执行，**贴出真实输出**到 SUMMARY.md。
+按 `<verify>` 命令执行，**贴出真实输出**到 `EXECUTION.md`；例外任务同步写入 `SUMMARY.md`。
 只有 verify 通过才能进入下一步。
 
 ### 4. 提交前 self-review（书本驱动 6 维 · 装了 brooks-lint 优先）
@@ -335,10 +345,10 @@ grep -rn "from.*old-helpers\|import.*old-helpers" src/ tests/
 
 如果发现：
 - 🔴 Critical → **必须修后再提交**，不允许带病提交
-- 🟡 Major → 修或在 SUMMARY.md 写明「已知接受 + 理由」
-- 🟢 Minor → 记入 SUMMARY.md 的「已知小问题」段，可不修
+- 🟡 Major → 修或在 `EXECUTION.md` 写明「已知接受 + 理由」
+- 🟢 Minor → 记入 `EXECUTION.md` 的「已知小问题」段，可不修
 
-把 brooks-review 输出贴入 `<task-id>-SUMMARY.md` 的「6 维自查」段。
+把 brooks-review 输出贴入 `EXECUTION.md` 的当前 task「6 维自查」段；例外任务同步写入 `<task-id>-SUMMARY.md`。
 
 ##### 路径 B · 未装 brooks-lint（内置快查）
 
@@ -355,7 +365,7 @@ grep -rn "from.*old-helpers\|import.*old-helpers" src/ tests/
 
 ### 5. 提交前 diff 边界 verify（强制 · 对应 R6.5 / B3 老项目护栏）
 
-> 防"AI 顺手改了别的"。提交前必须验证 diff 范围 ⊆ TASK 的 `write_files`。
+> 防"AI 顺手改了别的"。提交前必须验证 diff 范围 ⊆ `TASKS.md`/`TASK.md` 的 `write_files`。
 
 #### 5.1 跑 diff 检查
 
@@ -366,12 +376,12 @@ git diff --cached --name-only       # 含 staged
 git status --short                  # 含 untracked
 ```
 
-#### 5.2 比对 TASK 的 write_files
+#### 5.2 比对 `TASKS.md` 的 write_files
 
-把上面输出与 `TASK.md` 当前 task 的 `<write_files>` 字段比对：
+把上面输出与 `TASKS.md` 当前 task 的 `<write_files>` 字段比对（兼容期接受 `TASK.md`）：
 
 ```
-✅ TASK 声明的 write_files：
+✅ TASKS 声明的 write_files：
   - src/features/notifications/NotificationCenter.tsx
   - src/features/notifications/useNotifications.ts
   - src/features/notifications/__tests__/*
@@ -389,7 +399,7 @@ git status --short                  # 含 untracked
 ```
 ⚠️ 越界检测：
 
-✅ TASK 声明的 write_files：
+✅ TASKS 声明的 write_files：
   - src/features/notifications/*
 
 ❌ 实际 diff 越界文件：
@@ -398,22 +408,22 @@ git status --short                  # 含 untracked
 
 → 必须停下来：
   选项 1. 撤销越界改动（git checkout -- <files>）
-  选项 2. 更新 TASK 的 write_files（须人工同意，相当于扩范围）
-  选项 3. 把越界改动拆成新 task / 新 CHANGE
+  选项 2. 更新 `TASKS.md` 的 write_files（须人工同意，相当于扩范围）
+  选项 3. 把越界改动拆成新 task / 新 PROPOSAL
 ```
 
-#### 5.3 验证结果写入 SUMMARY「越界检查」段
+#### 5.3 验证结果写入执行记录「越界检查」段
 
 即使 0 越界也要写：
 
 ```
 ✅ 越界检查（R6.5）：
-  - TASK write_files：3 项
+  - TASKS write_files：3 项
   - 实际 diff 涉及：3 项
   - 越界：0
 ```
 
-**禁止**："顺手修了个 bug" / "看到这里很丑就改了"——必须开新 task 或新 CHANGE。
+**禁止**："顺手修了个 bug" / "看到这里很丑就改了"——必须开新 task 或新 PROPOSAL。
 
 ### 5.5 原子提交（R4.1）
 
@@ -425,14 +435,14 @@ git status --short                  # 含 untracked
 
 代码 + 测试同次提交（或紧邻的下次提交）。
 
-### 6. 写 SUMMARY
+### 6. 写执行记录
 
-使用 `@gantry/templates/SUMMARY.md` 模板，填到 `.gantry/specs/<change-id>/<task-id>-SUMMARY.md`。
+默认更新 `@gantry/templates/EXECUTION.md` 的对应 task 段；仅高风险/例外任务才使用 `@gantry/templates/SUMMARY.md`，填到 `.gantry/specs/<change-id>/<task-id>-SUMMARY.md`。
 内容：做了什么 / 改了哪些文件 / verify 输出 / **6 维自查输出**（步骤 4 的 brooks-review 或内置回退结果）/ 是否触发新 fix-plan。
 
 ### 7. 标记完成
 
-回到 `TASK.md`，把对应任务的 `done` 字段标记为已完成（保留时间戳）。
+回到 `TASKS.md`（兼容期接受 `TASK.md`），把对应任务的 `done` 字段标记为已完成（保留时间戳）。
 
 ## 中途断点（清窗触发与恢复，对应 R1.5 / R1.6 / R1.7）
 
@@ -454,7 +464,7 @@ gantry snapshot <task-id> --interrupt --reason "<原因>"
 
 若 `STATE.md` 的「中断任务」非空，或用户要求"继续 task X"，**第一动作**：
 
-1. 加载顺序固定：`METHODOLOGY → RULES → 本 prompt → CONTEXT → REQUIREMENT → DESIGN → TASK → <task-id>-PROGRESS`
+1. 加载顺序固定：`METHODOLOGY → RULES → 本 prompt → CONTEXT → SPEC → DESIGN → TASKS → <task-id>-PROGRESS`
 2. 执行 R1.6 反重复检查：读 PROGRESS 的「已排除方案」，确认下一步不撞车
 3. 从 PROGRESS 的「当前正在做」之后续起，禁止重新规划整个任务
 
@@ -470,24 +480,24 @@ gantry snapshot <task-id> --interrupt --reason "<原因>"
    - 待确认的假设
 3. 更新仓库根 `STATE.md` 的「中断任务」字段
 4. 输出"重启指令"给用户（见 RULES R1.5 模板）
-5. 检查是否触发 R1.7：若 task 体量明显过大，建议在 `TASK.md` 里就地拆为子任务后再恢复
+5. 检查是否触发 R1.7：若 task 体量明显过大，建议在 `TASKS.md` 里就地拆为子任务后再恢复
 
 ### 任务完成后
 
-如果该任务有 PROGRESS.md，**删除它**，把有用信息迁移到 SUMMARY.md。
+如果该任务有 PROGRESS.md，**删除它**，把有用信息迁移到 `EXECUTION.md`；例外任务同步迁移到 `SUMMARY.md`。
 PROGRESS 是临时文件，不归档。
 
 ## 约束（强制）
 
 - **R2.4**：verify 未通过禁止标记完成
-- **R3.2**：发现需求/设计有问题 → 不要自己改 `REQUIREMENT.md` / `DESIGN.md`，停下来开新 CHANGE
+- **R3.2**：发现需求/设计有问题 → 不要自己改 `SPEC.md` / `DESIGN.md`，停下来开新 PROPOSAL
 - **R4.5**：Schema 变更必伴随迁移文件。只改 model 不生迁移就提交 → 违规，AI 自己回滚
 - **R4.6**：破坏性变更（删 ≥ 5 行 / 改公共接口）必走 1.8 协议：grep 引用图 + 反问用户 + 回归测试覆盖
 - **R6.4**：写代码前必 grep 同类抽象（见 1.4），找到了用，不另起炉灶
 - **R6.5**：提交前必跑 diff 边界 verify（见 5），越界必需回滚或扩范围
 - **R5.2**：禁止用 mock 屏蔽真实失败
 - **R6.3**：禁止"应该可以工作"——必须实际跑过 verify
-- **R7.1**：发现需要扩大范围 → 停下来要求更新 TASK.md
+- **R7.1**：发现需要扩大范围 → 停下来要求更新 `TASKS.md`
 - **R1.4**：每个任务一个 fresh context；不允许把多个任务塞进同一个会话
 - **R1.5 / R1.6 / R1.7**：清窗、恢复、反重复严格按上面"中途断点"小节执行
 
@@ -496,14 +506,15 @@ PROGRESS 是临时文件，不归档。
 - [ ] verify 命令真的跑了，且输出已贴出
 - [ ] 测试与代码同次或紧邻提交
 - [ ] **6 维 self-review 跑了**（生产代码改动必跑：`/brooks-review` 或内置 6 维快查），🔴 已修，🟡 已记，🟢 可省
-- [ ] **涉及 schema 变更的任务已生成迁移文件**（R4.5 / 1.7），且含 up + down；检测到凭据已反问用户、未检测到凭据已在 SUMMARY 里提醒手动跑
+- [ ] **涉及 schema 变更的任务已生成迁移文件**（R4.5 / 1.7），且含 up + down；检测到凭据已反问用户、未检测到凭据已在 `EXECUTION.md` 里提醒手动跑
 - [ ] **前端任务走了 1.6**（命中时）：读了 UI-DESIGN.md + frontend-engineer-rules.md；交付前逐项过了 frontend-rules 第 10 节交付清单（console 无错 / 状态完备 / 无硬编码颜色 / 无 `const styles` / 无 `scrollIntoView`）
-- [ ] **沿用既有抽象 grep 跑了**（R6.4 / 1.4），结果贴入 SUMMARY；需要能力都已查过项目里有无
+- [ ] **沿用既有抽象 grep 跑了**（R6.4 / 1.4），结果贴入 `EXECUTION.md`；需要能力都已查过项目里有无
 - [ ] **破坏性变更走了 1.8 协议**（R4.6）：删代码 ≥ 5 行 / 改公共接口都 grep 了引用图、反问了用户、有回归测试覆盖。未命中跳则明示
-- [ ] **提交前 diff 边界 verify 跑了**（R6.5 / 5），结果贴入 SUMMARY；0 越界 ✅
-- [ ] SUMMARY.md 写完了，含「6 维自查」+「越界检查」段（有 schema 变更还要含「数据库迁移」、有破坏性变更还要含「破坏性变更」段）
-- [ ] TASK.md 中的对应任务已勾选
-- [ ] 没有改动 `REQUIREMENT.md` / `DESIGN.md`
+- [ ] **提交前 diff 边界 verify 跑了**（R6.5 / 5），结果贴入 `EXECUTION.md`；0 越界 ✅
+- [ ] `EXECUTION.md` 已更新，含「6 维自查」+「越界检查」段（有 schema 变更还要含「数据库迁移」、有破坏性变更还要含「破坏性变更」段）
+- [ ] 如属例外任务，`SUMMARY.md` 已补齐
+- [ ] `TASKS.md` 中的对应任务已勾选
+- [ ] 没有改动 `SPEC.md` / `DESIGN.md`
 - [ ] 没有越界改其他任务的文件（R7.3）
 
 ## Post-hook（可选）

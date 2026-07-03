@@ -30,7 +30,7 @@ fresh_context: false
 
 ## 执行协议
 
-- health → 按 `phases/M-health.md`
+- health → 按 `.gantry/core/phases/M-health.md`
   - 6+6 衰退诊断（代码 6 项 + 流程 6 项）
   - 技术债务优先级排序
   - 产出 HEALTH.md
