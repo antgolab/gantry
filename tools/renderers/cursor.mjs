@@ -5,45 +5,7 @@
 // Internal phases are referenced through .gantry/core/phases/* instead of being
 // emitted as standalone user-facing rules.
 
-const PUBLIC_SKILLS = new Set([
-  'init',
-  'status',
-  'change',
-  'next',
-  'exec',
-  'verify',
-  'adjust',
-  'resume',
-  'archive',
-  'unarchive',
-  'auto',
-  'review',
-  'health',
-  'context',
-  'knowledge',
-  'debug',
-  'fast',
-]);
-
-const STAGE_PHASE_MAP = {
-  change: '0-change',
-  requirement: '1-requirement',
-  design: '2-design',
-  'ui-design': '2a-ui-design',
-  task: '3-task',
-  dev: '4-dev',
-  test: '5-test',
-  review: '6-review',
-  integration: '7-integration',
-  architect: 'A-architect',
-  evolve: 'A-evolve',
-  curator: 'C-curator',
-  fast: 'F-fast',
-  scan: 'I-intel-scan',
-  knowledge: 'K-knowledge',
-  restyle: 'L-restyle',
-  health: 'M-health',
-};
+import { PUBLIC_SKILLS, STAGE_PHASE_MAP } from '../lib/stage-map.mjs';
 
 export function render(core, commands, agents) {
   const files = {};
