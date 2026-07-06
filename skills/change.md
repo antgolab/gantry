@@ -17,7 +17,7 @@ checkpoint: approval
 3. 生成 change-id（slugify 描述）
 4. 创建 `.gantry/specs/<change-id>/` 目录
 5. 加载 `.gantry/core/phases/0-change.md` 执行完整流程
-6. **反问澄清（强制前置门）**：把"为什么/给谁/解决什么/何时算完"问到清楚，每轮最多 3 个问题，等用户回答。**只要还有未澄清的点就继续问，不准提前产出 PROPOSAL。**
+6. **反问澄清（强制前置门）**：把"为什么/给谁/解决什么/何时算完"问到清楚，每轮最多 3 个问题，等用户回答。按 `@gantry/reference/grilling-discipline.md` 执行——每问**带推荐答案 + 理由**、能查代码的**先查代码库**再确认、按依赖顺序深度优先。**只要还有未澄清的点就继续问，不准提前产出 PROPOSAL。**
 7. 产出 `.gantry/specs/<change-id>/PROPOSAL.md`（兼容期接受 `CHANGE.md`）。**`## 待澄清问题` 段必须为 `无`**——带未勾选项的 PROPOSAL 会被 `gantry next` 门禁阻断。
 8. 更新 STATE.md（stage=change, agent=planner）
 9. 创建 checkpoint（`approval`）等待确认

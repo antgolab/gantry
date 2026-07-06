@@ -52,6 +52,8 @@ gantry hook run before:requirement
 - ❌ "界面要好看" → 反问："好看的标准是什么？是否对照某个设计稿？"
 - ✅ "Lighthouse Performance ≥ 90"
 
+反问时遵循 `@gantry/reference/grilling-discipline.md` 的纪律与输出格式:每个问题**带推荐答案 + 理由**,能 grep / Read 自答的**先查代码库**再确认,按依赖顺序深度优先追问。
+
 ## 输出
 
 - `.gantry/specs/<change-id>/SPEC.md`（必填）
