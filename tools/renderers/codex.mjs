@@ -76,7 +76,6 @@ function codexRoot(core, commands) {
 - \`$gantry-change\`：启动新变更
 - \`$gantry-next\`：推进下一阶段
 - \`$gantry-exec\`：执行当前任务 / wave
-- \`$gantry-verify\`：运行任务验证
 - \`$gantry-resume\`：断点恢复
 - \`$gantry-archive\`：完成并归档
 - \`$gantry-auto\`：自主推进（保留 checkpoint 门禁）

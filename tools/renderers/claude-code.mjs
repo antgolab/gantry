@@ -99,7 +99,7 @@ idle → change → requirement → design → [ui-design] → task → dev → 
 
 公开 gantry skills 位于 \`.claude/skills/gantry-*/\`。内部阶段协议由 \`/gantry-next\` / \`/gantry-exec\` / \`/gantry-review\` 按需读取。
 
-核心命令：\`/gantry-change\`、\`/gantry-next\`、\`/gantry-exec\`、\`/gantry-verify\`、\`/gantry-archive\`。
+核心命令：\`/gantry-change\`、\`/gantry-next\`、\`/gantry-exec\`、\`/gantry-archive\`。
 扩展入口：\`/gantry-auto\`、\`/gantry-review\`、\`/gantry-health\`、\`/gantry-context\`、\`/gantry-knowledge\`、\`/gantry-debug\`、\`/gantry-fast\`。
 `;
 }

@@ -369,8 +369,9 @@ function next(args) {
 }
 
 /**
- * gantry auto [--stages N] [--trust]
+ * gantry auto [--trust]
  *   按 autonomous.maxStagesPerRun 自动推进,遇门禁阻塞或终态即停。
+ *   单次推进步数由配置 autonomous.maxStagesPerRun 决定(不接受命令行覆盖)。
  */
 function auto(args) {
   const projectRoot = process.cwd();
@@ -378,14 +379,9 @@ function auto(args) {
 
   const config = readConfig(projectRoot);
   const state = readState(projectRoot);
-  const stagesFlag = parseStagesFlag(args);
-  if (stagesFlag.error) {
-    console.error(stagesFlag.error);
-    process.exit(1);
-  }
 
   const trust = args.includes('--trust');
-  const maxStages = stagesFlag.value ?? getConfiguredMaxStages(config, state.maxStages || 3);
+  const maxStages = getConfiguredMaxStages(config, state.maxStages || 3);
   const maxSteps = trust ? 50 : maxStages;
 
   updateState(projectRoot, {
@@ -541,30 +537,6 @@ function gateRecoveryHint(reason) {
   return null;
 }
 
-
-function parseStagesFlag(args) {
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === '--stages' || arg === '--max-stages') {
-      const parsed = parsePositiveInt(args[i + 1]);
-      if (!parsed) return { error: `${arg} 需要正整数，例如: gantry auto ${arg} 5` };
-      return { value: parsed };
-    }
-    const m = arg.match(/^--(?:stages|max-stages)=(.+)$/);
-    if (m) {
-      const parsed = parsePositiveInt(m[1]);
-      if (!parsed) return { error: `${arg.split('=')[0]} 需要正整数` };
-      return { value: parsed };
-    }
-  }
-  return { value: null };
-}
-
-function parsePositiveInt(value) {
-  if (!/^\d+$/.test(String(value ?? ''))) return null;
-  const parsed = parseInt(value, 10);
-  return parsed > 0 ? parsed : null;
-}
 
 function getConfiguredMaxStages(config = {}, fallback = 3) {
   const configured = Number(config?.autonomous?.maxStagesPerRun);
@@ -1091,8 +1063,7 @@ function help() {
   next                手动单步推进一个阶段（内含门禁）
     --skip              跳过当前门禁（写 timeline 留痕，每次需显式）
 
-  auto                自动多阶段推进，遇门禁失败 / approval 关卡 / 终态即停
-    --stages <N>        本次最多推进 N 个阶段（默认取 config）
+  auto                自动多阶段推进（步数取 config.autonomous.maxStagesPerRun），遇门禁失败 / approval 关卡 / 终态即停
     --trust             推进到管线终态为止（上限 50 步）
 
   status              查看当前状态、待确认关卡、门禁绕过记录

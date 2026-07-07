@@ -11,7 +11,6 @@ export const PUBLIC_SKILLS = new Set([
   'change',
   'next',
   'exec',
-  'verify',
   'adjust',
   'resume',
   'archive',

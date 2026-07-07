@@ -182,18 +182,19 @@ describe('auto', () => {
     assert.ok(state.includes('- **已执行阶段数**: `0 / 5`'));
   });
 
-  it('--stages overrides autonomous.maxStagesPerRun for the current run', () => {
+  it('auto 步数只取 config.autonomous.maxStagesPerRun（--stages 已移除，不再覆盖）', () => {
     run('init', { cwd: tmpDir });
     const configPath = join(tmpDir, '.gantry/planning', 'config.json');
     const config = JSON.parse(readFileSync(configPath, 'utf8'));
     config.autonomous.maxStagesPerRun = 5;
     writeFileSync(configPath, JSON.stringify(config, null, 2));
 
+    // 即便传入已废弃的 --stages 2，也应被忽略，仍按配置的 5 推进
     const out = run('auto --stages 2', { cwd: tmpDir });
-    assert.ok(out.includes('自主模式: 最多推进 2 个阶段'));
+    assert.ok(out.includes('自主模式: 最多推进 5 个阶段'));
 
     const state = readFileSync(join(tmpDir, '.gantry/planning', 'STATE.md'), 'utf8');
-    assert.ok(state.includes('- **已执行阶段数**: `0 / 2`'));
+    assert.ok(state.includes('- **已执行阶段数**: `0 / 5`'));
   });
 });
 

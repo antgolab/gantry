@@ -10,7 +10,7 @@
 ```
 ┌─ 核心状态机(主管线 · 一条 change 顺序走完) ───────────────────────┐
 │  PROPOSAL → SPEC → DESIGN → [UI-DESIGN] → TASKS → DEV → TEST → REVIEW → INTEGRATION │
-│  命令: /gantry-change · /gantry-next · /gantry-exec · /gantry-verify · /gantry-archive │
+│  命令: /gantry-change · /gantry-next · /gantry-exec · /gantry-archive           │
 ├─ 状态与恢复 ──────────────────────────────────────────────────────┤
 │  /gantry-status(查状态) · /gantry-resume(断点恢复)                 │
 │  /gantry-adjust(变更补丁 PATCH) · /gantry-unarchive(恢复归档)      │

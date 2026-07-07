@@ -185,7 +185,7 @@ gantry init --tool claude   # 可选: claude / cursor / codex / copilot
 
 | 类别 | 命令 | 用途 |
 |---|---|---|
-| 核心状态机 | `/gantry-change`、`/gantry-next`、`/gantry-exec`、`/gantry-verify`、`/gantry-archive` | 标准 change 流程 |
+| 核心状态机 | `/gantry-change`、`/gantry-next`、`/gantry-exec`、`/gantry-archive` | 标准 change 流程 |
 | 状态与恢复 | `/gantry-status`、`/gantry-resume`、`/gantry-adjust`、`/gantry-unarchive` | 查状态、断点恢复、变更补丁、恢复归档 |
 | 自动化 | `/gantry-auto` | 在 checkpoint 门禁下自主推进 |
 | 审查 | `/gantry-review`、`/gantry-review --requirement`、`/gantry-review --adversarial` | 代码审查、需求门禁、对抗性审查 |
@@ -209,7 +209,7 @@ docs/GO.md
 
 ### 终端 CLI
 
-适合脚本、CI 或不用 IDE 的场景。CLI 只负责状态机、安装、归档等机械操作；`exec`、`verify`、`adjust`、`context`、`knowledge` 等由 IDE skills 或 `docs/GO.md` 执行。
+适合脚本、CI 或不用 IDE 的场景。CLI 只负责状态机、安装、归档等机械操作；`exec`、`adjust`、`context`、`knowledge` 等由 IDE skills 或 `docs/GO.md` 执行。
 
 ```bash
 gantry change "给订单列表增加导出功能"
