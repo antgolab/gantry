@@ -218,6 +218,53 @@ test('checklists: dev/UI 任务触发 1.6,非 UI 不触发', () => {
   } finally { cleanup(root); }
 });
 
+test('checklists: 1.5 在只有 .context/MANIFEST.md(无 LESSONS)时仍触发', () => {
+  const root = createFixture('cl-context-only');
+  try {
+    const changeId = 'add-cache';
+    mkdirSync(join(root, '.gantry/specs', changeId), { recursive: true });
+    writeFileSync(join(root, '.gantry/specs', changeId, 'TASK.md'),
+      `<task id="T01">
+<title>查用户信息加缓存</title>
+<write_files>
+- internal/dao/dao.go
+</write_files>
+</task>`, 'utf-8');
+    // 只有 .context/MANIFEST.md,不建 LESSONS.md(vas 的真实形态)
+    mkdirSync(join(root, '.context'), { recursive: true });
+    writeFileSync(join(root, '.context/MANIFEST.md'), '# 团队知识索引\n', 'utf-8');
+
+    writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: 'T01', pipeline: 'standard' });
+
+    const pack = buildPack(root);
+    const c15 = pack.checklists.find(c => c.id === '1.5-lessons-grep');
+    assert.ok(c15, '应有 1.5-lessons-grep');
+    assert.equal(c15.trigger, true, '有 .context/MANIFEST.md 时 1.5 必须触发(团队约定)');
+    assert.match(c15.reason, /MANIFEST/, 'reason 应指明命中来源是 MANIFEST');
+  } finally { cleanup(root); }
+});
+
+test('checklists: 1.5 在既无 .context 也无 LESSONS 时不触发', () => {
+  const root = createFixture('cl-neither');
+  try {
+    const changeId = 'plain';
+    mkdirSync(join(root, '.gantry/specs', changeId), { recursive: true });
+    writeFileSync(join(root, '.gantry/specs', changeId, 'TASK.md'),
+      `<task id="T01">
+<title>纯后端任务</title>
+<write_files>
+- internal/svc/foo.go
+</write_files>
+</task>`, 'utf-8');
+
+    writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: 'T01', pipeline: 'standard' });
+
+    const pack = buildPack(root);
+    const c15 = pack.checklists.find(c => c.id === '1.5-lessons-grep');
+    assert.equal(c15.trigger, false, '两者都无时 1.5 不触发');
+  } finally { cleanup(root); }
+});
+
 test('checklists: v2 确定性类 false 为 high、关键词类 false 为 low', () => {
   const root = createFixture('cl-confidence');
   try {

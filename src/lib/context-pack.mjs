@@ -308,13 +308,21 @@ function buildDevChecklists({ projectRoot, changeId, taskId }) {
     reason: action.trim() ? '任务有 action 字段,需先 grep 既有抽象' : 'task 无 action,跳过',
   });
 
-  // 1.5 LESSONS grep（确定性判定：文件存在性是事实 → 默认 high）
+  // 1.5 团队知识 + LESSONS（确定性判定：文件存在性是事实 → 默认 high）
+  // 1.5 段现同时承载 1.5.1 团队约定（.context/MANIFEST.md）与 1.5.2 扫 LESSONS，
+  // 两者任一存在即触发。只有 .context 没 LESSONS 的项目（如 vas）也能命中团队约定。
   const lessonsPath = join(projectRoot, SPECS_DIR, 'LESSONS.md');
+  const manifestPath = join(projectRoot, '.context', 'MANIFEST.md');
+  const hasLessons = existsSync(lessonsPath);
+  const hasManifest = existsSync(manifestPath);
+  const trigger15Reasons = [];
+  if (hasManifest) trigger15Reasons.push('.context/MANIFEST.md 存在(团队约定)');
+  if (hasLessons) trigger15Reasons.push('LESSONS.md 存在');
   checklists.push({
     id: '1.5-lessons-grep',
-    trigger: existsSync(lessonsPath),
+    trigger: hasLessons || hasManifest,
     ref: '.gantry/core/phases/4-dev.md#1.5',
-    reason: existsSync(lessonsPath) ? 'LESSONS.md 存在' : 'LESSONS.md 不存在,跳过',
+    reason: trigger15Reasons.length ? trigger15Reasons.join(' + ') : '无 .context/MANIFEST.md 且无 LESSONS.md,跳过',
   });
 
   const kw = classifyAction(action);
