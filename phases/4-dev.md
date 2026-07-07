@@ -32,7 +32,8 @@ gantry hook run before:dev
   - 有 `ai_context_doc: <path>` → 读那个文档（如 `AGENTS.md` / `CLAUDE.md`）
   - 没或为 `CONTEXT.md` → 读 `@.gantry/specs/CONTEXT.md`
   - `none` → 跳过此输入（AI "盲飞"，1.4 沿用既有抽象 grep 必须更彻底以补偿）
-- `@.gantry/specs/LESSONS.md`
+- **黄金范例文件**（若任务 `read_files` 里有 TASK 阶段锚定的范例指针）：打开照抄；这是团队约定的落地依据，**无需重读 `.context/MANIFEST.md`**（TASK 已查过）
+- `@.gantry/specs/LESSONS.md`（无 `.context/` 时的回退知识层）
 - 仅引用与本任务相关的文件，**不要加载整个项目**
 
 ## 你的职责
@@ -72,16 +73,32 @@ gantry hook run before:dev
 
 **禁止**："项目里好像没有"——必须有 grep 命令和结果作证。
 
-### 1.5 扫 LESSONS（强制，对应 R1.8）
+### 1.5 消费团队知识 + 扫 LESSONS（强制，对应 R1.8）
 
 进入实现**之前**：
+
+#### 1.5.1 团队约定（默认零额外读取 · 只在未锚定时兜底查 MANIFEST）
+
+> **token 纪律**：团队约定的昂贵查询在 TASK 阶段已做过一次，正确路径写进了 `action`、黄金范例写进了 `read_files`。DEV 阶段**默认不重读 `.context/MANIFEST.md`**——重读会让同一份知识被每个任务各读一遍，token 随任务数翻倍。下游只读结果，不读源头。
+
+**默认路径(任务已被 TASK 锚定)**：
+
+1. 任务 `action` 已写明正确路径（如「走 btsgen 生成缓存回源」）→ 按它执行，**不查 MANIFEST**。
+2. `read_files` 里若有黄金范例文件 → 打开它，**照结构改**（这是降阻力关键，优先于从零重写）。范例文件不存在 → 记一行「范例失效，按 action 原文实现」，不阻塞。
+3. `write_files` 边界已锁定正确路径产物；走错路会越界，提交前 R6.5 自动拦截。
+
+**兜底路径(仅当任务未被锚定，即 `action` 无正确路径声明且项目有 `.context/`)**：
+
+4. 此时才读 `.context/MANIFEST.md`，用任务 `files`/`action` 关键词匹配路由，命中带 `[必须]/[禁止]` 的约定 → 先读 `## TL;DR`，声明「本任务走 <正确路径>」；与 `[禁止]` 冲突则停下。这是少数情况（TASK 判不准才留给这里）。
+
+#### 1.5.2 扫 LESSONS（`.context/` 与 gantry 原生均适用）
 
 1. 用当前任务的 `files` 路径关键词、`action` 中的关键名词，grep `.gantry/specs/LESSONS.md`
 2. 对每条命中且 `状态: active` 的 `L-NNN`，在本次执行计划里写一行：
    - 「已查阅 L-NNN，本次方案与之差异是 X」 或
    - 「已查阅 L-NNN，本次确认仍适用，所以不会重试该方案」
 3. 若计划做的事与某条 active 条目完全相同 → 停下来按 R1.6 回答"本次与上次的差异是什么"，不允许盲目重试
-4. 若 `.gantry/specs/LESSONS.md` 不存在 → 用 `@gantry/templates/LESSONS.md` 创建空骨架
+4. 若既无 `.context/MANIFEST.md` 也无 `.gantry/specs/LESSONS.md` → 用 `@gantry/templates/LESSONS.md` 创建空骨架（有 `.context/` 的项目以其为知识源头，不必强建 LESSONS）
 
 ### 1.6 UI 任务额外检查（仅当任务涉及任何用户可见 UI）
 
