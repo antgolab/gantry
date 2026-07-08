@@ -59,7 +59,7 @@ PROPOSAL → SPEC → DESIGN → [2a UI-DESIGN]* → TASKS → DEV → TEST → 
 
 **前端项目路径**：`PROPOSAL → SPEC → DESIGN → 2a UI-DESIGN → TASKS → DEV → TEST → REVIEW (3 轮) → INTEGRATION`
 **后端项目路径**：`PROPOSAL → SPEC → DESIGN → TASKS → DEV → TEST → REVIEW → INTEGRATION`
-**MVP 路径**：`SPEC → TASKS → DEV`（只跑这三步，3 个文件起步）
+**MVP 路径（light 管线）**：`CHANGE → TASK → DEV → REVIEW → INTEGRATION`（跳过 requirement / design / test / ui-design，产 `PROPOSAL.md` + `TASKS.md` + `EXECUTION.md` 起步）
 
 ---
 
@@ -102,7 +102,7 @@ PROPOSAL → SPEC → DESIGN → [2a UI-DESIGN]* → TASKS → DEV → TEST → 
 | `FOLLOWUPS.md` | 非阻塞遗留问题与后续清单 | AI |
 | `<task-id>-PROGRESS.md` | **临时**文件——任务执行中途清窗时写入，含「已排除方案」反重复段。任务完成后删除。详见 RULES R1.5/R1.6/R1.7 | AI |
 | `LESSONS.md`（`.gantry/specs/` 根）| **项目级常驻**——跨 change 失败知识库。每个 DEV 任务开工前必扫；INTEGRATION 阶段提名新条目。详见 RULES R1.8 | AI 提名 + 人工筛 |
-| `STATE.md`（仓库根）| 跨会话状态（当前位置 / 中断任务 / 运行态 checkpoint / 高价值决策）| AI 维护，人可改 |
+| `STATE.md`（`.gantry/planning/STATE.md`）| 跨会话状态（当前位置 / 中断任务 / 运行态 checkpoint / 高价值决策）| AI 维护，人可改 |
 
 > 兼容迁移期内，运行时仍接受旧命名：`CHANGE.md` / `REQUIREMENT.md` / `TASK.md` / `SUMMARY.md`。新产出应优先使用新命名。
 

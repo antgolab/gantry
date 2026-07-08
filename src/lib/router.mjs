@@ -23,12 +23,6 @@ const PIPELINE_MAP = {
   architectural: 'full',
 };
 
-const STAGE_MAP = {
-  light: ['dev', 'verify'],
-  standard: ['task', 'dev', 'test', 'review'],
-  full: ['design', 'task', 'dev', 'test', 'review', 'integration'],
-};
-
 const INTENT_SIGNALS_ORDERED = [
   ['trivial', [
     /typo/i, /拼写/i, /comment/i, /注释/i, /format/i,
@@ -61,7 +55,7 @@ const INTENT_SIGNALS_ORDERED = [
  * 根据意图和上下文自动路由
  * @param {string} intent - 用户意图描述
  * @param {object} context - { projectRoot?, gitStatus? }
- * @returns {{ pipeline: Pipeline, stages: string[], model: string, scale: Scale, rationale: string, parallel: boolean }}
+ * @returns {{ pipeline: Pipeline, model: string, scale: Scale, rationale: string, parallel: boolean }}
  */
 export function route(intent, context = {}) {
   const { projectRoot } = context;
@@ -75,7 +69,6 @@ export function route(intent, context = {}) {
   // Take the larger of the two estimates
   const scale = resolveScale(intentScale, codeScale);
   const pipeline = PIPELINE_MAP[scale];
-  const stages = STAGE_MAP[pipeline];
 
   const modelMap = {
     trivial: 'fast',
@@ -87,7 +80,6 @@ export function route(intent, context = {}) {
 
   return {
     pipeline,
-    stages,
     model: modelMap[scale],
     scale,
     parallel: scale !== 'trivial' && scale !== 'small',

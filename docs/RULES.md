@@ -20,7 +20,7 @@
 
   **清窗前** AI 必须依次完成：
   1. 把当前任务的中间状态写入 `.gantry/specs/<id>/<task-id>-PROGRESS.md`（用 `@gantry/templates/PROGRESS.md`）。必须包含：已完成子步骤 / 当前正在做 / **已排除方案及理由** / 待确认假设。
-  2. 更新仓库根 `STATE.md` 的「中断任务」字段。
+  2. 更新 `.gantry/planning/STATE.md` 的「中断任务」字段。
   3. 输出一段"重启指令"给用户，形如：
      ```
       已写入 PROGRESS。请在新会话开头粘贴：

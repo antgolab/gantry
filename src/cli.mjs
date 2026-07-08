@@ -12,8 +12,10 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { readState, writeState, updateState, transitionStage, logPhaseEvent, readGateBypasses } from './lib/state.mjs';
 import { STAGES, getNextStage, checkGate, PHASE_FILES } from './lib/phases.mjs';
+import { detectFrontend } from './lib/detect.mjs';
 import { PLANNING_DIR, SPECS_DIR, specsPath } from './lib/paths.mjs';
 import { route, checkUpgrade, reroute } from './lib/router.mjs';
 import { parseTasks, getProgress } from './lib/tasks.mjs';
@@ -56,7 +58,7 @@ const SKILL_DIRS = [
 const [,, command, ...args] = process.argv;
 
 const commands = {
-  init, status, change, auto, next, context, done, hook, install, uninstall, archive, unarchive, version,
+  init, status, change, auto, next, context, done, hook, install, uninstall, archive, unarchive, metrics, version,
   help,
 };
 
@@ -111,11 +113,9 @@ function init(args) {
     },
     agents: {
       primary: tool === 'all' ? 'claude-code' : tool,
-      crossModel: true,
     },
     autonomous: {
       maxStagesPerRun: 3,
-      pauseOnCheckpoint: true,
       maxRetries: 3,
     },
     hooks: {},
@@ -222,7 +222,7 @@ function status(args) {
   if (state.currentStage === 'idle') {
     console.log(`\n下一步: gantry change "<描述>"`);
   } else {
-    const nextSt = getNextStage(state.currentStage, { ...cfg, pipeline: state.pipeline });
+    const nextSt = getNextStage(state.currentStage, { ...cfg, pipeline: state.pipeline, _isFrontend: detectFrontend(projectRoot) });
     if (nextSt) {
       console.log(`\n下一步: gantry next  →  ${nextSt}`);
     }
@@ -436,7 +436,13 @@ function nextOnce(projectRoot, { isSkip = false } = {}) {
   }
 
   const config = readConfig(projectRoot);
-  const effectiveConfig = { ...config, pipeline: state.pipeline || config.pipeline };
+  const effectiveConfig = {
+    ...config,
+    pipeline: state.pipeline || config.pipeline,
+    // 探测「是否前端」一次,注入给 getNextStage/checkGate 的纯函数条件门（ui-design）。
+    // 三态：true/false/undefined —— undefined 时纯函数保守不跳过（向后兼容）。
+    _isFrontend: detectFrontend(projectRoot),
+  };
   const nextStage = getNextStage(state.currentStage, effectiveConfig);
   if (!nextStage) {
     return { reachedEnd: state.currentStage };
@@ -1041,6 +1047,21 @@ function unarchive(args) {
 }
 
 /**
+ * gantry metrics — 月度采纳巡检（转发到 tools/metrics.mjs）
+ *   透传参数,如 --target <repo> --since "1 month ago" --out <dir>
+ *   非 KPI · 非考核 · 给 Curator 月度 review / 团队 retro 用
+ */
+function metrics(args) {
+  const script = join(GANTRY_ROOT, 'tools', 'metrics.mjs');
+  if (!existsSync(script)) {
+    console.error(`未找到 metrics 工具: ${script}`);
+    process.exit(1);
+  }
+  const r = spawnSync(process.execPath, [script, ...args], { stdio: 'inherit' });
+  if (r.status !== 0) process.exit(r.status ?? 1);
+}
+
+/**
  * gantry version — 显示版本号
  */
 function version() {
@@ -1097,6 +1118,11 @@ function help() {
 
   unarchive <id>      从归档恢复并重新激活 change
     --from <name>       指定归档版本名（默认同 change-id）
+
+  metrics             月度采纳巡检（非 KPI，给 Curator / retro 用）
+    --target <repo>     目标仓库（默认当前目录）
+    --since <when>      扫描窗口（默认 "1 month ago"）
+    --out <dir>         报告输出目录（默认 .gantry/specs/metrics）
 
   version             显示版本号
   help                显示本帮助`);

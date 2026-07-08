@@ -74,6 +74,12 @@ export function checkGate(targetStage, specsDir, config, state) {
     return { passed: true, reason: 'stage disabled, skipping' };
   }
 
+  // 条件跳过：enabled:'auto' + condition:'frontend' 的阶段（当前仅 ui-design），
+  // 非前端项目自动跳过。判定信号 config._isFrontend 由 CLI 层探测后注入(纯函数不做 IO)。
+  if (shouldSkipConditional(targetStage, config)) {
+    return { passed: true, reason: 'non-frontend project, skipping conditional stage' };
+  }
+
   // pipeline-aware gate：dev/test/review/integration 这种"动态依赖"的阶段
   // 由调用 pipeline 决定前驱
   const pipeline = config?.pipeline;
@@ -137,6 +143,7 @@ export function getNextStage(currentStage, config) {
       for (let i = idx + 1; i < pipelineStages.length; i++) {
         const candidate = pipelineStages[i];
         if (config?.stages?.[candidate]?.enabled === false) continue;
+        if (shouldSkipConditional(candidate, config)) continue;
         return candidate;
       }
       return null;
@@ -147,11 +154,36 @@ export function getNextStage(currentStage, config) {
   // 路径 B：默认有向图
   const candidates = STAGES[currentStage]?.next || [];
   for (const candidate of candidates) {
-    if (config?.stages?.[candidate]?.enabled !== false) {
-      return candidate;
-    }
+    if (config?.stages?.[candidate]?.enabled === false) continue;
+    if (shouldSkipConditional(candidate, config)) continue;
+    return candidate;
   }
   return null;
+}
+
+/**
+ * 判定某阶段是否因「条件门」而应跳过。
+ *
+ * 目前唯一条件门：ui-design 配 `enabled:'auto' + condition:'frontend'`——
+ * 非前端项目跳过 UI 设计阶段。
+ *
+ * 三态语义（对齐 detect.mjs 的 detectFrontend 返回值）：
+ *   config._isFrontend === false     → 明确非前端 → 跳过
+ *   config._isFrontend === true      → 前端 → 不跳过
+ *   config._isFrontend === undefined → 无从判断 → 保守不跳过（向后兼容：
+ *                                       老项目 / 无探测信号时，行为与改动前一致，照走 ui-design）
+ *
+ * @param {string} stage
+ * @param {object} config
+ * @returns {boolean}
+ */
+export function shouldSkipConditional(stage, config) {
+  const stageCfg = config?.stages?.[stage];
+  if (!stageCfg) return false;
+  if (stageCfg.enabled !== 'auto') return false;
+  if (stageCfg.condition !== 'frontend') return false;
+  // 仅当明确探测为「非前端」时跳过；true / undefined 都不跳过
+  return config?._isFrontend === false;
 }
 
 // --- 内部辅助 ---

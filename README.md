@@ -80,7 +80,7 @@ PROPOSAL → SPEC → DESIGN → [UI-DESIGN] → TASKS
 用户意图
     ↓
 ┌──────────────────────────────────────────────┐
-│  IDE 斜杠命令层（/gantry:change 等）           │  ← 日常主路径，零配置，gantry init 后即用
+│  IDE 斜杠命令层（/gantry-change 等）           │  ← 日常主路径，零配置，gantry init 后即用
 │  CLI 状态机层（gantry change / next / archive）│  ← 脚本、CI、精确控制
 │  @引用层（docs/GO.md 等）              │  ← 通用回退，任何支持 @ 的 AI 工具
 └──────────────────────────────────────────────┘
@@ -175,10 +175,10 @@ gantry init --tool claude   # 可选: claude / cursor / codex / copilot
 `gantry init` 后即用，零配置：
 
 ```
-/gantry:change "给订单列表增加导出功能"
-/gantry:next
-/gantry:exec
-/gantry:archive
+/gantry-change "给订单列表增加导出功能"
+/gantry-next
+/gantry-exec
+/gantry-archive
 ```
 
 公开命令面刻意保持小而稳定：
@@ -260,16 +260,16 @@ gantry change "描述需求"
 gantry archive
 ```
 
-### MVP 模式（当天跑通）
+### MVP 模式（light 管线，当天跑通）
 
-只走 3 个阶段：
+跳过 requirement / design / test / ui-design，只走 `change → task → dev → review → integration`：
 
 ```bash
 gantry change "描述需求" && gantry next
 /gantry-exec
 ```
 
-产物：`SPEC.md` + `TASKS.md` + `EXECUTION.md`，跑顺后再升级完整版。
+产物：`PROPOSAL.md` + `TASKS.md` + `EXECUTION.md`，跑顺后再升级完整版。
 
 ---
 

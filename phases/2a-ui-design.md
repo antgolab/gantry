@@ -7,7 +7,9 @@
 > 下面的 prose 仍是执行参考(怎么做),但"该不该做"以 pack 为准。
 
 
-> **仅前端项目走此阶段**。后端 / CLI / lib 直接跳到 `3-task`。
+> **仅前端项目走此阶段**。后端 / CLI / lib 由 `gantry next` 自动跳到 `3-task`——
+> 门禁按 `config.stages['ui-design'] = { enabled:'auto', condition:'frontend' }` 判定：
+> 探测到前端框架（package.json 依赖或前端构建配置文件）才进入本阶段，否则自动跳过。
 > 触发条件：项目涉及任何用户可见的 UI（web 页面、组件库、移动端、桌面端 GUI）。
 
 ## 角色
