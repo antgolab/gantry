@@ -11,8 +11,7 @@ stage: auto
 
 ## 用法
 
-- `/gantry:auto` — 默认推进 3 个阶段
-- `/gantry:auto --stages 5` — 推进 5 个阶段
+- `/gantry:auto` — 按 `config.autonomous.maxStagesPerRun`（默认 3）推进若干阶段
 - `/gantry:auto --trust` — 全信任模式，跳过所有 `approval` checkpoint，一路执行到管线结束
 
 ## 模式对比

@@ -463,19 +463,14 @@ git status --short                  # 含 untracked
 
 ## 中途断点（清窗触发与恢复，对应 R1.5 / R1.6 / R1.7）
 
-### 快照协议（强制）
+### 进度快照（强制 · 靠 PROGRESS.md 承载，不依赖任何 CLI 命令）
 
-每完成 task 中一个 verify 子条件后，运行：
+进度快照统一落在 `.gantry/specs/<change-id>/<task-id>-PROGRESS.md`（用 `@gantry/templates/PROGRESS.md`），不需要专用命令：
 
-```bash
-gantry snapshot <task-id> --step "<已通过的 verify 条件>" --next "<下一步>"
-```
+- **每完成一个 verify 子条件**：在 `<task-id>-PROGRESS.md` 的「已完成子步骤」勾选，并更新「当前正在做」为下一步。
+- **中断前（清窗 / 结束会话）**：按下方「中途暂停」步骤完整写出 PROGRESS.md（尤其「已排除方案」段），并更新仓库根 `STATE.md` 的「中断任务」字段。
 
-中断前（清窗/结束会话）必须运行：
-
-```bash
-gantry snapshot <task-id> --interrupt --reason "<原因>"
-```
+> 恢复时按「入场恢复」小节从 PROGRESS.md 续起。这就是 R1.5 重启协议的落地方式——状态由文件承载，不靠命令、不靠记忆。
 
 ### 入场恢复（会话开头若发现是接力）
 

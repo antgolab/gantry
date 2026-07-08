@@ -106,7 +106,7 @@
 
 ## 11. 约定维护节奏
 
-- 每季度 review 一次，发现漂移用 `gantry curator --quarterly` 触发检查
+- 每季度 review 一次，发现漂移用 `/gantry-knowledge curate --quarterly` 触发检查
 - 更新必须走完整 CHANGE 流程（不走 F-fast）
 - 新人入职时必须通读并签字确认理解
 - 上次 review：__（填日期）__
