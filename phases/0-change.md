@@ -28,9 +28,11 @@ gantry hook run before:change
 ## 你的职责
 
 0. **自动生成 change-id**（用户**不需要**提供）：
-   - 从用户描述提取核心关键词，转成 kebab-case（小写、短横线分隔、英文）
-   - 长度 2~4 个词。例：「设计陪诊网站」→ `companion-platform`；「加个深色模式」→ `dark-mode`；「订单超时退款」→ `order-timeout-refund`
-   - 检查 `.gantry/specs/<id>/` 不存在，若冲突自动加序号 `<id>-2`、`<id>-3`
+   - 只从**业务主题**生成 id，不把操作指令或输入来源写入 id（例如 `根据 ~/Downloads/prd.md 创建需求：X` 只取 `X`）
+   - id 必须是英文小写 kebab-case，限制 2~5 个词（如 `add-dark-mode`、`order-timeout-refund`、`member-first-purchase-points`）
+   - 中文描述由 AI 在调用 CLI 前翻译 / 提炼为英文 id，并用 `gantry change --id <id> "<描述>"` 传入；CLI 不维护中文词典
+   - 检查 `.gantry/specs/<id>/` 与 `.gantry/specs/_archive/<id>/` 不存在，若冲突自动加序号 `<id>-2`、`<id>-3`
+   - 用户可用 `gantry change --id <id> "<描述>"` 显式覆盖
    - 在反问的第一条消息里向用户**显式声明**：
      ```
      ✅ 自动生成 change-id：`<id>`（不满意请告诉我新的，否则继续。）
@@ -91,18 +93,14 @@ gantry hook run before:change
 
    90% 的 change 都不是架构级。本步不命中就直接进 0.5，不打扰用户。
 
-0.5. **前端项目识别**（关键词触发）：
+0.5. **本次变更的 UI 影响判定**：
 
-   描述里包含以下任一关键词 → 判定为**前端项目**：
-   - 网站 / 网页 / 页面 / web / website / landing
-   - app / 应用 / 移动端 / 小程序
-   - dashboard / 后台 / 管理界面 / 面板
-   - 界面 / UI / 前端 / 设计稿
-   - 用户端 / 客户端 / GUI
+   判断本次 change 是否修改用户可见的界面、交互、视觉或文案，不根据仓库是否使用 React/Vue 等框架推断。
+   - 有用户可见 UI 影响 → 在 `PROPOSAL.md` 写 `uiImpact: true`，进入 0.6。
+   - 无用户可见 UI 影响 → 写 `uiImpact: false`，跳过 0.6。
+   - 无法判断 → 反问用户，不允许缺省为 true。
 
-   非前端项目（CLI / 后端 API / lib / SDK）跳过 0.6，直接进 1。
-
-0.6. **视觉调性预选**（仅前端项目，**独立一条消息，等用户回复后再进下一步**）：
+0.6. **视觉调性预选**（仅 `uiImpact: true`，**独立一条消息，等用户回复后再进下一步**）：
 
    **红线：本步不出其他问题。只列调性卡片 + 推荐，用户选定后才开启反问。**
 
@@ -131,11 +129,11 @@ gantry hook run before:change
 
    ### 选定后
 
-   - 写入 `PROPOSAL.md` 的 `视觉调性` 字段（前端项目必填）
+   - 写入 `PROPOSAL.md` 的 `视觉调性` 字段（`uiImpact: true` 时必填）
    - 会**继承到 2a-ui-design**，2a 不再让用户重选调性
    - **进入步骤 1**（反问）
 
-1. **反问（强制前置门 · 不可跳过）**：用户选定调性后（或非前端项目跳过 0.6 后），用结构化提问把"为什么 / 给谁 / 解决什么 / 何时算完"问清楚。每轮最多 3 个问题，等用户回答再继续。
+1. **反问（强制前置门 · 不可跳过）**：用户选定调性后（或 `uiImpact: false` 跳过 0.6 后），用结构化提问把"为什么 / 给谁 / 解决什么 / 何时算完"问清楚。每轮最多 3 个问题，等用户回答再继续。
    - **加载 `@gantry/reference/grilling-discipline.md`,按其五条纪律 + 六型提问模式执行反问**。核心:
      - 每个问题**必带推荐答案 + 一句话理由**,禁止空问"你觉得呢?"
      - **先探索代码库**(grep / Read / @README / @.gantry/specs/),能自答的作为"我查到 X,确认?"呈现,**不占用当轮 3 问名额**
@@ -150,16 +148,16 @@ gantry hook run before:change
    - 是否影响现有 AC？
 3. **范围排除**：明确写出**这次不做什么**。
 4. **生成 PROPOSAL.md**：使用 `@gantry/templates/PROPOSAL.md` 模板，填好后保存到 `.gantry/specs/<change-id>/PROPOSAL.md`（兼容期如需可保留旧名映射）。
-   - **硬约束**：`## 待澄清问题` 段必须为 `无`。若仍有未决问题，说明步骤 1 没走完——**回到步骤 1 继续反问，不要先生成文件**。带未勾选项（`- [ ]`）的 PROPOSAL 会被 `gantry next` 门禁阻断。
-5. **路径建议**：基于影响面判定，给出本次走哪条路径：
-   - 完整：`REQUIREMENT → DESIGN → TASK → DEV → TEST → REVIEW → INTEGRATION`
-   - 中等：`(REQUIREMENT 增量) → TASK → DEV → TEST → REVIEW → INTEGRATION`
-   - 最短：`TASK → DEV → TEST → REVIEW → INTEGRATION`（仅纯 bug 修复或微调）
+   - **硬约束**：`## 待澄清问题` 段必须为 `无`。若仍有未决问题，说明步骤 1 没走完——**回到步骤 1 继续反问，不要先生成文件**。带未勾选项（`- [ ]`）的 PROPOSAL 会被 `/gantry-next` 阶段门禁阻断。
+5. **Pipeline 复核**：
+   - 默认 `full`：`REQUIREMENT → DESIGN → [UI-DESIGN] → TASK → DEV → TEST → REVIEW → INTEGRATION`
+   - 显式 `light`：`FAST → INTEGRATION`，仅允许低风险局部变更。
+   - light 在澄清后命中高风险边界 → 停止并提示 `gantry pipeline full`，不得自动升级或绕过。
 
 ## 输出
 
 - `.gantry/specs/<change-id>/PROPOSAL.md`（必填）
-- 一段路径建议，并询问用户确认
+- 当前 pipeline 与适用性结论，并询问用户确认
 
 ## 约束（来自 RULES.md）
 
@@ -173,7 +171,7 @@ gantry hook run before:change
 - [ ] `PROPOSAL.md` 包含：Why / What / 影响面 / 范围排除 / 验收线
 - [ ] **`## 待澄清问题` 段为 `无`**（所有疑问都已反问用户并拿到答案，结论已并入正文）
 - [ ] 至少明确写出 1 条「本次不做」
-- [ ] 路径建议有理由，不是默认全跑
+- [ ] `Pipeline` 与 `uiImpact` 已明确填写
 - [ ] 没有跳到实现层（"用 Redux 存主题"这种话不该出现在这里）
 - [ ] **步骤 0.4 已跑**：未命中就跳过；命中且用户选 2 → `PROPOSAL.md` 末尾有「架构层影响声明」段
 
@@ -188,6 +186,6 @@ gantry hook run after:change
 
 ## 触发下一步
 
-`PROPOSAL.md` 经用户确认后，根据路径建议进入：
-- `phases/1-requirement.md`（影响需求时）
-- `phases/3-task.md`（直接拆任务时）
+`PROPOSAL.md` 经用户确认后：
+- full → `phases/1-requirement.md`
+- light → `phases/F-fast.md`

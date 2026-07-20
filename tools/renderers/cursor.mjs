@@ -45,7 +45,7 @@ function extractTitle(md) {
 
 function withPhaseRef(body, stage) {
   const phase = stage && STAGE_PHASE_MAP[stage] ? `${STAGE_PHASE_MAP[stage]}.md` : null;
-  const packBlock = `\n\n## Context Pack 协议\n\n执行前先读取 \`.gantry/planning/context-pack.json\` (schema v2):\n- 校验 \`schemaVersion === 2\`,否则停手。\n- 顺序消费 \`loadOrder\`。\n- 子检查非对称信任:\`trigger===true\` 必跑;\`false+confidence==="high"\` 跳过;\`false+confidence==="low"\` 关键词可能漏判,据完整上下文复核后决定是否补跑。只能上调 low 的 false,不得下调 true。\n- 完成后执行 \`next.onSuccess\`。\n- 不允许在 v2 schema 上自行发明字段。`;
+  const packBlock = `\n\n## Context Pack 协议\n\n执行阶段型规则时先读取 \`.gantry/planning/context-pack.json\` (schema v2)。若 pack 不存在:\n- \`gantry-change\`:先按编排协议运行 \`gantry change "<描述>"\`,由 CLI 创建 pack,再读取 pack 继续。\n- 其他阶段型规则:停手并提示运行 \`gantry context\` 刷新,或先用 \`gantry status\` 查看状态。\n\n读取到 pack 后:\n- 校验 \`schemaVersion === 2\`,否则停手。\n- 顺序消费 \`loadOrder\` (agent-prompt / phase-prompt / artifacts / context-doc / LESSONS)；\`agent-prompt.required === true\` 时必须读取，其 constraints 与 phase prompt 同时生效。\n- 子检查非对称信任:\`trigger===true\` 必跑;\`false+confidence==="high"\` 跳过;\`false+confidence==="low"\` 关键词可能漏判,据完整上下文复核后决定是否补跑。只能上调 low 的 false,不得下调 true。\n- 仅当当前 skill 的编排协议要求推进时，才执行 \`next.onSuccess\`；明确要求停在人工确认关卡时禁止执行，等待后续 \`/gantry-next\`。\n- 不允许在 v2 schema 上自行发明字段。`;
   const ref = phase
     ? `${packBlock}\n\n## 阶段执行指令\n\n读取并严格执行 \`.gantry/core/phases/${phase}\` 中的完整阶段协议。`
     : '';

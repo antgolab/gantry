@@ -63,7 +63,7 @@ function codexRoot(core, commands) {
 ## 启动契约
 
 - 不依赖聊天记忆；以仓库工件为准。
-- 执行 gantry skill 前读取 \`.gantry/planning/context-pack.json\`，按 \`loadOrder\` 最小加载当前阶段所需文件。
+- 执行阶段型 gantry skill 时读取 \`.gantry/planning/context-pack.json\`，按 \`loadOrder\` 最小加载当前阶段所需文件；其中 \`agent-prompt\` 与 \`phase-prompt\` 都是执行约束。 \`gantry-change\` 首次执行若 pack 不存在，先运行 \`gantry change "<描述>"\` 创建 pack。
 - \`docs/RULES.md\` / \`docs/METHODOLOGY.md\` 是规则源文件；仅在解释规则、修改 gantry 框架或 \`context-pack\` 明确要求时读取。
 - 严格遵守 \`TASKS.md\`（兼容期接受 \`TASK.md\`）的 \`read_files\` / \`write_files\` 边界。
 - 完成前必须运行并报告 verify 证据。
@@ -74,11 +74,11 @@ function codexRoot(core, commands) {
 
 - \`$gantry-status\`：查看当前状态
 - \`$gantry-change\`：启动新变更
-- \`$gantry-next\`：推进下一阶段
+- \`$gantry-next\`：执行当前阶段并推进
 - \`$gantry-exec\`：执行当前任务 / wave
 - \`$gantry-resume\`：断点恢复
 - \`$gantry-archive\`：完成并归档
-- \`$gantry-auto\`：自主推进（保留 checkpoint 门禁）
+- \`$gantry-auto\`：自主推进（保留人工确认关卡）
 - \`$gantry-review\`：审查入口（代码 / 需求 / 对抗）
 - \`$gantry-health\`：代码库健康检查
 - \`$gantry-context\`：上下文与架构治理
@@ -113,15 +113,20 @@ ${body.trim()}
 
 ## Context Pack 协议
 
-每次执行此 skill 前先读取 \`.gantry/planning/context-pack.json\`,严格按 schema v2 行事:
+每次执行阶段型 skill 时先读取 \`.gantry/planning/context-pack.json\`,严格按 schema v2 行事。
+若 pack 不存在:
+- \`gantry-change\`:先按上方编排协议运行 \`gantry change "<描述>"\`,由 CLI 创建 pack,再读取 pack 继续。
+- 其他阶段型 skill:停手并提示运行 \`gantry context\` 刷新,或先用 \`gantry status\` 查看状态。
+
+读取到 pack 后:
 - 校验 \`schemaVersion === 2\`,否则停手。
-- 顺序消费 \`loadOrder\` (phase prompt / artifacts / context-doc / LESSONS)。
+- 顺序消费 \`loadOrder\` (agent-prompt / phase-prompt / artifacts / context-doc / LESSONS)；\`agent-prompt.required === true\` 时必须读取，其 constraints 与 phase prompt 同时生效。
 - 子检查按**非对称信任**执行 \`checklists[]\`:
   - \`trigger === true\`:必跑,不得跳过。
   - \`trigger === false && confidence === "high"\`:确定不用跑,跳过。
   - \`trigger === false && confidence === "low"\`:关键词判定可能漏,**据完整上下文复核**,涉及就补跑。
   - 只能把 low 的 false 上调为"跑",不得把 true 下调为"跳过"。
-- 完成后执行 \`next.onSuccess\` (失败走 \`next.onFailure\`)。
+- 仅当当前 skill 的编排协议要求推进时，才执行 \`next.onSuccess\` (失败走 \`next.onFailure\`)；明确要求停在人工确认关卡时禁止执行，等待后续 \`/gantry-next\`。
 - 不允许在 v2 schema 上自行发明字段。
 
 ## 阶段执行指令

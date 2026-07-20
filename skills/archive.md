@@ -3,12 +3,12 @@ name: gantry:archive
 description: 完成当前 change 收尾并归档
 agent: integrator
 stage: integration
-checkpoint: approval
+requiresApproval: true
 ---
 
 # /gantry:archive
 
-完成当前活跃 change 的生命周期：验证收尾条件、复制归档到 `.gantry/specs/_archive/<change-id>/`，然后把 STATE 重置为 idle。
+完成当前活跃 change 的生命周期：验证收尾条件、移动归档到 `.gantry/specs/_archive/<change-id>/`，然后把 STATE 重置为 idle。
 
 ## 用法
 
@@ -26,9 +26,9 @@ CLI 行为：
 2. 默认要求当前阶段为 integration（`--force` 可跳过）
 3. 检查 `PATCH.md` 闭环（`--force` 可跳过）
 4. 输出生命周期报告
-5. 复制 `.gantry/specs/<change-id>/` 到 `.gantry/specs/_archive/<change-id>/`
+5. 移动 `.gantry/specs/<change-id>/` 到 `.gantry/specs/_archive/<change-id>/`
 6. 在归档目录追加 `ARCHIVE.md` 时间戳行
-7. 重置 STATE 为 idle
+7. 删除源 `.gantry/specs/<change-id>/` 并重置 STATE 为 idle
 
 ## 与其他命令的关系
 

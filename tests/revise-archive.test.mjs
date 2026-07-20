@@ -15,7 +15,7 @@ beforeEach(() => {
   tmpDir = join(import.meta.dirname, '..', '.test-tmp-revise-' + Date.now());
   mkdirSync(tmpDir, { recursive: true });
   // 初始化项目骨架
-  execSync(`node ${CLI} init --tool claude`, { cwd: tmpDir, encoding: 'utf-8' });
+  execSync(`node ${CLI} install --tool claude`, { cwd: tmpDir, encoding: 'utf-8' });
 });
 
 afterEach(() => {
@@ -34,7 +34,7 @@ function seedShippedChange(changeId, { withRequirement = true } = {}) {
 }
 
 describe('archive', () => {
-  it('archive 收尾当前活跃 change 并归档到 _archive/<id>/', () => {
+  it('archive 收尾当前活跃 change，移动归档到 _archive/<id>/', () => {
     seedShippedChange('demo-feat');
     run('change "another-feat"');
     const out = run('archive --force');
@@ -42,7 +42,7 @@ describe('archive', () => {
     assert.ok(out.includes('状态已重置为 idle'));
     assert.ok(out.includes('已归档到 .gantry/specs/_archive/another-feat/'));
     assert.ok(existsSync(join(tmpDir, '.gantry/specs', '_archive', 'another-feat', 'ARCHIVE.md')));
-    assert.ok(existsSync(join(tmpDir, '.gantry/specs', 'another-feat')));
+    assert.equal(existsSync(join(tmpDir, '.gantry/specs', 'another-feat')), false);
   });
 
   it('archive 追加 ARCHIVE.md 时间戳记录', () => {
@@ -64,10 +64,11 @@ describe('archive', () => {
   it('archive 默认覆盖式归档', () => {
     run('change "demo-feat"');
     run('archive --force');
-    writeFileSync(join(tmpDir, '.gantry/specs', 'demo-feat', 'NEW.md'), 'new content');
     run('unarchive demo-feat');
+    writeFileSync(join(tmpDir, '.gantry/specs', 'demo-feat', 'NEW.md'), 'new content');
     run('archive --force');
     assert.ok(existsSync(join(tmpDir, '.gantry/specs', '_archive', 'demo-feat', 'NEW.md')));
+    assert.equal(existsSync(join(tmpDir, '.gantry/specs', 'demo-feat')), false);
   });
 
   it('archive 不再接收 change-id', () => {
@@ -83,7 +84,6 @@ describe('unarchive', () => {
   it('从 _archive 恢复并重新激活 change', () => {
     run('change "demo-feat"');
     run('archive --force');
-    rmSync(join(tmpDir, '.gantry/specs', 'demo-feat'), { recursive: true });
     const out = run('unarchive demo-feat');
     assert.ok(out.includes('已恢复并重新激活'));
     assert.ok(existsSync(join(tmpDir, '.gantry/specs', 'demo-feat')));
@@ -97,17 +97,20 @@ describe('unarchive', () => {
     run('archive --force');
     run('unarchive demo-feat');
     run('archive --force --keep-history');
-    rmSync(join(tmpDir, '.gantry/specs', 'demo-feat'), { recursive: true });
     run('unarchive demo-feat --from demo-feat.v2');
     assert.ok(existsSync(join(tmpDir, '.gantry/specs', 'demo-feat')));
   });
 
-  it('已有目标目录时仍可重新激活', () => {
+  it('已有目标目录时覆盖为归档内容后重新激活', () => {
     run('change "demo-feat"');
     run('archive --force');
+    mkdirSync(join(tmpDir, '.gantry/specs', 'demo-feat'), { recursive: true });
+    writeFileSync(join(tmpDir, '.gantry/specs', 'demo-feat', 'STALE.md'), 'stale content');
     const out = run('unarchive demo-feat');
     assert.ok(out.includes('已恢复并重新激活'));
     assert.ok(existsSync(join(tmpDir, '.gantry/specs', 'demo-feat')));
+    assert.equal(existsSync(join(tmpDir, '.gantry/specs', 'demo-feat', 'STALE.md')), false);
+    assert.ok(existsSync(join(tmpDir, '.gantry/specs', 'demo-feat', 'ARCHIVE.md')));
   });
 
   it('已有活跃 change 时拒绝恢复其他 change', () => {

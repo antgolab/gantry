@@ -130,10 +130,34 @@ describe('install', () => {
     assert.ok(existsSync(join(tmpDir, 'AGENTS.md')));
   });
 
-  it('--init creates .gantry/planning/', () => {
-    run('install --tool codex --init', { cwd: tmpDir });
+  it('install initializes project state and selected local agent integration', () => {
+    run('install --tool codex', { cwd: tmpDir });
     assert.ok(existsSync(join(tmpDir, '.gantry/planning', 'STATE.md')));
     assert.ok(existsSync(join(tmpDir, '.gantry/planning', 'config.json')));
+    const config = JSON.parse(readFileSync(join(tmpDir, '.gantry/planning', 'config.json'), 'utf8'));
+    assert.equal(config.stages.change.requiresApproval, true);
+    assert.equal(config.stages.design.requiresApproval, true);
+    assert.equal(config.stages.integration.requiresApproval, true);
+    assert.equal(config.stages.requirement.requiresApproval, undefined);
+    assert.equal(config.stages.review.requiresApproval, undefined);
+    assert.equal(config.stages['ui-design'].condition, 'ui-impact');
+    assert.equal(('check' + 'point') in config.stages.change, false);
+    assert.ok(existsSync(join(tmpDir, '.gantry/core/phases', '0-change.md')));
+    assert.ok(existsSync(join(tmpDir, '.gantry/core/agents', 'planner.md')));
+    assert.ok(existsSync(join(tmpDir, 'AGENTS.md')));
+    assert.ok(existsSync(join(tmpDir, '.agents/skills/gantry-change', 'SKILL.md')));
+    assert.ok(!existsSync(join(tmpDir, '.agents/skills/gantry-init', 'SKILL.md')));
+    assert.ok(!existsSync(join(tmpDir, '.gantry/planning', 'ROADMAP.md')));
+    assert.ok(!existsSync(join(tmpDir, '.gantry/planning', 'context-pack.json')));
+  });
+
+  it('generated change skill matches current bootstrap contract', () => {
+    run('install --tool codex', { cwd: tmpDir });
+    const changeSkill = readFileSync(join(tmpDir, '.agents/skills/gantry-change', 'SKILL.md'), 'utf8');
+    assert.ok(changeSkill.includes('若 pack 不存在'));
+    assert.ok(changeSkill.includes('gantry change "<描述>"'));
+    assert.ok(changeSkill.includes('明确要求停在人工确认关卡时禁止执行'));
+    assert.ok(!changeSkill.includes('完成后执行 `next.onSuccess` (失败走 `next.onFailure`)'));
   });
 
   it('rejects unknown tool', () => {
@@ -169,7 +193,7 @@ describe('install', () => {
 
 describe('auto', () => {
   it('uses autonomous.maxStagesPerRun from project config by default', () => {
-    run('init', { cwd: tmpDir });
+    run('install', { cwd: tmpDir });
     const configPath = join(tmpDir, '.gantry/planning', 'config.json');
     const config = JSON.parse(readFileSync(configPath, 'utf8'));
     config.autonomous.maxStagesPerRun = 5;
@@ -183,7 +207,7 @@ describe('auto', () => {
   });
 
   it('auto 步数只取 config.autonomous.maxStagesPerRun（--stages 已移除，不再覆盖）', () => {
-    run('init', { cwd: tmpDir });
+    run('install', { cwd: tmpDir });
     const configPath = join(tmpDir, '.gantry/planning', 'config.json');
     const config = JSON.parse(readFileSync(configPath, 'utf8'));
     config.autonomous.maxStagesPerRun = 5;
@@ -224,17 +248,18 @@ describe('uninstall', () => {
     run('uninstall', { cwd: tmpDir });
     assert.ok(!existsSync(join(tmpDir, '.agents')));
     assert.ok(!existsSync(join(tmpDir, 'AGENTS.md')));
+    assert.ok(!existsSync(join(tmpDir, '.gantry/core/agents')));
   });
 
   it('--all removes .gantry/planning/', () => {
-    run('install --tool codex --init', { cwd: tmpDir });
+    run('install --tool codex', { cwd: tmpDir });
     run('uninstall --all', { cwd: tmpDir });
     assert.ok(!existsSync(join(tmpDir, 'AGENTS.md')));
     assert.ok(!existsSync(join(tmpDir, '.gantry/planning')));
   });
 
   it('preserves .gantry/planning/ without --all', () => {
-    run('install --tool codex --init', { cwd: tmpDir });
+    run('install --tool codex', { cwd: tmpDir });
     run('uninstall', { cwd: tmpDir });
     assert.ok(existsSync(join(tmpDir, '.gantry/planning')));
   });

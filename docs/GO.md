@@ -33,7 +33,7 @@ Gantry 的文件分两类，**加载策略不同**：
 
 ### 典型 token 成本表（按一个中等规模 change，前端项目，5 个 task）
 
-| 阶段 | 完整模式 | 极简模式（跳 2a / 第四轮 / 跨模型）| 单点调用（仅跑选定阶段）|
+| 阶段 | full（默认） | light（仅显式低风险）| 单点调用（仅跑选定阶段）|
 |---|---|---|---|
 | 0 + 1 + 2 + 2a + 3（规划链） | ~42k - 62k | ~30k - 45k | 按需，只跑你需要的那个 |
 | 4 × 5 task（实施） | ~125k - 300k | ~125k - 300k | 单 task ~25k - 60k |
@@ -50,17 +50,17 @@ Gantry 的文件分两类，**加载策略不同**：
 ✅ Token 预算估计：
    - 本次 change 规模：<small / medium / large>（依据：预估代码行数 / 任务数 / 是否前端）
    - 默认模式预估：~XXk - YYk tokens
-   - 已选挡位：完整 / 极简 / 单点
+   - 已选挡位：full / light / 单点
 ✅ 是否继续？或换挡位？
-   1. 完整（推荐 500+ 行 / 团队项目 / 长期维护）
-   2. 极简（推荐 100~500 行 · 跳 2a / 跳第四轮 / 跳跨模型，省 ~20%）
+   1. full（默认）
+   2. light（仅文档、配置、文案或局部 bug；必须显式选择）
    3. 单点（你只想跑某一阶段，告诉我哪一个）
    4. 不走 Gantry（< 50 行代码 / bugfix 直接修，别走闭环）
 ```
 
 ### 何时**不必**跑这段
 
-- 用户已显式指定模式（如「快速加个字段」/「极简模式跑」）
+- 用户已显式指定 light
 - 当前是恢复中断任务（直接走 R1.5 重启协议，不重新估）
 - 用户跑横向命令（L-restyle / M-health）— 这些有自己的预算
 
@@ -82,7 +82,7 @@ Gantry 的文件分两类，**加载策略不同**：
 | 你的诉求 | 选 |
 |---|---|
 | 想要全套产物（CHANGE / REQUIREMENT / DESIGN / TASK / SUMMARY × N / TEST / REVIEW） | 完整 |
-| 想要核心产物但能少则少（DESIGN / TASK / SUMMARY × N / REVIEW） | 极简 |
+| 明确的低风险局部修复 | light（`change → fast → integration`）|
 | 只想跑某一阶段（如只 review / 只 design / 只 体检）| 单点 · 见 README 决策表 |
 | 代码 < 50 行 · 一次性修补 · hackathon | 不走 Gantry，走 7 个原生 skill 更划算 |
 
@@ -225,7 +225,7 @@ Gantry 后续阶段需要项目上下文给 AI 用。请选择：
 
 进入对应阶段前，AI 必须自行完成：
 
-- **新 CHANGE**：按 `phases/0-change.md` 的步骤 0 自动生成 `change-id`（kebab-case，2~4 词），并在第一条回复里显式声明
+- **新 CHANGE**：按 `phases/0-change.md` 的步骤 0 从业务主题自动生成 `change-id`（剥离输入来源 / 操作指令；英文小写 kebab-case，2~5 个词；中文描述由 AI 提炼后通过 `--id` 传给 CLI），并在第一条回复里显式声明
 - **目录不存在**：自行 `mkdir -p .gantry/specs/<id>/`，不要让用户先建
 - **规则加载**：优先读 `.gantry/planning/context-pack.json` 并按 `loadOrder` 最小加载；`docs/RULES.md` / `docs/METHODOLOGY.md` 仅在解释规则或修改 Gantry 框架时按需回查
 - **检测外部扩展**（阶段 4/5/6/M 需要）：进入阶段前检查是否装了以下并在路由声明里表明走「外部路径」还是「内置回退」：
@@ -250,8 +250,8 @@ Gantry 后续阶段需要项目上下文给 AI 用。请选择：
 | 6 | `<id>/SPEC.md` + `<id>/DESIGN.md` + `<id>/TASKS.md` + `<id>/TEST.md` + `git diff` | `gantry/reference/ui-anti-patterns.md`（前端项目第三轮 · 75 行可全读）| — |
 | 7 | `.gantry/specs/<id>/` 全部产物 + `.gantry/specs/LESSONS.md` | — | — |
 | **M** (health) | `.gantry/specs/CONTEXT.md` + `.gantry/specs/LESSONS.md` + 最近 1 份 `.gantry/specs/health/*.md`（如有，做对比基线）| — | 抽样 5 个最近改动频繁的 src/ 模块 + 5 个测试文件 + 最近 30 天 git log |
-| **A** (evolve) | `.gantry/specs/STATE.md` + `.gantry/specs/CONTEXT.md` + `.gantry/specs/ARCHITECTURE.md`（如存在）+ 范围内每个 `.gantry/specs/_archive/<change>/DESIGN.md` 的 § 9 段（仅 § 9，非整份 DESIGN）| — | 仅扫 `last_evolve_at` 之后归档的 change，禁止越界读 § 9 以外的 DESIGN 内容 |
-| **A** (architect) | `.gantry/specs/CONTEXT.md` + `.gantry/specs/ARCHITECTURE.md`（如存在）+ `.gantry/specs/CHANGELOG.md` + `gantry/templates/ARCHITECTURE.md`（模板）| — | `src/` 顶层结构 + `package.json` / 依赖文件 + 抽样几份 `.gantry/specs/archive/*/DESIGN.md` |
+| **A** (evolve) | `.gantry/specs/STATE.md` + `.gantry/specs/CONTEXT.md` + `.gantry/specs/LESSONS.md` active 条目 + `.gantry/specs/ARCHITECTURE.md`（如存在）+ 范围内每个 `.gantry/specs/_archive/<change>/SPEC.md` 的「CONTEXT 候选 patch」段 + `DESIGN.md` 的 § 9 段 | — | 仅扫 `last_evolve_at` 之后归档的 change，禁止越界读候选 patch / § 9 以外内容 |
+| **A** (architect) | `.gantry/specs/CONTEXT.md` + `.gantry/specs/ARCHITECTURE.md`（如存在）+ `gantry/templates/ARCHITECTURE.md`（模板）| — | `src/` 顶层结构 + `package.json` / 依赖文件 + 抽样几份 `.gantry/specs/archive/*/DESIGN.md` |
 
 ### 查 reference 某一节的实际动作示例
 

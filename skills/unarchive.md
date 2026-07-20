@@ -22,7 +22,7 @@ CLI 行为：
 
 1. 校验源归档存在 `.gantry/specs/_archive/<archive-name>/`
 2. 校验当前 STATE 为 idle，避免覆盖正在进行的 change
-3. 如果 `.gantry/specs/<change-id>/` 不存在，复制源 → 目标；如果已存在，只重新激活
+3. 恢复源归档到 `.gantry/specs/<change-id>/`；如果目标目录已存在，先删除目标再恢复
 4. 更新 STATE：`activeChange=<change-id>`，`currentStage=integration`，`activeAgent=integrator`
 
 ## 后续

@@ -56,6 +56,14 @@
 - <依赖的外部服务、库、内部模块>
 - <已假设的前提条件>
 
+## CONTEXT 候选 patch
+
+> 兼容旧流程时也必须写候选 patch。只有通过 CONTEXT 质量门、与 LESSONS 无冲突、且影响范围不是"本 change"的条目，才允许同步写入 `.gantry/specs/CONTEXT.md`。
+
+| 类型 | 内容 | 来源 | 影响范围 | 冲突检查 | 处理 |
+|---|---|---|---|---|---|
+| term / decision / default | <内容> | <file:line / 用户确认> | <全项目 / 模块 / 本 change> | <无冲突 / 与 L-NNN 冲突 / 与 CONTEXT:X 冲突> | <已写入 CONTEXT / 待用户确认 / 仅保留在本 REQUIREMENT> |
+
 ---
 
 > AC 是 TEST 阶段派生用例的唯一来源，禁止在 TEST 阶段引入新 AC。

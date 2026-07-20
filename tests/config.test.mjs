@@ -36,10 +36,10 @@ test('readConfig: 读取项目 config.json', () => {
   setup();
   try {
     writeFileSync(join(TMP, '.gantry/planning/config.json'),
-      JSON.stringify({ pipeline: 'light', stages: { dev: { checkpoint: null } } }));
+      JSON.stringify({ pipeline: 'light', stages: { review: { requiresApproval: true } } }));
     const cfg = readConfig(TMP);
     assert.equal(cfg.pipeline, 'light');
-    assert.equal(cfg.stages.dev.checkpoint, null);
+    assert.equal(cfg.stages.review.requiresApproval, true);
   } finally { teardown(); }
 });
 
@@ -58,5 +58,13 @@ test('readConfig: 无 config 文件返回空对象', () => {
   try {
     const cfg = readConfig(TMP);
     assert.equal(typeof cfg, 'object');
+  } finally { teardown(); }
+});
+
+test('readConfig: 旧 standard 自动迁移为 full', () => {
+  setup();
+  try {
+    writeFileSync(join(TMP, '.gantry/planning/config.json'), JSON.stringify({ pipeline: 'standard' }));
+    assert.equal(readConfig(TMP).pipeline, 'full');
   } finally { teardown(); }
 });

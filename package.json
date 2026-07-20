@@ -17,6 +17,7 @@
     "docs/",
     "dist/",
     "README.md",
+    "README.zh-CN.md",
     "LICENSE"
   ],
   "engines": {

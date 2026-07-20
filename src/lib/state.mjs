@@ -3,9 +3,11 @@
  * 零依赖，纯 Node.js
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, appendFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { PLANNING_DIR } from './paths.mjs';
+import { getAgentForStage } from './agents.mjs';
+import { normalizePipeline } from './pipeline-policy.mjs';
 
 const STATE_FILE = 'STATE.md';
 
@@ -58,7 +60,10 @@ export function writeState(projectRoot, state) {
   }
 
   const content = renderStateMd(state);
-  writeFileSync(join(planningDir, STATE_FILE), content, 'utf-8');
+  const statePath = join(planningDir, STATE_FILE);
+  const tempPath = `${statePath}.tmp-${process.pid}`;
+  writeFileSync(tempPath, content, 'utf-8');
+  renameSync(tempPath, statePath);
 }
 
 /**
@@ -75,49 +80,14 @@ export function updateState(projectRoot, updates) {
  * 记录阶段转换
  */
 export function transitionStage(projectRoot, fromStage, toStage) {
-  logPhaseEvent(projectRoot, { type: 'transition', from: fromStage, to: toStage });
   return updateState(projectRoot, {
     currentStage: toStage,
+    activeAgent: getAgentForStage(toStage),
     currentWave: null,
     currentTask: null,
     retries: 0,
     pauseReason: null,
   });
-}
-
-/**
- * 记录阶段事件到 timeline
- */
-export function logPhaseEvent(projectRoot, event) {
-  const timelinePath = join(projectRoot, PLANNING_DIR, 'timeline.jsonl');
-  const entry = JSON.stringify({ ...event, ts: new Date().toISOString() });
-  appendFileSync(timelinePath, entry + '\n');
-}
-
-/**
- * 读取 timeline 中的门禁绕过记录（gate-bypass）。
- *
- * timeline 的消费者是「事后排查的开发者」：`gantry next --skip` 会显式绕过门禁并留痕，
- * 这个函数让那条留痕承诺可被兑现——status 据此提示"本 change 有 N 次绕过"。
- * 纯读、确定性；文件不存在返回 []。
- *
- * @param {string} projectRoot
- * @param {string} [changeId] - 只统计该 change 的绕过（省略则全部）
- * @returns {Array<{stage:string, reason:string, ts:string}>}
- */
-export function readGateBypasses(projectRoot, changeId) {
-  const timelinePath = join(projectRoot, PLANNING_DIR, 'timeline.jsonl');
-  if (!existsSync(timelinePath)) return [];
-  const bypasses = [];
-  for (const line of readFileSync(timelinePath, 'utf-8').split('\n')) {
-    if (!line.trim()) continue;
-    let ev;
-    try { ev = JSON.parse(line); } catch { continue; }
-    if (ev.type !== 'gate-bypass') continue;
-    if (changeId && ev.changeId && ev.changeId !== changeId) continue;
-    bypasses.push({ stage: ev.stage, reason: ev.reason, ts: ev.ts });
-  }
-  return bypasses;
 }
 
 // --- 解析 / 渲染 ---
@@ -159,6 +129,11 @@ function parseStateMd(content) {
       case '上下文 token': state.contextUsage.tokens = kv.value === '—' ? null : parseInt(kv.value) || null; break;
       case '窗口使用率': state.contextUsage.windowPercent = kv.value === '—' ? null : parseFloat(kv.value) || null; break;
     }
+  }
+
+  state.pipeline = normalizePipeline(state.pipeline);
+  if (state.pipeline === 'light' && !['change', 'fast', 'integration', 'idle'].includes(state.currentStage)) {
+    state.pipeline = 'full';
   }
 
   return state;

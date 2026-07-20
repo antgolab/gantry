@@ -20,7 +20,7 @@
 │  审查:       /gantry-review [--requirement | --adversarial]         │
 │  诊断快修:   /gantry-health · /gantry-debug · /gantry-fast          │
 ├─ 自动化与统一入口 ────────────────────────────────────────────────┤
-│  /gantry-auto(checkpoint 门禁下自主推进)                           │
+│  /gantry-auto(人工确认关卡下自主推进)                           │
 │  docs/GO.md(自然语言统一入口,自动判断阶段)                        │
 └────────────────────────────────────────────────────────────────────┘
 ```
@@ -35,12 +35,12 @@
 
 ```
 gantry change "给订单列表加导出功能"
-gantry next          # → SPEC.md
-gantry next          # → DESIGN.md
-gantry next          # → TASKS.md
+/gantry-next         # → SPEC.md
+/gantry-next         # → DESIGN.md
+/gantry-next         # → TASKS.md
 /gantry-exec         # → DEV(逐任务在 fresh context 循环)
-gantry next          # → TEST
-gantry next          # → REVIEW
+/gantry-next         # → TEST
+/gantry-next         # → REVIEW
 gantry archive       # → INTEGRATION + 归档
 ```
 
@@ -49,7 +49,8 @@ gantry archive       # → INTEGRATION + 归档
 ### Tour 2 · 极简模式(当天跑通,30–100 行)
 
 ```
-gantry change "描述需求" && gantry next   # 只到 SPEC + TASKS
+gantry change "描述需求"
+/gantry-next   # 只到 SPEC + TASKS
 /gantry-exec
 ```
 

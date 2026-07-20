@@ -30,17 +30,12 @@ function writeState(root, state) {
 
 ## Pipeline
 
-- **模式**: \`${state.pipeline || 'standard'}\`
+- **模式**: \`${state.pipeline || 'full'}\`
 - **活跃 Change**: \`${state.activeChange || '无'}\`
 - **当前阶段**: \`${state.currentStage || 'idle'}\`
 - **当前 Wave**: \`${state.currentWave ?? '—'}\`
 - **当前 Task**: \`${state.currentTask ?? '—'}\`
 - **活跃 Agent**: \`${state.activeAgent ?? '—'}\`
-
-## Checkpoints
-
-| ID | Stage | Type | Status | Created |
-|----|-------|------|--------|---------|
 
 ## 自动模式状态
 
@@ -52,10 +47,6 @@ function writeState(root, state) {
 - **窗口使用率**: \`—\`
 `;
   writeFileSync(join(root, '.gantry/planning/STATE.md'), content, 'utf-8');
-}
-
-function writeConfig(root, config) {
-  writeFileSync(join(root, '.gantry/planning/config.json'), JSON.stringify(config), 'utf-8');
 }
 
 // === Schema 不变性 ===
@@ -98,6 +89,41 @@ test('schema: 不含禁止字段 (suggestedModel/agent/complexity/promptText)', 
 
 // === loadOrder ===
 
+test('loadOrder: 各阶段包含对应 agent prompt', () => {
+  const cases = [
+    ['change', 'planner.md'],
+    ['requirement', 'planner.md'],
+    ['task', 'planner.md'],
+    ['design', 'architect.md'],
+    ['ui-design', 'architect.md'],
+    ['dev', 'executor.md'],
+    ['fast', 'executor.md'],
+    ['test', 'reviewer.md'],
+    ['review', 'reviewer.md'],
+    ['integration', 'integrator.md'],
+  ];
+
+  for (const [stage, agentFile] of cases) {
+    const root = createFixture(`agent-${stage}`);
+    try {
+      writeState(root, { currentStage: stage, activeChange: 'feat-x' });
+      const pack = buildPack(root);
+      assert.equal(pack.loadOrder[0].kind, 'agent-prompt', `${stage} 应先加载 agent prompt`);
+      assert.equal(pack.loadOrder[0].path, `.gantry/core/agents/${agentFile}`);
+      assert.equal(pack.loadOrder[0].required, true);
+    } finally { cleanup(root); }
+  }
+});
+
+test('loadOrder: idle 阶段不加载 agent prompt', () => {
+  const root = createFixture('agent-idle');
+  try {
+    writeState(root, { currentStage: 'idle' });
+    const pack = buildPack(root);
+    assert.equal(pack.loadOrder.some(i => i.kind === 'agent-prompt'), false);
+  } finally { cleanup(root); }
+});
+
 test('loadOrder: dev 阶段含 phase + 上游工件 + LESSONS,不默认加载核心长文档', () => {
   const root = createFixture('load-dev');
   try {
@@ -112,11 +138,14 @@ test('loadOrder: dev 阶段含 phase + 上游工件 + LESSONS,不默认加载核
     writeFileSync(join(root, '.gantry/specs', changeId, 'TASK.md'), '<task id="T01"></task>', 'utf-8');
     writeFileSync(join(root, '.gantry/specs/LESSONS.md'), '#', 'utf-8');
 
-    writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: 'T01', pipeline: 'standard' });
+    writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: 'T01', pipeline: 'full' });
 
     const pack = buildPack(root);
     const paths = pack.loadOrder.map(i => i.path);
 
+    assert.equal(pack.loadOrder[0].kind, 'agent-prompt');
+    assert.equal(pack.loadOrder[0].path, '.gantry/core/agents/executor.md');
+    assert.equal(pack.loadOrder[1].kind, 'phase-prompt');
     assert.ok(!paths.includes('docs/METHODOLOGY.md'), 'METHODOLOGY.md 不应默认进入运行时 loadOrder');
     assert.ok(!paths.includes('docs/RULES.md'), 'RULES.md 不应默认进入运行时 loadOrder');
     assert.ok(paths.includes('.gantry/core/phases/4-dev.md'), 'phase prompt 缺失');
@@ -129,24 +158,34 @@ test('loadOrder: dev 阶段含 phase + 上游工件 + LESSONS,不默认加载核
   } finally { cleanup(root); }
 });
 
-test('loadOrder: light pipeline 跳过 requirement/design 工件', () => {
-  const root = createFixture('load-light');
+test('loadOrder: fast 阶段加载 executor、F-fast 和 PROPOSAL', () => {
+  const root = createFixture('fast-stage');
   try {
-    const changeId = 'fix-y';
+    const changeId = 'tiny-fix';
     mkdirSync(join(root, '.gantry/specs', changeId), { recursive: true });
-    mkdirSync(join(root, 'docs'), { recursive: true });
-    writeFileSync(join(root, 'docs', 'METHODOLOGY.md'), '# methodology', 'utf-8');
-    writeFileSync(join(root, 'docs', 'RULES.md'), '# rules', 'utf-8');
-    writeFileSync(join(root, '.gantry/specs', changeId, 'CHANGE.md'), '#', 'utf-8');
-    writeFileSync(join(root, '.gantry/specs', changeId, 'TASK.md'), '<task id="T01"></task>', 'utf-8');
-
-    writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: 'T01', pipeline: 'light' });
-
+    writeFileSync(join(root, '.gantry/specs', changeId, 'PROPOSAL.md'),
+      '# PROPOSAL\n\n修复 README 拼写\n\n## 待澄清问题\n\n无\n');
+    writeState(root, { currentStage: 'fast', activeChange: changeId, pipeline: 'light' });
     const pack = buildPack(root);
-    const paths = pack.loadOrder.map(i => i.path);
-    assert.ok(paths.some(p => p.endsWith('CHANGE.md')), 'CHANGE.md 应在 light 中');
-    assert.ok(!paths.some(p => p.endsWith('REQUIREMENT.md')), 'REQUIREMENT.md 不应在 light 中');
-    assert.ok(!paths.some(p => p.endsWith('DESIGN.md')), 'DESIGN.md 不应在 light 中');
+    assert.equal(pack.loadOrder[0].path, '.gantry/core/agents/executor.md');
+    assert.ok(pack.loadOrder.some(item => item.path.endsWith('/F-fast.md')));
+    assert.ok(pack.loadOrder.some(item => item.path.endsWith('/PROPOSAL.md')));
+    assert.ok(pack.checklists.some(item => item.id === 'fast-verify-evidence' && item.trigger));
+  } finally { cleanup(root); }
+});
+
+test('loadOrder: light integration 加载 PROPOSAL 和 EXECUTION', () => {
+  const root = createFixture('light-integration');
+  try {
+    const changeId = 'tiny-fix';
+    mkdirSync(join(root, '.gantry/specs', changeId), { recursive: true });
+    writeFileSync(join(root, '.gantry/specs', changeId, 'PROPOSAL.md'), '# PROPOSAL\n');
+    writeFileSync(join(root, '.gantry/specs', changeId, 'EXECUTION.md'), '# EXECUTION\nverify: PASS\n');
+    writeState(root, { currentStage: 'integration', activeChange: changeId, pipeline: 'light' });
+    const paths = buildPack(root).loadOrder.map(item => item.path);
+    assert.ok(paths.some(path => path.endsWith('/PROPOSAL.md')));
+    assert.ok(paths.some(path => path.endsWith('/EXECUTION.md')));
+    assert.ok(!paths.some(path => path.endsWith('/SPEC.md')));
   } finally { cleanup(root); }
 });
 
@@ -165,7 +204,7 @@ test('loadOrder: dev 恢复时强制带入 PROGRESS.md 反重复上下文', () =
     writeFileSync(join(root, '.gantry/specs', changeId, 'T07-PROGRESS.md'),
       '# PROGRESS\n\n## 已排除的方案（反重复关键）\n\n- X-1\n\n## 当前正在做（清窗那一刻的状态）\n\n继续修复\n', 'utf-8');
 
-    writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: 'T07', pipeline: 'standard' });
+    writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: 'T07', pipeline: 'full' });
 
     const pack = buildPack(root);
     const progress = pack.loadOrder.find(i => i.path.endsWith('T07-PROGRESS.md'));
@@ -195,7 +234,7 @@ test('checklists: dev/UI 任务触发 1.6,非 UI 不触发', () => {
 </write_files>
 </task>`, 'utf-8');
 
-    writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: 'T01', pipeline: 'standard' });
+    writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: 'T01', pipeline: 'full' });
 
     const pack = buildPack(root);
     const ui = pack.checklists.find(c => c.id === '1.6-ui-task');
@@ -234,7 +273,7 @@ test('checklists: 1.5 在只有 .context/MANIFEST.md(无 LESSONS)时仍触发', 
     mkdirSync(join(root, '.context'), { recursive: true });
     writeFileSync(join(root, '.context/MANIFEST.md'), '# 团队知识索引\n', 'utf-8');
 
-    writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: 'T01', pipeline: 'standard' });
+    writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: 'T01', pipeline: 'full' });
 
     const pack = buildPack(root);
     const c15 = pack.checklists.find(c => c.id === '1.5-lessons-grep');
@@ -257,7 +296,7 @@ test('checklists: 1.5 在既无 .context 也无 LESSONS 时不触发', () => {
 </write_files>
 </task>`, 'utf-8');
 
-    writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: 'T01', pipeline: 'standard' });
+    writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: 'T01', pipeline: 'full' });
 
     const pack = buildPack(root);
     const c15 = pack.checklists.find(c => c.id === '1.5-lessons-grep');
@@ -275,7 +314,7 @@ test('checklists: v2 确定性类 false 为 high、关键词类 false 为 low', 
       `<task id="T01"><title>实现分页逻辑</title><write_files>
 - src/service/pager.ts
 </write_files></task>`, 'utf-8');
-    writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: 'T01', pipeline: 'standard' });
+    writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: 'T01', pipeline: 'full' });
 
     const pack = buildPack(root);
     const byId = Object.fromEntries(pack.checklists.map(c => [c.id, c]));
@@ -295,7 +334,7 @@ test('checklists: dev 缺少 taskId 时返回显式 fresh-context 阻断信号',
   try {
     const changeId = 'missing-task';
     mkdirSync(join(root, '.gantry/specs', changeId), { recursive: true });
-    writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: null, pipeline: 'standard' });
+    writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: null, pipeline: 'full' });
 
     const pack = buildPack(root);
     assert.equal(pack.taskId, null);
@@ -319,7 +358,7 @@ test('checklists: schema 任务命中 1.7', () => {
 </write_files>
 </task>`, 'utf-8');
 
-    writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: 'T01', pipeline: 'standard' });
+    writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: 'T01', pipeline: 'full' });
 
     const pack = buildPack(root);
     const schema = pack.checklists.find(c => c.id === '1.7-schema');
@@ -340,7 +379,7 @@ test('checklists: 破坏性变更 action 命中 1.8', () => {
 </write_files>
 </task>`, 'utf-8');
 
-    writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: 'T01', pipeline: 'standard' });
+    writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: 'T01', pipeline: 'full' });
 
     const pack = buildPack(root);
     const breaking = pack.checklists.find(c => c.id === '1.8-breaking-change');
@@ -359,7 +398,7 @@ test('checklists: 英文关键词词边界匹配,不因子串误报(止血缺陷
       `<task id="T01"><title>confront the iconic delegate flow</title><write_files>
 - src/service/flow.ts
 </write_files></task>`, 'utf-8');
-    writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: 'T01', pipeline: 'standard' });
+    writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: 'T01', pipeline: 'full' });
 
     const pack = buildPack(root);
     const byId = Object.fromEntries(pack.checklists.map(c => [c.id, c]));
@@ -377,7 +416,7 @@ test('checklists: 独立英文关键词仍正常命中', () => {
       `<task id="T01"><title>add an icon to the header</title><write_files>
 - src/service/x.ts
 </write_files></task>`, 'utf-8');
-    writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: 'T01', pipeline: 'standard' });
+    writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: 'T01', pipeline: 'full' });
 
     const pack = buildPack(root);
     const ui = pack.checklists.find(c => c.id === '1.6-ui-task');
@@ -426,10 +465,10 @@ test('checklists: change 阶段 PROPOSAL 待澄清清空后不含触发器', () 
   } finally { cleanup(root); }
 });
 
-// === next 命令 ===
+// === 阶段完成后的机械推进命令 ===
 
-test('next: dev 含 done + next 链', () => {
-  const root = createFixture('next-dev');
+test('next commands: dev 含 done + advance 链', () => {
+  const root = createFixture('advance-dev');
   try {
     const changeId = 'foo';
     mkdirSync(join(root, '.gantry/specs', changeId), { recursive: true });
@@ -438,7 +477,7 @@ test('next: dev 含 done + next 链', () => {
     writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: 'T05' });
     const pack = buildPack(root);
     assert.ok(pack.next.onSuccess.includes('done T05'));
-    assert.ok(pack.next.onSuccess.includes('next'));
+    assert.ok(pack.next.onSuccess.includes('advance'));
   } finally { cleanup(root); }
 });
 

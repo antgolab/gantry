@@ -29,3 +29,5 @@ dist/
 .test-tmp-*
 .tmp-integration*
 .gantry
+.agents
+.context

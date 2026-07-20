@@ -22,9 +22,9 @@ stage: dev
    - **loadOrder**: 顺序加载列出的文件(phase prompt / 制品 / context-doc / LESSONS)
    - **checklists**: `trigger=true` 必须执行,`trigger=false` 必须跳过(reason 字段说明原因)
    - **lessons**: 实现前 grep 命中条目,确认本次方案与之差异
-   - **next.onSuccess**: 任务完成后必须执行(默认 `gantry done <task-id> && gantry next`)
+   - **next.onSuccess**: 任务完成后必须执行(默认 `gantry done <task-id> && gantry advance`)
 3. 完成后跑 `gantry done <task-id>` 标记 task done + 更新 `EXECUTION.md`
-4. 全部 task done 后跑 `gantry next` 推进到 test 阶段
+4. 全部 task done 后跑 `gantry advance` 推进到 test 阶段
 
 ## Agent 指令
 

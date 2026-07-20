@@ -33,7 +33,7 @@ stage: current
 
 ## 用户心智
 
-- 正常推进：`gantry next`
+- 正常推进：`/gantry-next`
 - 发现变化：`/gantry-adjust "..."`
 - 完成受影响工作后勾选 `PATCH.md`
 - 收尾：`gantry archive`

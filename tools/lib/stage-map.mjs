@@ -6,7 +6,6 @@
 // Public orchestration commands (skills/) exposed as user-facing entry points.
 // Skills not listed here are internal and referenced through .gantry/core/phases/*.
 export const PUBLIC_SKILLS = new Set([
-  'init',
   'status',
   'change',
   'next',

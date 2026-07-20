@@ -3,7 +3,7 @@ name: gantry:review
 description: 审查入口（代码审查 / 产品需求门禁 / 对抗性审查）
 agent: reviewer
 stage: review
-checkpoint: approval
+requiresApproval: false
 ---
 
 # /gantry:review
@@ -29,7 +29,7 @@ checkpoint: approval
    - 第 2 轮：代码质量（SOLID / DRY / 安全）
    - 第 3 轮（--cross-model）：跨模型审查
 5. 产出 `.gantry/specs/<change-id>/REVIEW.md`
-6. 创建 checkpoint（`approval`）
+6. 进入人工确认关卡
 
 ### `--requirement` 产品需求门禁
 

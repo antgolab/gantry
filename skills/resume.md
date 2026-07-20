@@ -12,7 +12,6 @@ stage: auto
 ## 用法
 
 - `/gantry:resume` — 自动检测并恢复
-- `/gantry:resume <checkpoint-id>` — 解决指定 checkpoint 并继续
 
 ## 执行协议
 
@@ -28,9 +27,9 @@ stage: auto
 
 | 中断类型 | 判断条件 | 需要加载的文件 |
 |---|---|---|
-| **checkpoint 等待** | 有 pending checkpoint | checkpoint 文件 + 对应阶段产物 |
+| **人工确认等待** | 当前阶段需要人工确认 | 当前阶段产物 |
 | **task 执行中断** | currentStage=dev 且 currentTask 非空 | `TASKS.md`（兼容期接受 `TASK.md`）+ PROGRESS.md + DESIGN.md |
-| **阶段间中断** | currentStage 非 idle 且无 pending task | 当前阶段产物 + 下一阶段门禁检查 |
+| **阶段间中断** | currentStage 非 idle 且无当前 task | 当前阶段产物 + 下一阶段门禁检查 |
 
 ### 3. 检查 PROGRESS.md（task 中断时）
 
@@ -45,7 +44,7 @@ stage: auto
 
 ### 4. 恢复执行
 
-- checkpoint 等待 → 显示 checkpoint 内容，等用户确认后推进
+- 人工确认等待 → 提示用户审阅当前阶段产物，确认后推进
 - task 中断 → 进入 dev 阶段，从断点续接
 - 阶段间中断 → 检查门禁，满足则推进到下一阶段
 

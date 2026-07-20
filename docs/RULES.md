@@ -52,6 +52,20 @@
   3. 若计划方案与某条 active 条目**完全相同** → 触发 R1.6，禁止直接重试，必须先回答"本次与上次的差异是什么"
   4. INTEGRATION 阶段 ARCHIVE 前，AI 必须按 LESSONS.md 末尾「提名条件」扫描本次 change 的 `EXECUTION.md`、例外 `*-SUMMARY.md` 与遗留 PROGRESS，把符合条件的失败提名进库
 
+- **R1.8.1 · LESSONS 条目结构门**
+  1. 新增 / 修改 LESSONS 条目必须包含：`首发`、`上次复核`、`适用栈`、`状态`、`关键词`、`问题场景`、`当时尝试的方案`、`为什么不行`、`当前推荐做法`、`何时可重新评估`
+  2. 缺任一字段只能进入 `## 待审`，不能作为 active 条目
+  3. 关键词必须包含任务里会出现的路径名 / 函数名 / 业务名，避免只写抽象标签导致 grep 不命中
+  4. 若某条 LESSONS 与 CONTEXT 决策冲突，默认 LESSONS 胜出；除非用户明确确认 supersede，并同步更新两边
+
+- **R1.8.2 · CONTEXT 质量门**
+  1. `CONTEXT.md` 是项目级 rules 层，不是 change 备忘录。新写入内容必须能回答"后续 AI 写代码时该遵守什么"
+  2. 首次创建 CONTEXT 必须来自 `/gantry-context scan` 或等价人工补齐；只含术语 / 决策、缺少技术栈 / 既有抽象索引 / 禁动清单 / intel-scan 元数据的薄 CONTEXT 不合格
+  3. REQUIREMENT 阶段只能生成 CONTEXT 候选 patch；落库前必须检查：与现有 CONTEXT 是否重复 / 冲突、与 active LESSONS 是否冲突、是否有来源文件 / 行号
+  4. 业务规则若被 LESSONS 否定过，禁止再次写入 CONTEXT，除非先把对应 LESSONS 标为 `superseded-by` 或 `deprecated` 并说明证据
+  5. 每条已锁决策必须带日期和来源（change-id + 文件路径 / 行号）；无来源的决策只能留在 change 内部工件
+  6. 对实际项目 `.gantry/specs/*` 的质量审查只允许输出诊断和 Gantry 再生成 / 同步指令；不得由审查者手工 patch 被审项目的生成产物
+
 - **R1.9 · 工件加载预算（任何阶段首轮强制）**
 
   Gantry 的文件按加载策略分三类：

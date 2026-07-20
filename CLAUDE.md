@@ -124,7 +124,8 @@
 ### 状态机
 
 ```
-idle → change → requirement → design → [ui-design] → task → dev → test → review → integration → idle
+full:  idle → change → requirement → design → [ui-design] → task → dev → test → review → integration → idle
+light: idle → change → fast → integration → idle
 ```
 
 ---

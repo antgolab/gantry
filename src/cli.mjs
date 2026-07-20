@@ -7,22 +7,21 @@
  * Usage: gantry <command> [options]
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, cpSync, readdirSync, rmSync, unlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, cpSync, readdirSync, rmSync, unlinkSync, renameSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { readState, writeState, updateState, transitionStage, logPhaseEvent, readGateBypasses } from './lib/state.mjs';
+import { readState, writeState, updateState, transitionStage } from './lib/state.mjs';
 import { STAGES, getNextStage, checkGate, PHASE_FILES } from './lib/phases.mjs';
-import { detectFrontend } from './lib/detect.mjs';
 import { PLANNING_DIR, SPECS_DIR, specsPath } from './lib/paths.mjs';
-import { route, checkUpgrade, reroute } from './lib/router.mjs';
 import { parseTasks, getProgress } from './lib/tasks.mjs';
 import { runHook, listHooks } from './lib/hooks.mjs';
 import { writeContextPack, readContextPack, PACK_PATH } from './lib/context-pack.mjs';
-import { artifactCandidates, getPreferredArtifactName, resolveArtifactPath } from './lib/artifacts.mjs';
+import { getPreferredArtifactName, resolveArtifactPath } from './lib/artifacts.mjs';
 import { readConfig } from './lib/config.mjs';
+import { assessLightEligibility, normalizePipeline, proposalHasUiImpact } from './lib/pipeline-policy.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -44,6 +43,7 @@ const SCAN_DIRS = [
   ['.claude/commands', '.md'],
   ['.cursor/rules', '.mdc'],
   ['.github/prompts', '.prompt.md'],
+  ['.gantry/core/agents', '.md'],
   ['.gantry/core/phases', '.md'],
 ];
 
@@ -58,9 +58,16 @@ const SKILL_DIRS = [
 const [,, command, ...args] = process.argv;
 
 const commands = {
-  init, status, change, auto, next, context, done, hook, install, uninstall, archive, unarchive, metrics, version,
+  status, change, pipeline, auto, advance, context, done, hook, install, uninstall, archive, unarchive, metrics, version,
   help,
 };
+
+// IDE-only skills：AI 驱动的阶段 / 动作命令，只在 IDE 中以 /gantry-<name> 执行，
+// 不是 CLI 子命令(CLI 只做机械操作)。用户误在 CLI 里敲这些时，给出精准引导，
+// 而非笼统的「未知命令」——避免把人引向不存在的 gantry help 死路。
+const IDE_ONLY_SKILLS = new Set([
+  'next', 'exec', 'adjust', 'resume', 'review', 'health', 'knowledge', 'debug', 'fast',
+]);
 
 if (!command || command === '--help' || command === '-h') {
   help();
@@ -69,84 +76,17 @@ if (!command || command === '--help' || command === '-h') {
 } else if (commands[command]) {
   const _r = commands[command](args);
   if (_r && typeof _r.then === 'function') _r.catch(err => { console.error(err.message || String(err)); process.exit(1); });
+} else if (IDE_ONLY_SKILLS.has(command)) {
+  console.error(`\`${command}\` 是 IDE skill，不是 CLI 命令。`);
+  console.error(`  请在 IDE(Claude Code 等)中运行: /gantry-${command}`);
+  console.error(`  CLI 只负责状态机 / 安装 / 归档等机械操作，可用命令见: gantry help`);
+  process.exit(1);
 } else {
   console.error(`未知命令: ${command}\n运行 gantry help 查看可用命令`);
   process.exit(1);
 }
 
 // --- 命令实现 ---
-
-/**
- * gantry init — 初始化 .gantry/planning/ 目录
- */
-function init(args) {
-  const projectRoot = process.cwd();
-  const planningDir = join(projectRoot, PLANNING_DIR);
-
-  if (existsSync(planningDir)) {
-    console.log(`${PLANNING_DIR}/ 已存在，跳过初始化`);
-    console.log(`当前状态: ${readState(projectRoot).currentStage}`);
-    return;
-  }
-
-  // 解析选项
-  const tool = getFlag(args, '--tool') || 'all';
-  const pipeline = getFlag(args, '--pipeline') || 'full';
-
-  // 创建目录结构
-  mkdirSync(planningDir, { recursive: true });
-
-  // 写入 config.json
-  const config = {
-    pipeline,
-    tool,
-    stages: {
-      change:       { enabled: true, checkpoint: 'approval' },
-      requirement:  { enabled: true, checkpoint: 'approval' },
-      design:       { enabled: true, checkpoint: 'approval' },
-      'ui-design':  { enabled: 'auto', condition: 'frontend' },
-      task:         { enabled: true, checkpoint: 'auto' },
-      dev:          { enabled: true, checkpoint: null },
-      test:         { enabled: true, checkpoint: 'auto' },
-      review:       { enabled: true, checkpoint: 'approval' },
-      integration:  { enabled: true, checkpoint: 'approval' },
-    },
-    agents: {
-      primary: tool === 'all' ? 'claude-code' : tool,
-    },
-    autonomous: {
-      maxStagesPerRun: 3,
-      maxRetries: 3,
-    },
-    hooks: {},
-  };
-  writeFileSync(join(planningDir, 'config.json'), JSON.stringify(config, null, 2), 'utf-8');
-
-  // 写入初始 STATE.md
-  writeState(projectRoot, {
-    pipeline,
-    activeChange: null,
-    currentStage: 'idle',
-    currentWave: null,
-    currentTask: null,
-    activeAgent: null,
-    autonomous: false,
-    stagesRun: 0,
-    maxStages: config.autonomous.maxStagesPerRun,
-    retries: 0,
-    maxRetries: config.autonomous.maxRetries,
-    pauseReason: null,
-  });
-
-  // 写入 ROADMAP.md 已移除 — 当前没有任何命令读取它。Loop engineering 原则：
-  // 工件必须有消费者，否则只是装饰。需要变更积压视图时，扫描 .gantry/specs/_archive/ 目录。
-
-  console.log(`✓ ${PLANNING_DIR}/ 初始化完成`);
-  console.log(`  管线: ${pipeline}`);
-  console.log(`  工具: ${tool}`);
-  console.log(`  配置: ${join(PLANNING_DIR, 'config.json')}`);
-  console.log(`\n下一步: gantry change "<描述你的变更>"`);
-}
 
 /**
  * gantry status — 显示当前状态
@@ -156,9 +96,10 @@ function status(args) {
   const planningDir = join(projectRoot, PLANNING_DIR);
 
   if (!existsSync(planningDir)) {
-    console.log('项目未初始化。运行 gantry init 开始。');
+    console.log('项目未初始化。运行 gantry install 开始。');
     return;
   }
+  migrateLegacyPipelines(projectRoot);
 
   const state = readState(projectRoot);
   const json = args.includes('--json');
@@ -187,22 +128,11 @@ function status(args) {
   }
   printBox('gantry 状态', lines);
 
-  // 当前阶段是否为 approval 关卡（从 currentStage + config 派生，非独立状态）
+  // 当前阶段是否为固定人工确认关卡（非独立状态）
   const cfg = readConfig(projectRoot);
   if (state.currentStage !== 'idle'
-      && cfg?.stages?.[state.currentStage]?.checkpoint === 'approval') {
-    console.log(`\n⏸  当前阶段 ${state.currentStage} 需人工确认：审阅本阶段产物后运行 gantry next 推进。`);
-  }
-
-  // 门禁绕过留痕（兑现 --skip 的"已写入 timeline"承诺，消费者=事后排查者）
-  if (state.activeChange) {
-    const bypasses = readGateBypasses(projectRoot, state.activeChange);
-    if (bypasses.length > 0) {
-      console.log(`\n⚠  本 change 有 ${bypasses.length} 次门禁绕过记录:`);
-      for (const b of bypasses) {
-        console.log(`   [${(b.ts || '').slice(0, 10)}] → ${b.stage}: ${b.reason}`);
-      }
-    }
+      && requiresApproval(state.currentStage)) {
+    console.log(`\n⏸  当前阶段 ${state.currentStage} 需人工确认：审阅本阶段产物后运行 /gantry-next 继续。`);
   }
 
   // 任务进度（dev 阶段且有 TASKS.md/TASK.md 时显示）
@@ -222,9 +152,13 @@ function status(args) {
   if (state.currentStage === 'idle') {
     console.log(`\n下一步: gantry change "<描述>"`);
   } else {
-    const nextSt = getNextStage(state.currentStage, { ...cfg, pipeline: state.pipeline, _isFrontend: detectFrontend(projectRoot) });
+    const nextSt = getNextStage(state.currentStage, {
+      ...cfg,
+      pipeline: state.pipeline,
+      _uiImpact: readProposalUiImpact(projectRoot, state.activeChange),
+    });
     if (nextSt) {
-      console.log(`\n下一步: gantry next  →  ${nextSt}`);
+      console.log(`\n下一步: /gantry-next  →  执行 ${state.currentStage} 并推进到 ${nextSt}`);
     }
   }
 }
@@ -278,7 +212,7 @@ function change(args) {
   ensureInit(projectRoot);
 
   // 提取描述：跳过 --flag 及其值
-  const description = stripFlags(args, ['--pipeline', '--tool']).join(' ');
+  const description = stripFlags(args, ['--pipeline', '--tool', '--id']).join(' ');
   if (!description) {
     console.error('用法: gantry change "<变更描述>"');
     process.exit(1);
@@ -291,17 +225,19 @@ function change(args) {
     process.exit(1);
   }
 
-  // 智能路由：意图识别 → 管线深度选择
   const flagPipeline = getFlag(args, '--pipeline');
-  let pipeline = flagPipeline || 'full';
-  let routeInfo = null;
-  if (!flagPipeline) {
-    routeInfo = route(description, { projectRoot });
-    pipeline = routeInfo.pipeline;
+  const pipeline = normalizePipeline(flagPipeline || 'full');
+  if (pipeline === 'light') {
+    const eligibility = assessLightEligibility(description);
+    if (!eligibility.eligible) {
+      console.error(`light 不允许高风险变更: ${eligibility.risks.join(', ')}`);
+      console.error('请改用: gantry change --pipeline full "<描述>"');
+      process.exit(1);
+    }
   }
 
   // 生成 change-id
-  const changeId = slugify(description);
+  const changeId = generateChangeId(description, projectRoot, getFlag(args, '--id'));
   const specsDir = join(projectRoot, SPECS_DIR, changeId);
   mkdirSync(specsDir, { recursive: true });
 
@@ -317,15 +253,47 @@ function change(args) {
   try { writeContextPack(projectRoot); } catch { /* non-blocking */ }
 
   console.log(`✓ 变更已创建: ${changeId}`);
-  if (routeInfo) {
-    console.log(`  路由: ${routeInfo.scale} → ${pipeline} (${routeInfo.rationale})`);
-  }
   console.log(`  管线: ${pipeline}`);
   console.log(`  工件目录: ${specsPath(changeId)}/`);
   console.log(`  当前阶段: change (变更提案)`);
   console.log(`  上下文: ${PACK_PATH}`);
   console.log(`\n请执行阶段 0 (CHANGE):`);
   console.log(`  加载 .gantry/core/phases/0-change.md 并产出 ${specsPath(changeId, getPreferredArtifactName('proposal'))}`);
+}
+
+/**
+ * gantry pipeline full — 显式将当前 change 从 light 提升为 full。
+ */
+function pipeline(args) {
+  const projectRoot = process.cwd();
+  ensureInit(projectRoot);
+  const target = args[0];
+  if (target !== 'full') {
+    console.error('用法: gantry pipeline full（只允许 light → full）');
+    process.exit(1);
+  }
+  const state = readState(projectRoot);
+  if (!state.activeChange) {
+    console.error('当前没有活跃 change');
+    process.exit(1);
+  }
+  if (state.pipeline !== 'light') {
+    console.error(`当前 pipeline 已是 ${state.pipeline}，无需提升`);
+    process.exit(1);
+  }
+  if (!['change', 'fast'].includes(state.currentStage)) {
+    console.error(`当前阶段 ${state.currentStage} 不允许切换 pipeline`);
+    process.exit(1);
+  }
+  updateState(projectRoot, {
+    pipeline: 'full',
+    currentStage: state.currentStage === 'fast' ? 'change' : state.currentStage,
+    activeAgent: state.currentStage === 'fast' ? 'planner' : state.activeAgent,
+    pauseReason: null,
+    retries: 0,
+  });
+  writeContextPack(projectRoot);
+  console.log('✓ pipeline: light → full');
 }
 
 
@@ -342,24 +310,24 @@ function change(args) {
 
 
 /**
- * gantry next — 手动单步推进一个阶段
+ * gantry advance — 内部机械推进一个阶段
  *
- * 设计原则：CLI 只做机械检查，人工守护交给 AI skill（如 /gantry:auto）
- * 多阶段自主推进由 gantry auto 独占；next 只推进一步即停，职责唯一。
+ * 设计原则：CLI 只做机械检查，阶段产物由 /gantry-next 这类 AI skill 生成。
+ * 多阶段自主推进由 gantry auto 独占；advance 只推进一步即停。
  *
- *   gantry next                  推进一步
- *   gantry next --skip           跳过当前门禁（写 timeline 留痕，每次都要显式）
+ *   gantry advance               推进一步
+ *   gantry advance --skip        跳过当前门禁（每次都要显式）
  *
  * 核心闭环：
- *   reroute → checkGate → transitionStage
+ *   resolve pipeline → checkGate → transitionStage
  *   失败 → retries+=1，连续 > maxRetries 拒推
- *   --skip → 不阻塞，但 type=gate-bypass 写入 timeline.jsonl
+ *   --skip → 不阻塞
  */
-function next(args) {
+function advance(args) {
   const projectRoot = process.cwd();
   ensureInit(projectRoot);
 
-  // next 是「手动单步」入口：推进一步即停。多阶段自主推进用 gantry auto。
+  // advance 是「机械推进」入口：推进一步即停。多阶段自主推进用 gantry auto。
   const isSkip = args.includes('--skip');
   const result = nextOnce(projectRoot, { isSkip });
   if (result.stop && result.exitCode) process.exit(result.exitCode);
@@ -369,7 +337,7 @@ function next(args) {
 }
 
 /**
- * gantry auto [--trust]
+ * gantry auto
  *   按 autonomous.maxStagesPerRun 自动推进,遇门禁阻塞或终态即停。
  *   单次推进步数由配置 autonomous.maxStagesPerRun 决定(不接受命令行覆盖)。
  */
@@ -380,9 +348,12 @@ function auto(args) {
   const config = readConfig(projectRoot);
   const state = readState(projectRoot);
 
-  const trust = args.includes('--trust');
+  if (args.includes('--trust')) {
+    console.error('--trust 已移除：Change、Design、Integration 人工确认不可绕过');
+    process.exit(1);
+  }
   const maxStages = getConfiguredMaxStages(config, state.maxStages || 3);
-  const maxSteps = trust ? 50 : maxStages;
+  const maxSteps = maxStages;
 
   updateState(projectRoot, {
     autonomous: true,
@@ -391,16 +362,12 @@ function auto(args) {
     pauseReason: null,
   });
 
-  if (trust) {
-    console.log(`自主模式: trust (配置上限 ${maxStages}, 本次按管线终态推进)`);
-  } else {
-    console.log(`自主模式: 最多推进 ${maxStages} 个阶段`);
-  }
+  console.log(`自主模式: 最多推进 ${maxStages} 个阶段`);
 
   for (let step = 0; step < maxSteps; step++) {
     const result = nextOnce(projectRoot);
     if (result.stop) {
-      console.log(`  自动推进在 ${step}/${trust ? '∞' : maxSteps} 步停止`);
+      console.log(`  自动推进在 ${step}/${maxSteps} 步停止`);
       if (result.exitCode) process.exit(result.exitCode);
       return;
     }
@@ -410,14 +377,12 @@ function auto(args) {
     }
     updateState(projectRoot, { stagesRun: step + 1, maxStages });
     if (result.pausedForApproval) {
-      console.log(`⏸  已进入 ${result.pausedForApproval}（需人工确认）。审阅后运行 gantry next 继续。`);
+      console.log(`⏸  已进入 ${result.pausedForApproval}（需人工确认）。审阅后运行 /gantry-next 继续。`);
       return;
     }
   }
 
-  if (!trust) {
-    console.log(`  已达到本次自动推进上限: ${maxStages}`);
-  }
+  console.log(`  已达到本次自动推进上限: ${maxStages}`);
 }
 
 /**
@@ -436,57 +401,37 @@ function nextOnce(projectRoot, { isSkip = false } = {}) {
   }
 
   const config = readConfig(projectRoot);
+  const specsDir = join(projectRoot, SPECS_DIR, state.activeChange);
   const effectiveConfig = {
     ...config,
     pipeline: state.pipeline || config.pipeline,
-    // 探测「是否前端」一次,注入给 getNextStage/checkGate 的纯函数条件门（ui-design）。
-    // 三态：true/false/undefined —— undefined 时纯函数保守不跳过（向后兼容）。
-    _isFrontend: detectFrontend(projectRoot),
+    _uiImpact: readProposalUiImpact(projectRoot, state.activeChange),
   };
   const nextStage = getNextStage(state.currentStage, effectiveConfig);
   if (!nextStage) {
     return { reachedEnd: state.currentStage };
   }
 
-  const specsDir = join(projectRoot, SPECS_DIR, state.activeChange);
-
-  // === Reroute：基于累积工件重新评估 pipeline ===
-  const rerouteResult = runReroute(specsDir, state);
-  if (rerouteResult.shouldUpgrade) {
-    updateState(projectRoot, { pipeline: rerouteResult.newPipeline });
-    logPhaseEvent(projectRoot, {
-      type: 'pipeline-upgrade',
-      from: state.pipeline,
-      to: rerouteResult.newPipeline,
-      reason: rerouteResult.reason,
-      stage: state.currentStage,
-    });
-    console.log(`↑ 管线升级: ${state.pipeline} → ${rerouteResult.newPipeline}`);
-    console.log(`  原因: ${rerouteResult.reason}`);
-  }
-
   // === Gate ===
   const gateResult = checkGate(nextStage, specsDir, effectiveConfig, state);
 
   if (!gateResult.passed) {
+    if (gateResult.hard) {
+      updateState(projectRoot, { pauseReason: gateResult.reason });
+      console.error(`✗ ${gateResult.reason}`);
+      return { stop: true, exitCode: 1 };
+    }
     const newRetries = state.retries + 1;
     updateState(projectRoot, { retries: newRetries, pauseReason: gateResult.reason });
 
     if (isSkip) {
-      logPhaseEvent(projectRoot, {
-        type: 'gate-bypass',
-        changeId: state.activeChange,
-        stage: nextStage,
-        reason: gateResult.reason,
-      });
       console.log(`⚠  跳过门禁: ${gateResult.reason}`);
-      console.log(`  已写入 ${PLANNING_DIR}/timeline.jsonl`);
     } else if (newRetries > state.maxRetries) {
       console.error(`✗ 门禁连续失败 ${state.retries} 次（上限 ${state.maxRetries}）`);
       console.error(`  原因: ${gateResult.reason}`);
       const hint = gateRecoveryHint(gateResult.reason);
       if (hint) console.error(hint);
-      console.error(`  修复后重试，或用 gantry next --skip 显式跳过`);
+      console.error(`  修复后重试，或让 /gantry-next 调用 gantry advance --skip 显式跳过`);
       return { stop: true, exitCode: 1 };
     } else {
       console.error(`✗ 门禁未通过 [${newRetries}/${state.maxRetries}]: ${gateResult.reason}`);
@@ -517,14 +462,25 @@ function nextOnce(projectRoot, { isSkip = false } = {}) {
   }
   console.log(`  上下文: ${PACK_PATH}`);
 
-  // Approval checkpoint（派生策略，非独立状态）：
-  // 若刚进入的阶段配了 checkpoint=approval，自动推进到此为止，把控制权交还给人。
-  // "停下来"就是 checkpoint 本身；人审阅后再敲一次 gantry next 即 resolve。
-  // 单步 gantry next 不受影响——它推进这一步后本就停下等下一次调用。
-  if (effectiveConfig?.stages?.[nextStage]?.checkpoint === 'approval') {
+  // 人工确认关卡（派生策略，非独立状态）：
+  // 进入 Change / Design / Integration 后，把控制权交还给人。
+  // 人审阅后再执行 /gantry-next 继续。
+  // 单步 gantry advance 不受影响——它推进这一步后本就停下等下一次调用。
+  if (requiresApproval(nextStage)) {
     return { stop: false, pausedForApproval: nextStage };
   }
   return { stop: false };
+}
+
+function requiresApproval(stage) {
+  return ['change', 'design', 'integration'].includes(stage);
+}
+
+function readProposalUiImpact(projectRoot, changeId) {
+  if (!changeId) return false;
+  const proposal = resolveArtifactPath(join(projectRoot, SPECS_DIR, changeId), 'proposal');
+  if (!proposal || !existsSync(proposal.path)) return false;
+  return proposalHasUiImpact(readFileSync(proposal.path, 'utf-8'));
 }
 
 /**
@@ -537,7 +493,7 @@ function gateRecoveryHint(reason) {
       `  → 当前仍在 change 阶段（未推进）。回到反问澄清：`,
       `     1. 运行 /gantry-change（或让 agent 按 0-change.md 继续）逐条反问用户`,
       `     2. 把答案并入 PROPOSAL 正文，将「## 待澄清问题」段改为「无」`,
-      `     3. 再次运行 gantry next 推进到 requirement`,
+      `     3. 再次运行 /gantry-next 推进到 requirement`,
     ].join('\n');
   }
   return null;
@@ -547,36 +503,6 @@ function gateRecoveryHint(reason) {
 function getConfiguredMaxStages(config = {}, fallback = 3) {
   const configured = Number(config?.autonomous?.maxStagesPerRun);
   return Number.isInteger(configured) && configured > 0 ? configured : fallback;
-}
-
-/**
- * 收集 reroute 的输入信号：累积工件文本 + 任务数
- */
-function runReroute(specsDir, state) {
-  if (!existsSync(specsDir)) return { shouldUpgrade: false };
-
-  const artifactFiles = [
-    ...artifactCandidates('proposal'),
-    ...artifactCandidates('spec'),
-    'DESIGN.md',
-    ...artifactCandidates('tasks'),
-  ];
-  let artifactsText = '';
-  for (const name of artifactFiles) {
-    const p = join(specsDir, name);
-    if (existsSync(p)) {
-      try { artifactsText += '\n' + readFileSync(p, 'utf-8').slice(0, 8000); }
-      catch { /* skip */ }
-    }
-  }
-
-  let taskCount = 0;
-  const taskFile = resolveArtifactPath(specsDir, 'tasks')?.path;
-  if (taskFile && existsSync(taskFile)) {
-    taskCount = parseTasks(taskFile).length;
-  }
-
-  return reroute(state.pipeline, { artifactsText, taskCount });
 }
 
 /**
@@ -686,8 +612,6 @@ function done(args) {
     }
   }
 
-  logPhaseEvent(projectRoot, { type: 'task-done', taskId, changeId });
-
   console.log(`✓ task ${taskId} 已标记完成`);
   console.log(`  EXECUTION: ${specsPath(changeId, getPreferredArtifactName('execution'))}`);
 }
@@ -745,41 +669,127 @@ async function hook(args) {
 }
 
 /**
- * gantry install [--tool T] [--init] [-g|--global]
+ * gantry install [--tool T] [-g|--global]
  */
 async function install(args) {
   const projectRoot = process.cwd();
   const globalMode = args.includes('-g') || args.includes('--global');
   const requestedTool = getFlag(args, '--tool');
   const installTools = resolveInstallTools(requestedTool, globalMode ? null : projectRoot, { globalMode });
-  const doInit = args.includes('--init');
 
   const validTools = ['claude', 'cursor', 'codex', 'copilot', 'all'];
   if (installTools.length === 0) {
     console.error(`未知工具: ${requestedTool}\n可用: ${validTools.join(', ')}`);
     process.exit(1);
   }
-  if (globalMode && doInit) {
-    console.error('--init 仅支持本地项目安装，不能与 -g/--global 同时使用');
-    process.exit(1);
+
+  let initResult = null;
+  if (!globalMode) {
+    initResult = initializeProject(projectRoot, {
+      pipeline: normalizePipeline(getFlag(args, '--pipeline') || 'full'),
+      tool: requestedTool === 'all' ? 'all' : installTools.length === 1 ? installTools[0].name : 'all',
+      primaryAgent: installTools.length === 1 ? installTools[0].name : 'all',
+    });
   }
 
+  const result = await installToolsToTarget({
+    projectRoot,
+    installTools,
+    globalMode,
+  });
+
+  for (const item of result.items) {
+    console.log(`✓ gantry 已安装`);
+    console.log(`  工具: ${item.tool}${globalMode ? ' (global)' : ''}`);
+    console.log(`  目录: ${item.target}`);
+    console.log(`  文件: ${item.count} 个`);
+  }
+  if (initResult?.created) {
+    console.log(`  初始化: ${PLANNING_DIR}/`);
+  } else if (initResult && !initResult.created) {
+    console.log(`  状态: ${PLANNING_DIR}/ 已存在，保留当前状态`);
+  }
+  if (result.items.length > 1) console.log(`  总文件: ${result.total} 个`);
+  if (!globalMode) {
+    console.log(`\n下一步: gantry change "<描述你的变更>"`);
+  }
+  console.log(`\n卸载: gantry uninstall${globalMode ? ' -g' : ''}`);
+}
+
+function initializeProject(projectRoot, { pipeline, tool, primaryAgent }) {
+  const planningDir = join(projectRoot, PLANNING_DIR);
+  const created = !existsSync(planningDir);
+
+  installCorePhases(projectRoot);
+  installCoreAgents(projectRoot);
+
+  if (!created) {
+    migrateLegacyPipelines(projectRoot);
+    return { created };
+  }
+
+  mkdirSync(planningDir, { recursive: true });
+
+  const config = {
+    pipeline,
+    tool,
+    stages: {
+      change:       { enabled: true, requiresApproval: true },
+      requirement:  { enabled: true },
+      design:       { enabled: true, requiresApproval: true },
+      'ui-design':  { enabled: 'auto', condition: 'ui-impact' },
+      task:         { enabled: true },
+      dev:          { enabled: true },
+      fast:         { enabled: true },
+      test:         { enabled: true },
+      review:       { enabled: true },
+      integration:  { enabled: true, requiresApproval: true },
+    },
+    agents: {
+      primary: primaryAgent,
+    },
+    autonomous: {
+      maxStagesPerRun: 3,
+      maxRetries: 3,
+    },
+    hooks: {},
+  };
+  writeFileSync(join(planningDir, 'config.json'), JSON.stringify(config, null, 2), 'utf-8');
+
+  writeState(projectRoot, {
+    pipeline,
+    activeChange: null,
+    currentStage: 'idle',
+    currentWave: null,
+    currentTask: null,
+    activeAgent: null,
+    autonomous: false,
+    stagesRun: 0,
+    maxStages: config.autonomous.maxStagesPerRun,
+    retries: 0,
+    maxRetries: config.autonomous.maxRetries,
+    pauseReason: null,
+  });
+
+  return { created, config };
+}
+
+async function installToolsToTarget({ projectRoot, installTools, globalMode }) {
   const { loadCore, loadCommands, loadAgents } = await import('../tools/lib/loader.mjs');
   const core = loadCore(GANTRY_ROOT);
   const cmds = loadCommands(join(GANTRY_ROOT, 'skills'));
   const agents = loadAgents(join(GANTRY_ROOT, 'src', 'agents'));
 
+  const items = [];
   let total = 0;
   for (const installTool of installTools) {
     const renderer = await import(`../tools/renderers/${installTool.renderer}.mjs`);
     const files = renderer.render(core, cmds, agents);
     const target = globalMode ? globalInstallRoot(installTool.name) : projectRoot;
 
-    // Copy phase source files to .gantry/core/phases/ (local install only)
     if (!globalMode) {
-      for (const [fileName, content] of Object.entries(core.phases)) {
-        files[`.gantry/core/phases/${fileName}`] = content;
-      }
+      addCorePhaseFiles(files, core.phases);
+      addCoreAgentFiles(files, agents);
     }
 
     let count = 0;
@@ -800,25 +810,50 @@ async function install(args) {
     }
 
     total += count;
-    console.log(`✓ gantry 已安装`);
-    console.log(`  工具: ${installTool.name}${globalMode ? ' (global)' : ''}`);
-    console.log(`  目录: ${target}`);
-    console.log(`  文件: ${count} 个`);
+    items.push({ tool: installTool.name, target, count });
   }
 
-  if (doInit) {
-    const planningDir = join(projectRoot, PLANNING_DIR);
-    if (!existsSync(planningDir)) {
-      init([]);
-    } else {
-      console.log(`  ${PLANNING_DIR}/ 已存在，跳过初始化`);
-    }
+  return { items, total };
+}
+
+function installCorePhases(projectRoot) {
+  const files = {};
+  for (const fileName of readdirSync(join(GANTRY_ROOT, 'phases'))) {
+    if (!fileName.endsWith('.md')) continue;
+    files[`.gantry/core/phases/${fileName}`] = readFileSync(join(GANTRY_ROOT, 'phases', fileName), 'utf-8');
   }
 
-  if (installTools.length > 1) {
-    console.log(`  总文件: ${total} 个`);
+  for (const [relPath, content] of Object.entries(files)) {
+    const full = join(projectRoot, relPath);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, insertBanner(content, bannerFor('core', relPath, content)), 'utf-8');
   }
-  console.log(`\n卸载: gantry uninstall${globalMode ? ' -g' : ''}`);
+}
+
+function installCoreAgents(projectRoot) {
+  const files = {};
+  for (const fileName of readdirSync(join(GANTRY_ROOT, 'src', 'agents'))) {
+    if (!fileName.endsWith('.md')) continue;
+    files[`.gantry/core/agents/${fileName}`] = readFileSync(join(GANTRY_ROOT, 'src', 'agents', fileName), 'utf-8');
+  }
+
+  for (const [relPath, content] of Object.entries(files)) {
+    const full = join(projectRoot, relPath);
+    mkdirSync(dirname(full), { recursive: true });
+    writeFileSync(full, insertBanner(content, bannerFor('core', relPath, content)), 'utf-8');
+  }
+}
+
+function addCorePhaseFiles(files, phases) {
+  for (const [fileName, content] of Object.entries(phases)) {
+    files[`.gantry/core/phases/${fileName}`] = content;
+  }
+}
+
+function addCoreAgentFiles(files, agents) {
+  for (const [agentName, content] of Object.entries(agents)) {
+    files[`.gantry/core/agents/${agentName}.md`] = content;
+  }
 }
 
 /**
@@ -923,6 +958,7 @@ function archiveChange(projectRoot, changeId, { keepHistory = false, quiet = fal
   }
 
   cpSync(sourceDir, targetDir, { recursive: true });
+  rmSync(sourceDir, { recursive: true, force: true });
 
   const archiveLogPath = join(targetDir, 'ARCHIVE.md');
   const ts = new Date().toISOString();
@@ -1028,9 +1064,10 @@ function unarchive(args) {
     console.error(`提示: 用 ls ${specsPath('_archive')}/ 查看可用归档`);
     process.exit(1);
   }
-  if (!existsSync(targetDir)) {
-    cpSync(sourceDir, targetDir, { recursive: true });
+  if (existsSync(targetDir)) {
+    rmSync(targetDir, { recursive: true, force: true });
   }
+  cpSync(sourceDir, targetDir, { recursive: true });
 
   updateState(projectRoot, {
     activeChange: changeId,
@@ -1075,19 +1112,19 @@ function help() {
 用法: gantry <command> [options]
 
 核心流程（日常按此循环）:
-  init                初始化 .gantry/planning/ 目录
-    --tool <T>          IDE 工具: claude|cursor|codex|copilot|all（默认 all）
-    --pipeline <P>      管线深度: full|standard|light（默认 full）
+  install             初始化 / 同步 Gantry：状态目录 + 阶段协议 + 客户端命令集成
+    --tool <T>          仅安装指定客户端命令集成: claude|cursor|codex|copilot|all（默认自动检测，无命中则 claude）
+    --pipeline <P>      初始管线: full|light（默认 full）
 
-  change "<描述>"     开始新变更（自动路由管线深度）
+  change "<描述>"     开始新变更（默认 full）
+    --id <id>           显式指定 change-id（否则从业务主题自动生成）
+    --pipeline light    显式选择低风险快速路径
+  pipeline full       将当前活跃 change 从 light 单向提升为 full
+  /gantry-next        在客户端中执行当前阶段产物并推进（不是 CLI 命令）
 
-  next                手动单步推进一个阶段（内含门禁）
-    --skip              跳过当前门禁（写 timeline 留痕，每次需显式）
+  auto                自动多阶段推进（步数取 config.autonomous.maxStagesPerRun），遇门禁失败 / 人工确认关卡 / 终态即停
 
-  auto                自动多阶段推进（步数取 config.autonomous.maxStagesPerRun），遇门禁失败 / approval 关卡 / 终态即停
-    --trust             推进到管线终态为止（上限 50 步）
-
-  status              查看当前状态、待确认关卡、门禁绕过记录
+  status              查看当前状态、待确认关卡
     --json              输出 JSON 格式
 
   archive             收尾并归档当前 change（仅 integration 阶段可用）
@@ -1095,10 +1132,8 @@ function help() {
     --keep-history      保留旧归档，新归档加版本后缀
 
 安装 / 分发:
-  install             安装 gantry 到当前项目
-    --tool <T>          claude|cursor|codex|copilot（默认自动检测）
-    --init              同时初始化 .gantry/planning/
-    -g, --global        安装到各工具全局目录（默认安装全部工具）
+  install -g          安装 gantry 到各工具全局目录（不初始化当前项目）
+    --tool <T>          claude|cursor|codex|copilot|all（默认 all）
 
   uninstall           卸载 gantry 生成的文件
     --tool <T>          claude|cursor|codex|copilot|all（配合 -g 使用）
@@ -1235,6 +1270,7 @@ function cleanupDirsForTool(tool) {
     '.cursor',
     '.github/prompts',
     '.github',
+    '.gantry/core/agents',
     '.gantry/core/phases',
     '.gantry/core',
     '.gantry',
@@ -1361,9 +1397,48 @@ function removeSection(filePath) {
 
 function ensureInit(projectRoot) {
   if (!existsSync(join(projectRoot, PLANNING_DIR))) {
-    console.error('项目未初始化。运行 gantry init 开始。');
+    console.error('项目未初始化。运行 gantry install 开始。');
     process.exit(1);
   }
+  migrateLegacyPipelines(projectRoot);
+}
+
+function migrateLegacyPipelines(projectRoot) {
+  const configPath = join(projectRoot, PLANNING_DIR, 'config.json');
+  const statePath = join(projectRoot, PLANNING_DIR, 'STATE.md');
+  let migrated = false;
+
+  if (existsSync(configPath)) {
+    try {
+      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
+      if (config.pipeline === 'standard') {
+        config.pipeline = 'full';
+        writeFileAtomic(configPath, JSON.stringify(config, null, 2));
+        migrated = true;
+      }
+    } catch {
+      // readConfig 会按既有容错策略处理损坏配置。
+    }
+  }
+
+  if (existsSync(statePath)) {
+    const raw = readFileSync(statePath, 'utf-8');
+    const legacyStandard = /- \*\*模式\*\*:\s*`standard`/.test(raw);
+    const legacyLight = /- \*\*模式\*\*:\s*`light`/.test(raw);
+    const normalized = readState(projectRoot);
+    if (legacyStandard || (legacyLight && normalized.pipeline === 'full')) {
+      writeState(projectRoot, normalized);
+      migrated = true;
+    }
+  }
+
+  if (migrated) console.log('↑ pipeline 迁移: standard/旧 light → full');
+}
+
+function writeFileAtomic(path, content) {
+  const tempPath = `${path}.tmp-${process.pid}`;
+  writeFileSync(tempPath, content, 'utf-8');
+  renameSync(tempPath, path);
 }
 
 
@@ -1396,10 +1471,64 @@ function stripFlags(args, flagsWithValue = []) {
 
 
 
-function slugify(text) {
-  return text
+function generateChangeId(description, projectRoot, explicitId = null) {
+  const source = explicitId || extractChangeSubject(description);
+  const base = normalizeChangeId(source) || 'change';
+  return uniqueChangeId(projectRoot, base);
+}
+
+function uniqueChangeId(projectRoot, baseId) {
+  let candidate = baseId;
+  let n = 2;
+  while (changeIdExists(projectRoot, candidate)) {
+    candidate = `${baseId}-${n}`;
+    n++;
+  }
+  return candidate;
+}
+
+function changeIdExists(projectRoot, changeId) {
+  return existsSync(join(projectRoot, SPECS_DIR, changeId))
+    || existsSync(join(projectRoot, SPECS_DIR, '_archive', changeId));
+}
+
+function extractChangeSubject(description) {
+  let subject = String(description || '').trim().replace(/\s+/g, ' ');
+
+  subject = subject.replace(
+    /^(?:根据|基于|参考|按照|依照)\s+\S+(?:\s*(?:创建|生成|编写|整理|输出|撰写))?(?:\s*(?:需求|spec|规格|变更|proposal))?\s*[：:,，]?\s*/i,
+    '',
+  );
+  subject = subject.replace(
+    /^(?:创建|生成|编写|整理|输出|撰写)(?:一个|一份)?(?:需求|spec|规格|变更|proposal)\s*[：:,，]?\s*/i,
+    '',
+  );
+  subject = subject.replace(/^[~./\w-]+\.(?:md|markdown|txt|docx?|pdf)\s*[：:,，]?\s*/i, '');
+
+  subject = subject
+    .replace(/[，,；;。].*$/, '')
+    .replace(/并(?:更新|修改|调整|补充|新增|优化).*/, '')
+    .replace(/由[^，,；;。]+改(?:为)?/g, '')
+    .replace(/从[^，,；;。]+改(?:为)?/g, '')
+    .replace(/^(?:做|想做|加个?|新增|实现|设计|开发|修改|调整|优化)(?:一个|一份)?\s*/, '')
+    .replace(/^\s*(?:将|把)\s*/, '')
+    .trim();
+
+  return subject || description;
+}
+
+function normalizeChangeId(text) {
+  return limitSlugWords(slugifyEnglish(text), 5);
+}
+
+function slugifyEnglish(text) {
+  return String(text || '')
     .toLowerCase()
-    .replace(/[^\w一-鿿]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 40);
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+function limitSlugWords(slug, maxWords) {
+  const words = String(slug || '').split('-').filter(Boolean);
+  return words.slice(0, maxWords).join('-');
 }

@@ -161,6 +161,22 @@ gantry hook run before:design
 - 关键状态机（如有）
 - 边界（外部依赖、未触及模块）
 
+#### 2.1 路径服务序列（SPEC 有跨服务 Journey 时必填）
+
+为 `SPEC.md`「关键用户路径」里的**每一条 Journey**，画出跨服务调用时序。这是 INTEGRATION 判断「断点归属谁」的唯一事实源——每一环该怎么走定义在这里，实现偏离它的一方就是责任方。
+
+```
+### J1 服务序列
+order.CreateOrder
+  → stock.Lock   (超时 500ms, 幂等键=orderId)
+  → pay.Charge   (超时 3s, 失败 → stock.Unlock 补偿)
+  → notify.Send  (异步, 失败不阻断主路径)
+```
+
+每一环必须写清:**输入契约 / 输出契约 / 错误处理 / 超时 / 补偿动作**。契约一致性是路径行为的子项，在此一并锁定。
+
+SPEC 写「无跨服务路径」时，本小节写「无」即可。
+
 ### 3. ADR（Architecture Decision Records）
 
 凡是「以后可能被推翻」的决策，写在 `DESIGN.md ## ADR` 段中，结构：Context / Decision / Consequences。重要的项目级决策在 § 9 中标记，由 `A-evolve` 批量同步到 `ARCHITECTURE.md ## ADR 列表`。
@@ -215,6 +231,7 @@ gantry hook run before:design
 - [ ] **既有架构对齐已写入**（brownfield 必跑 · `## 0.5` 段含触碰模块清单 + 沿用 vs 引新决策 + 禁动清单）
 - [ ] 每条决策都有「备选 + 理由 + 代价」
 - [ ] 至少一张数据流 / 架构图
+- [ ] **§2.1 路径服务序列**:SPEC 每条 Journey 都有跨服务时序（含各环契约/超时/补偿），或 SPEC 声明无跨服务路径时写「无」
 - [ ] 风险 ≥ 3 条且每条有缓解
 - [ ] 大的或可逆性低的决策都有对应 ADR
 - [ ] 不含完整代码实现

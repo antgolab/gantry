@@ -10,6 +10,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
 import { PLANNING_DIR } from './paths.mjs';
+import { normalizePipeline } from './pipeline-policy.mjs';
 
 function readJsonSafe(path) {
   if (!existsSync(path)) return {};
@@ -23,7 +24,9 @@ function readJsonSafe(path) {
 export function readConfig(projectRoot) {
   const global = readJsonSafe(join(homedir(), '.gantry', 'config.json'));
   const project = readJsonSafe(join(projectRoot, PLANNING_DIR, 'config.json'));
-  return deepMerge(global, project);
+  const config = deepMerge(global, project);
+  if ('pipeline' in config) config.pipeline = normalizePipeline(config.pipeline);
+  return config;
 }
 
 export function deepMerge(base, override) {

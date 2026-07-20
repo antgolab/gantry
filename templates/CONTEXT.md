@@ -1,9 +1,23 @@
-# CONTEXT — 项目共享上下文
+# CONTEXT — 项目共享上下文（rules 层）
 
 > 本文件**跨 change 长期累积**。每个 change 在 REQUIREMENT 阶段会向这里追加术语和决策。
-> 目标：为 AI 提供项目级的「域语言 + 默认偏好」，省去重复解释。
+> 目标：为 AI 提供项目级的「域语言 + 默认偏好 + 既有抽象 + 禁动边界」，省去重复解释。
+> **边界**：CONTEXT 不是单个 change 的备忘录。只写后续 AI 写代码时必须遵守的项目级规则。
 
 ---
+
+## 写入质量门（维护者必读）
+
+新增 / 修改本文件前必须逐项确认：
+
+- [ ] 本条信息会被后续 change 消费，不只是当前 change 的细节
+- [ ] 有来源：`<change-id>` + 文件路径 / 行号，或代码路径 / 行号
+- [ ] 已 grep 本文件，确认没有同义重复或冲突
+- [ ] 已 grep `.gantry/specs/LESSONS.md` active 条目，确认没有被失败教训否定
+- [ ] 不是失败教训 / 被否决方案（这类写 LESSONS）
+- [ ] 不是完整架构论证（这类写 ARCHITECTURE / DESIGN，CONTEXT 只保留一句可执行规则）
+
+**薄 CONTEXT 禁止落库**：首次创建时必须包含「项目概要」「技术栈」「既有抽象索引」「禁动清单」「intel-scan 元数据」。如果只从一个 change 提炼出术语 / 决策，请先写到该 change 的 SPEC / DESIGN「CONTEXT 候选 patch」，不要伪装成项目级 CONTEXT。
 
 ## 项目概要
 
@@ -34,8 +48,10 @@
 
 按时间倒序追加：
 
-- `[YYYY-MM-DD]` <决策内容> — 来自 `@.gantry/specs/<change-id>/DESIGN.md`
+- `[YYYY-MM-DD]` <决策内容> — 来源：`<change-id>` · `<file>:<line>` · 影响范围：<全项目 / 某模块 / 某业务域>
 - ……
+
+> 写入前必须和 LESSONS active 条目交叉检查。若 LESSONS 记录某方案失败，CONTEXT 不得重新锁定该方案，除非同步把 LESSONS 标为 superseded / deprecated 并写明证据。
 
 ## 默认偏好（AI 在缺省时按此决策）
 

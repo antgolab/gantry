@@ -44,7 +44,7 @@ fresh_context: false
 
 1. 产出 TEST.md 或 REVIEW.md
 2. 如果发现 critical/major 问题 → 创建修复任务回退到 dev
-3. 如果全部通过且需要人工确认 → 创建 `approval` checkpoint
+3. 如果全部通过且需要人工确认 → 停在人工确认关卡
 
 ## 强制引用规则
 

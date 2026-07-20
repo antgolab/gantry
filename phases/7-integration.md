@@ -22,7 +22,8 @@ gantry hook run before:integration
 
 ## 输入
 
-- `@.gantry/specs/<change-id>/SPEC.md`（兼容期接受 `REQUIREMENT.md`）
+- `@.gantry/specs/<change-id>/SPEC.md`（兼容期接受 `REQUIREMENT.md`；含「关键用户路径」成功判据）
+- `@.gantry/specs/<change-id>/DESIGN.md`（跨服务时必读 `§2.1 路径服务序列`——断点归属的事实源）
 - `@.gantry/specs/<change-id>/TEST.md`（含 UAT 脚本）
 - `@.gantry/specs/<change-id>/REVIEW.md`
 - 当前已合并/待合并的代码
@@ -38,7 +39,45 @@ gantry hook run before:integration
 
 **贴出每条命令的真实输出**到产出中。任何失败立即进入「失败诊断」。
 
-### 2. 引导人工 UAT
+### 2. 跨服务路径总验收（条件步骤 · 单 Coordinator 角色）
+
+> **仅当 SPEC「关键用户路径」定义了跨服务 Journey 时跑**（SPEC 写「无跨服务路径」则整步跳过，在 UAT.md 记一句「本 change 无跨服务路径，跳过路径总验收」）。
+>
+> 由**一个** Coordinator（你，Integrator 兼任）统一协调——同仓多服务下你能直接读到各端代码与契约，不 spawn 多个对端 agent。这是**整个需求对结果负责的最终关卡**:所有关键 Journey 端到端通过，需求才算完成。
+
+**事实源(第一性):判定断点归属的唯一依据是已锁工件——`SPEC.md` 的路径成功判据 + `DESIGN.md §2.1` 的服务序列。不靠 agent 各执一词。**
+
+#### 2.1 逐条 Journey 端到端跑
+
+对 SPEC 每条 Journey，按 `DESIGN.md §2.1` 的服务序列拉起真实多方(或必要的桩)，走完整路径。**贴真实输出**。每条至少覆盖:正常路径、每一环的失败与补偿、超时、部分成功回滚。
+
+#### 2.2 断点定位与归属判定
+
+路径断在哪一环，抓到**具体服务 + 具体调用**，对照已锁工件判定责任方:
+
+| 断点性质 | 判定依据 | 归属 / 动作 |
+|---|---|---|
+| 某服务实现**偏离 DESIGN §2.1 的序列/契约** | DESIGN §2.1 | 该服务产 `T-FIX-XX`，回退 `phases/4-dev.md` |
+| **DESIGN 路径设计本身有缺陷**(时序错 / 缺补偿) | 对照 SPEC 成功判据 | 回退 `phases/2-design.md` 重锁序列 |
+| **SPEC 路径定义 / 成功判据有歧义** | 用户确认 | 回退 `phases/1-requirement.md` |
+
+判定结论写入 `JOURNEY-VERIFY.md`。
+
+#### 2.3 驱动修复并重跑（直到路径通）
+
+责任方修复后，**由 Coordinator 重跑该 Journey**，直到端到端通过——不是产完修复任务就结束。
+
+**R2.6 适用**:同一 Journey 的自动修复重试 ≤ 3 轮，超限停下要求人工决策。
+
+#### 2.4 路径验收账本
+
+产出 `.gantry/specs/<change-id>/JOURNEY-VERIFY.md`(用 `@gantry/templates/JOURNEY-VERIFY.md` 模板):每条 Journey 的验收结果、断点、归属判定、修复任务链接、最终状态。
+
+**总验收门:所有关键 Journey 端到端通过(或断点已全部回退修复并重跑通过)，才能进入下一步 UAT。**
+
+---
+
+### 3. 引导人工 UAT
 
 逐条读 TEST.md 的 UAT 脚本，向用户提问形如：
 
@@ -47,7 +86,7 @@ gantry hook run before:integration
 
 记录每条 UAT 的结果到 `.gantry/specs/<change-id>/UAT.md`。
 
-### 3. 失败诊断（自动 + 人工）
+### 4. 失败诊断（自动 + 人工）
 
 任何失败（自动测试或 UAT）：
 
@@ -58,7 +97,7 @@ gantry hook run before:integration
 
 **R2.6**：自动重试 ≤ 3 轮。第 3 轮仍失败必须停下来要求人工决策。
 
-### 4. 提名 LESSONS（在 ARCHIVE 之前必跑，对应 R1.8）
+### 5. 提名 LESSONS（在 ARCHIVE 之前必跑，对应 R1.8）
 
 扫本次 change 的 `EXECUTION.md`、所有例外 `*-SUMMARY.md` 的「决策与偏离」段，以及任何遗留的 `*-PROGRESS.md`「已排除方案」段。
 按 `@gantry/templates/LESSONS.md` 末尾的「提名条件」筛选：
@@ -71,7 +110,7 @@ gantry hook run before:integration
 把入选的失败按 LESSONS.md 的条目格式追加到 `.gantry/specs/LESSONS.md`，编号续上 `L-NNN`，必须填齐：标签 / 关键词 / 适用栈 / 状态。
 **复核**：扫一眼现有 active 条目，看是否有本次 change 让它们 `superseded` 或 `deprecated`，标注上。
 
-### 5. 收尾（CLOSE）— 归档由 archive 命令执行
+### 6. 收尾（CLOSE）— 归档由 archive 命令执行
 
 全部通过后：
 
@@ -79,7 +118,7 @@ gantry hook run before:integration
 - 运行 `gantry archive` 收尾（归档到 `_archive` 并重置 STATE 到 idle）
 - **`.gantry/specs/<change-id>/` 保留在原位**；`_archive` 保存一份归档副本
 
-#### 5.0 收尾与归档
+#### 6.0 收尾与归档
 
 `gantry archive` 默认复制归档，不删除源目录。
 
@@ -93,7 +132,7 @@ gantry hook run before:integration
    保留历史归档：gantry archive --keep-history
 ```
 
-#### 5.1 项目级架构文档同步（不在本步做 · 走 A-evolve）
+#### 6.1 项目级架构文档同步（不在本步做 · 走 A-evolve）
 
 本 change 的 `DESIGN.md § 9 架构沉淀建议` **不在收尾时立即合并到 `CONTEXT.md`**。原因：单个 change 视角窄，容易把临时决策错升项目级。
 
@@ -112,7 +151,7 @@ gantry hook run before:integration
   N = `grep -c '^### 9\\.' DESIGN.md`，如果整段是"无架构层面沉淀建议"则 N=0，不必提示
 - **禁止**在本步直接修改 `.gantry/specs/CONTEXT.md`——它的更新统一走 `/gantry-context evolve` 或 `/gantry-context scan`
 
-### 6. 出 PR（可选）
+### 7. 出 PR（可选）
 
 如果用户用 git 流水线：
 - 检查 PR 标题/正文已自动从 `PROPOSAL.md` + `EXECUTION.md` 拼装（兼容期接受旧命名）
@@ -122,8 +161,9 @@ gantry hook run before:integration
 ## 输出
 
 - `.gantry/specs/<change-id>/UAT.md`
+- `.gantry/specs/<change-id>/JOURNEY-VERIFY.md`（仅跨服务；SPEC 声明无跨服务路径时跳过，在 UAT.md 写明）
 - 更新的 `.gantry/specs/CHANGELOG.md`
-- 0~N 个 fix-plan（如有失败）
+- 0~N 个 fix-plan（如有失败或路径断点）
 - `gantry archive` 会把 change 副本归档到 `.gantry/specs/_archive/<change-id>/`
 
 ## 约束（强制）
@@ -135,6 +175,7 @@ gantry hook run before:integration
 ## 自检
 
 - [ ] 全量自动化结果已贴出且全绿
+- [ ] 跨服务:每条 Journey 端到端跑过 + 断点已判定归属 + 全部通过或已回退修复重跑通过（单服务已写明跳过）
 - [ ] 每条 UAT 都有人工通过/失败标注
 - [ ] 失败的项目都已经过最多 3 轮自动重试，超限的已暂停
 - [ ] CHANGELOG 已追加

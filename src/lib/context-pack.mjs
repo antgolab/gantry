@@ -16,12 +16,14 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { PLANNING_DIR, SPECS_DIR, PHASES_DIR } from './paths.mjs';
+import { PLANNING_DIR, SPECS_DIR, PHASES_DIR, AGENTS_DIR } from './paths.mjs';
 import { readState } from './state.mjs';
 import { parseTasks } from './tasks.mjs';
 import { PIPELINES, PHASE_FILES, countOpenQuestions } from './phases.mjs';
 import { getPreferredArtifactName, resolveArtifactPath } from './artifacts.mjs';
 import { readConfig } from './config.mjs';
+import { getAgentFile, getAgentForStage } from './agents.mjs';
+import { assessLightEligibility } from './pipeline-policy.mjs';
 
 const SCHEMA_VERSION = 2;
 const PACK_FILENAME = 'context-pack.json';
@@ -110,7 +112,7 @@ export function buildPack(projectRoot, overrides = {}) {
     taskId,
     loadOrder: buildLoadOrder({ projectRoot, stage, changeId, taskId, pipeline, config }),
     checklists: buildChecklists({ projectRoot, stage, changeId, taskId }),
-    lessons: stage === 'dev' ? grepLessons(projectRoot, taskId) : [],
+    lessons: stage === 'dev' || stage === 'fast' ? grepLessons(projectRoot, taskId) : [],
     retryHistory: {
       count: state.retries || 0,
       lastFailure: state.pauseReason
@@ -125,9 +127,20 @@ export function buildPack(projectRoot, overrides = {}) {
 
 function buildLoadOrder({ projectRoot, stage, changeId, taskId, pipeline, config }) {
   const items = [];
+  const agent = getAgentForStage(stage);
+  const agentFile = getAgentFile(agent);
   const phaseFile = PHASE_FILES[stage];
 
-  // 1. 主指令 phase prompt
+  // 1. 当前阶段 agent prompt
+  if (agentFile) {
+    items.push({
+      path: `${AGENTS_DIR}/${agentFile}`,
+      kind: 'agent-prompt',
+      required: true,
+    });
+  }
+
+  // 2. 主指令 phase prompt
   if (phaseFile) {
     items.push({
       path: `${PHASES_DIR}/${phaseFile}`,
@@ -136,7 +149,7 @@ function buildLoadOrder({ projectRoot, stage, changeId, taskId, pipeline, config
     });
   }
 
-  // 2. 上下文文档 (ai_context_doc 配置)
+  // 3. 上下文文档 (ai_context_doc 配置)
   const aiContextDoc = config?.ai_context_doc;
   if (aiContextDoc && aiContextDoc !== 'none') {
     const ctxPath = aiContextDoc === 'CONTEXT.md'
@@ -158,7 +171,7 @@ function buildLoadOrder({ projectRoot, stage, changeId, taskId, pipeline, config
     }
   }
 
-  // 3. 当前 change 的所有上游工件 (按 pipeline 截断)
+  // 4. 当前 change 的所有上游工件 (按 pipeline 截断)
   if (changeId && stage !== 'idle') {
     const upstreamArtifacts = getUpstreamArtifacts(stage, pipeline);
     for (const artifact of upstreamArtifacts) {
@@ -175,7 +188,7 @@ function buildLoadOrder({ projectRoot, stage, changeId, taskId, pipeline, config
     }
   }
 
-  // 4. 中断恢复上下文
+  // 5. 中断恢复上下文
   if (changeId && taskId && stage === 'dev') {
     const progressPath = `${SPECS_DIR}/${changeId}/${taskId}-PROGRESS.md`;
     if (existsSync(join(projectRoot, progressPath))) {
@@ -188,8 +201,8 @@ function buildLoadOrder({ projectRoot, stage, changeId, taskId, pipeline, config
     }
   }
 
-  // 5. LESSONS.md (dev 阶段必读)
-  if (stage === 'dev') {
+  // 6. LESSONS.md (实现阶段必读)
+  if (stage === 'dev' || stage === 'fast') {
     const lessonsPath = `${SPECS_DIR}/LESSONS.md`;
     if (existsSync(join(projectRoot, lessonsPath))) {
       items.push({ path: lessonsPath, kind: 'lessons', required: false });
@@ -210,6 +223,7 @@ function getUpstreamArtifacts(stage, pipeline) {
     'ui-design':  'ui-design',
     task:         'tasks',
     dev:          null, // dev 不产新主工件,SUMMARY 是 per-task
+    fast:         'execution',
     test:         'test',
     review:       'review',
     integration:  null,
@@ -247,6 +261,9 @@ function buildChecklistsRaw({ projectRoot, stage, changeId, taskId }) {
   if (stage === 'dev') {
     return buildDevChecklists({ projectRoot, changeId, taskId });
   }
+  if (stage === 'fast') {
+    return buildFastChecklists({ projectRoot, changeId });
+  }
   if (stage === 'change') {
     return buildChangeChecklists({ projectRoot, changeId });
   }
@@ -272,6 +289,31 @@ function buildChecklistsRaw({ projectRoot, stage, changeId, taskId }) {
     return buildIntegrationChecklists({ projectRoot, changeId });
   }
   return [];
+}
+
+function buildFastChecklists({ projectRoot, changeId }) {
+  const proposal = changeId
+    ? resolveArtifactPath(join(projectRoot, SPECS_DIR, changeId), 'proposal')
+    : null;
+  const content = proposal && existsSync(proposal.path)
+    ? readFileSync(proposal.path, 'utf-8')
+    : '';
+  const eligibility = assessLightEligibility(content);
+  return [
+    {
+      id: 'fast-light-eligibility',
+      trigger: !eligibility.eligible,
+      reason: eligibility.eligible
+        ? 'PROPOSAL 未命中 light 高风险边界'
+        : `PROPOSAL 命中高风险边界: ${eligibility.risks.join(', ')}`,
+    },
+    {
+      id: 'fast-verify-evidence',
+      trigger: true,
+      ref: '.gantry/core/phases/F-fast.md',
+      reason: 'fast 必须执行 verify 并把通过证据写入 EXECUTION.md',
+    },
+  ];
 }
 
 function buildDevChecklists({ projectRoot, changeId, taskId }) {
@@ -529,7 +571,7 @@ function buildTestChecklists({ projectRoot, changeId }) {
       ref: '.gantry/core/phases/5-test.md',
       reason: existsSync(reqPath)
         ? 'SPEC.md 中 AC 是测试唯一来源(R5.1)'
-        : 'SPEC/REQUIREMENT 缺失,light 管线下从 PROPOSAL 推断',
+        : 'SPEC/REQUIREMENT 缺失,无法派生 full 管线测试',
     },
     {
       id: 'test-no-mock-bypass',
@@ -629,13 +671,13 @@ function grepLessons(projectRoot, taskId) {
   return lessons;
 }
 
-// === next 命令 ===
+// === 阶段完成后的机械推进命令 ===
 
 function buildNextCommands(stage, taskId) {
   if (stage === 'dev' && taskId) {
     return {
-      onSuccess: `gantry done ${taskId} && gantry next`,
-      onFailure: 'gantry next --skip',
+      onSuccess: `gantry done ${taskId} && gantry advance`,
+      onFailure: 'gantry advance --skip',
     };
   }
   if (stage === 'idle') {
@@ -645,8 +687,8 @@ function buildNextCommands(stage, taskId) {
     };
   }
   return {
-    onSuccess: 'gantry next',
-    onFailure: 'gantry next --skip',
+    onSuccess: 'gantry advance',
+    onFailure: 'gantry advance --skip',
   };
 }
 

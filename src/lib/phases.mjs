@@ -7,31 +7,31 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseTasks, allTasksDone } from './tasks.mjs';
 import { artifactExists, getPreferredArtifactName, resolveArtifactPath } from './artifacts.mjs';
+import { assessLightEligibility } from './pipeline-policy.mjs';
 
 // 固定管线阶段定义
 export const STAGES = {
-  idle:         { label: '空闲',     next: ['change'],                    checkpoint: null },
-  change:       { label: '变更提案', next: ['requirement'],               checkpoint: 'approval' },
-  requirement:  { label: '需求定义', next: ['design'],                    checkpoint: 'approval' },
-  design:       { label: '技术设计', next: ['ui-design', 'task'],         checkpoint: 'approval' },
-  'ui-design':  { label: 'UI 设计',  next: ['task'],                      checkpoint: 'approval' },
-  task:         { label: '任务分解', next: ['dev'],                       checkpoint: 'auto' },
-  dev:          { label: '开发执行', next: ['test'],                      checkpoint: null },
-  test:         { label: '测试验证', next: ['review'],                    checkpoint: 'auto' },
-  review:       { label: '代码审查', next: ['integration', 'dev'],        checkpoint: 'approval' },
-  integration:  { label: '集成交付', next: ['idle'],                      checkpoint: 'approval' },
+  idle:         { label: '空闲',     next: ['change'] },
+  change:       { label: '变更提案', next: ['requirement'] },
+  requirement:  { label: '需求定义', next: ['design'] },
+  design:       { label: '技术设计', next: ['ui-design', 'task'] },
+  'ui-design':  { label: 'UI 设计',  next: ['task'] },
+  task:         { label: '任务分解', next: ['dev'] },
+  dev:          { label: '开发执行', next: ['test'] },
+  test:         { label: '测试验证', next: ['review'] },
+  review:       { label: '代码审查', next: ['integration', 'dev'] },
+  fast:         { label: '快速闭环', next: ['integration'] },
+  integration:  { label: '集成交付', next: ['idle'] },
 };
 
 // 横向命令（任何阶段可触发）
 
 // 快捷管线：定义 pipeline 实际包含哪些阶段
-//   light    — 极简模式，CHANGE → DEV → REVIEW → INTEGRATION（README 称 MVP）
-//   standard — 标准模式，含 task / test / review，但跳过 ui-design
-//   full     — 完整模式，全部阶段
+//   light — 显式低风险路径，CHANGE → FAST → INTEGRATION
+//   full  — 默认完整路径
 export const PIPELINES = {
   full:     ['change', 'requirement', 'design', 'ui-design', 'task', 'dev', 'test', 'review', 'integration'],
-  standard: ['change', 'requirement', 'design', 'task', 'dev', 'test', 'review', 'integration'],
-  light:    ['change', 'task', 'dev', 'review', 'integration'],
+  light:    ['change', 'fast', 'integration'],
 };
 
 // 阶段 → 核心 phase prompt 文件映射
@@ -74,10 +74,9 @@ export function checkGate(targetStage, specsDir, config, state) {
     return { passed: true, reason: 'stage disabled, skipping' };
   }
 
-  // 条件跳过：enabled:'auto' + condition:'frontend' 的阶段（当前仅 ui-design），
-  // 非前端项目自动跳过。判定信号 config._isFrontend 由 CLI 层探测后注入(纯函数不做 IO)。
+  // 条件跳过：ui-design 只在本次 change 明确影响 UI 时执行。
   if (shouldSkipConditional(targetStage, config)) {
-    return { passed: true, reason: 'non-frontend project, skipping conditional stage' };
+    return { passed: true, reason: 'change has no UI impact, skipping conditional stage' };
   }
 
   // pipeline-aware gate：dev/test/review/integration 这种"动态依赖"的阶段
@@ -91,7 +90,9 @@ export function checkGate(targetStage, specsDir, config, state) {
     design:      () => checkArtifact(specsDir, 'spec'),
     'ui-design': () => checkArtifact(specsDir, 'design'),
     test:        () => checkAllTasksDone(specsDir),
-    integration: () => checkReviewPassed(specsDir),
+    integration: () => pipeline === 'light'
+      ? checkExecutionPassed(specsDir)
+      : checkReviewPassed(specsDir),
   };
 
   if (staticGates[targetStage]) {
@@ -99,14 +100,28 @@ export function checkGate(targetStage, specsDir, config, state) {
   }
 
   // 动态门禁：根据 pipeline 决定前驱
-  //   task 默认要 DESIGN.md，light 模式（跳过 design）改为 PROPOSAL.md/CHANGE.md
+  //   task 默认要 DESIGN.md
   //   dev 默认要 TASKS.md/TASK.md
-  //   review 默认要 TEST.md，light 模式（跳过 test）改为任意 EXECUTION/SUMMARY 证据
+  //   review 默认要 TEST.md
   if (targetStage === 'task') {
     if (pipelineStages && !pipelineStages.includes('design')) {
       return checkProposalReady(specsDir);
     }
     return checkArtifact(specsDir, 'design');
+  }
+  if (targetStage === 'fast') {
+    const proposal = checkProposalReady(specsDir);
+    if (!proposal.passed) return proposal;
+    const resolved = resolveArtifactPath(specsDir, 'proposal');
+    const eligibility = assessLightEligibility(readFileSync(resolved.path, 'utf-8'));
+    if (!eligibility.eligible) {
+      return {
+        passed: false,
+        hard: true,
+        reason: `light 不允许高风险变更 (${eligibility.risks.join(', ')})；请运行 gantry pipeline full`,
+      };
+    }
+    return { passed: true };
   }
   if (targetStage === 'dev') {
     return checkArtifact(specsDir, 'tasks');
@@ -125,7 +140,7 @@ export function checkGate(targetStage, specsDir, config, state) {
  * 获取下一个有效阶段
  *
  * 优先级：
- *   1. 如果 state.pipeline 指定了 light/standard/full，按 PIPELINES[pipeline] 顺序跳过未列入的阶段
+ *   1. 如果 state.pipeline 指定了 light/full，按 PIPELINES[pipeline] 顺序跳过未列入的阶段
  *   2. 否则按 STAGES.next 默认有向图
  *   3. 任意阶段如在 config.stages 里 enabled=false，跳过
  *
@@ -136,7 +151,7 @@ export function getNextStage(currentStage, config) {
   const pipeline = config?.pipeline;
   const pipelineStages = pipeline && PIPELINES[pipeline];
 
-  // 路径 A：受 PIPELINES 约束（light/standard/full）
+  // 路径 A：受 PIPELINES 约束（light/full）
   if (pipelineStages) {
     const idx = pipelineStages.indexOf(currentStage);
     if (idx >= 0) {
@@ -148,7 +163,7 @@ export function getNextStage(currentStage, config) {
       }
       return null;
     }
-    // currentStage 不在 pipeline 列表里，退回默认图
+    // currentStage 不在 pipeline 列表里，退回默认图（仅兼容迁移中的旧状态）
   }
 
   // 路径 B：默认有向图
@@ -164,14 +179,11 @@ export function getNextStage(currentStage, config) {
 /**
  * 判定某阶段是否因「条件门」而应跳过。
  *
- * 目前唯一条件门：ui-design 配 `enabled:'auto' + condition:'frontend'`——
- * 非前端项目跳过 UI 设计阶段。
+ * 目前唯一条件门：ui-design 配 `enabled:'auto' + condition:'ui-impact'`。
  *
- * 三态语义（对齐 detect.mjs 的 detectFrontend 返回值）：
- *   config._isFrontend === false     → 明确非前端 → 跳过
- *   config._isFrontend === true      → 前端 → 不跳过
- *   config._isFrontend === undefined → 无从判断 → 保守不跳过（向后兼容：
- *                                       老项目 / 无探测信号时，行为与改动前一致，照走 ui-design）
+ * 判定语义：
+ *   config._uiImpact === true  → 本次 change 影响 UI，不跳过
+ *   其他值                    → 跳过
  *
  * @param {string} stage
  * @param {object} config
@@ -181,9 +193,8 @@ export function shouldSkipConditional(stage, config) {
   const stageCfg = config?.stages?.[stage];
   if (!stageCfg) return false;
   if (stageCfg.enabled !== 'auto') return false;
-  if (stageCfg.condition !== 'frontend') return false;
-  // 仅当明确探测为「非前端」时跳过；true / undefined 都不跳过
-  return config?._isFrontend === false;
+  if (stageCfg.condition !== 'ui-impact') return false;
+  return config?._uiImpact !== true;
 }
 
 // --- 内部辅助 ---
@@ -196,7 +207,7 @@ function checkArtifact(specsDir, artifactKey) {
 }
 
 /**
- * requirement / light-task 门禁：PROPOSAL 必须存在，且「待澄清问题」段已清空。
+ * requirement / fast 门禁：PROPOSAL 必须存在，且「待澄清问题」段已清空。
  *
  * change 阶段的反问约束是软指令（prose），AI 可能跳过反问、把未决问题倾倒进
  * PROPOSAL 就推进。这里做机械兜底：只要「## 待澄清问题」段里还有未勾选项
@@ -269,4 +280,16 @@ function checkReviewPassed(specsDir) {
     return { passed: true };
   }
   return { passed: true, skipReason: 'REVIEW.md 未见明确通过标记，请确认审查已完成' };
+}
+
+function checkExecutionPassed(specsDir) {
+  const executionFile = resolveArtifactPath(specsDir, 'execution')?.path;
+  if (!executionFile || !existsSync(executionFile)) {
+    return { passed: false, reason: `缺少 ${getPreferredArtifactName('execution')}` };
+  }
+  const content = readFileSync(executionFile, 'utf-8');
+  if (!/(?:verify|验证)[^\n]*(?:pass|通过)|(?:pass|通过)[^\n]*(?:verify|验证)/i.test(content)) {
+    return { passed: false, reason: `${getPreferredArtifactName('execution')} 缺少 verify 通过证据` };
+  }
+  return { passed: true };
 }

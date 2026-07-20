@@ -40,7 +40,7 @@ fresh_context: false
 
 1. 产出工件写入 .gantry/specs/<change-id>/
 2. § 9 沉淀建议（如有）写入 DESIGN.md 末尾
-3. 如需人工确认，创建 `approval` checkpoint；仅阻塞项使用 `blocking`，特殊放行使用 `gate-bypass`
+3. 如需人工确认，停在人工确认关卡；特殊放行必须由用户显式确认
 
 ## 强制引用规则
 

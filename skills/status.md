@@ -13,7 +13,7 @@ stage: null
 
 1. 读取 `.gantry/planning/STATE.md`
 2. 显示：管线模式、当前阶段、活跃变更、Wave/Task、Agent、自主模式状态
-3. 显示待处理 checkpoints（如有）
+3. 如果当前阶段需要人工确认，显示审阅提示
 4. 提示下一步操作
 
 ## 输出格式

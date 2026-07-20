@@ -90,7 +90,8 @@ ${agentList}
 ### 状态机
 
 \`\`\`
-idle → change → requirement → design → [ui-design] → task → dev → test → review → integration → idle
+full:  idle → change → requirement → design → [ui-design] → task → dev → test → review → integration → idle
+light: idle → change → fast → integration → idle
 \`\`\`
 
 ---
@@ -129,15 +130,20 @@ ${body.trim()}
 
 ## Context Pack 协议
 
-每次执行此 skill 前先 \`Read .gantry/planning/context-pack.json\`,严格按 schema v2 行事:
+每次执行阶段型 skill 时先 \`Read .gantry/planning/context-pack.json\`,严格按 schema v2 行事。
+若 pack 不存在:
+- \`gantry-change\`:先按上方编排协议运行 \`gantry change "<描述>"\`,由 CLI 创建 pack,再读取 pack 继续。
+- 其他阶段型 skill:停手并提示运行 \`gantry context\` 刷新,或先用 \`gantry status\` 查看状态。
+
+读取到 pack 后:
 - 校验 \`schemaVersion === 2\`,否则停手并告知用户。
-- 顺序消费 \`loadOrder\`(phase prompt / artifacts / context-doc / LESSONS)。
+- 顺序消费 \`loadOrder\`(agent-prompt / phase-prompt / artifacts / context-doc / LESSONS)；\`agent-prompt.required === true\` 时必须读取，其 constraints 与 phase prompt 同时生效。
 - 子检查按**非对称信任**执行 \`checklists[]\`:
   - \`trigger === true\`:必跑,机器判定可信,不得跳过。
   - \`trigger === false && confidence === "high"\`:确定不用跑(基于文件存在性等事实),跳过。
   - \`trigger === false && confidence === "low"\`:关键词判定可能漏判,**你必须据完整上下文(DESIGN/task 全文)复核**——确实涉及就补跑并说明;不涉及才跳过。
   - 你**只能把 low 的 false 上调为"跑"**,**不得把任何 true 下调为"跳过"**。
-- 完成后执行 \`next.onSuccess\` (失败走 \`next.onFailure\`)。
+- 仅当当前 skill 的编排协议要求推进时，才执行 \`next.onSuccess\` (失败走 \`next.onFailure\`)；明确要求停在人工确认关卡时禁止执行，等待后续 \`/gantry-next\`。
 - 不允许在 v2 schema 上自行发明字段。
 
 ## 阶段执行指令

@@ -2,7 +2,6 @@
  * loop-engineering.test.mjs — 验证 loop engineering 改造后的反馈环行为
  *
  * 覆盖：
- *   - reroute() 的升级 / 不降级 / 稀疏文本不误升 / taskCount 信号
  *   - getNextStage() 的 PIPELINES 跳过逻辑
  *   - checkGate() 的 pipeline-aware 前驱判定
  *   - parseStateMd 解析 "N / M" 双值
@@ -12,7 +11,6 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync, mkdirSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { reroute, estimateFromCode } from '../src/lib/router.mjs';
 import { getNextStage, checkGate, PIPELINES } from '../src/lib/phases.mjs';
 import { writeState, readState } from '../src/lib/state.mjs';
 
@@ -27,66 +25,19 @@ function teardown() {
   if (existsSync(TMP)) rmSync(TMP, { recursive: true });
 }
 
-describe('reroute · 反馈环', () => {
-  it('稀疏文本不触发升级（避免 default=medium 引发的虚假升级）', () => {
-    const r = reroute('light', { artifactsText: '#', taskCount: 0 });
-    assert.equal(r.shouldUpgrade, false);
-  });
-
-  it('累积工件含架构关键词时升级 light → full', () => {
-    const base = '我们要做完整的微服务架构迁移和重构，跨模块全面的设计需要重新评估。' +
-                 '本次变更涉及 redesign 整体认证流程，包括 token、session、refresh 机制。' +
-                 '架构演进必须考虑性能 / 并发 / 分布式问题。';
-    // 重复以超过 200 字符门槛
-    const text = base + '\n' + base;
-    const r = reroute('light', { artifactsText: text, taskCount: 0 });
-    assert.equal(r.shouldUpgrade, true);
-    assert.equal(r.newPipeline, 'full');
-  });
-
-  it('任务数超 light 阈值时升级 standard', () => {
-    const r = reroute('light', { artifactsText: '', taskCount: 5 });
-    assert.equal(r.shouldUpgrade, true);
-    assert.equal(r.newPipeline, 'standard');
-  });
-
-  it('任务数超 standard 阈值时升级 full', () => {
-    const r = reroute('standard', { artifactsText: '', taskCount: 10 });
-    assert.equal(r.shouldUpgrade, true);
-    assert.equal(r.newPipeline, 'full');
-  });
-
-  it('当前 full 时不再升级（顶到头）', () => {
-    const text = '架构 微服务 重构 '.repeat(20);
-    const r = reroute('full', { artifactsText: text, taskCount: 99 });
-    assert.equal(r.shouldUpgrade, false);
-  });
-
-  it('两个信号都升级时取最高', () => {
-    const text = '修复一个小 bug 而已'.repeat(20); // small intent
-    const r = reroute('light', { artifactsText: text, taskCount: 10 });
-    // taskCount=10 在 light 阈值时升 standard，bug-text 不超 light
-    // 但 reroute 当前模型 light → 检查 standard 阈值不适用，taskCount 走 light→standard 路径
-    assert.equal(r.shouldUpgrade, true);
-    assert.ok(['standard', 'full'].includes(r.newPipeline));
-  });
-});
-
 describe('getNextStage · PIPELINES 跳过', () => {
-  it('light pipeline: change → task（跳过 requirement/design）', () => {
-    assert.equal(getNextStage('change', { pipeline: 'light' }), 'task');
+  it('只保留 full 和 light 两条管线', () => {
+    assert.deepEqual(Object.keys(PIPELINES).sort(), ['full', 'light']);
   });
 
-  it('light pipeline: dev → review（跳过 test）', () => {
-    assert.equal(getNextStage('dev', { pipeline: 'light' }), 'review');
+  it('light pipeline: change → fast → integration', () => {
+    assert.equal(getNextStage('change', { pipeline: 'light' }), 'fast');
+    assert.equal(getNextStage('fast', { pipeline: 'light' }), 'integration');
   });
 
-  it('standard pipeline: design → task（跳过 ui-design）', () => {
-    assert.equal(getNextStage('design', { pipeline: 'standard' }), 'task');
-  });
-
-  it('full pipeline: design → ui-design', () => {
-    assert.equal(getNextStage('design', { pipeline: 'full' }), 'ui-design');
+  it('full pipeline: UI 无影响时 design → task', () => {
+    assert.equal(getNextStage('design', { pipeline: 'full', _uiImpact: false,
+      stages: { 'ui-design': { enabled: 'auto', condition: 'ui-impact' } } }), 'task');
   });
 
   it('未指定 pipeline: 退回默认 STAGES.next', () => {
@@ -100,11 +51,20 @@ describe('getNextStage · PIPELINES 跳过', () => {
 });
 
 describe('checkGate · pipeline-aware', () => {
-  it('light pipeline 进入 task 只需 CHANGE.md', () => {
+  it('light pipeline 进入 fast 需要低风险 PROPOSAL', () => {
     setup();
-    writeFileSync(join(TMP, 'CHANGE.md'), '#');
-    const r = checkGate('task', TMP, { pipeline: 'light' });
+    writeFileSync(join(TMP, 'PROPOSAL.md'), '# PROPOSAL\n\n修复 README 拼写\n\n## 待澄清问题\n\n无\n');
+    const r = checkGate('fast', TMP, { pipeline: 'light' });
     assert.equal(r.passed, true);
+    teardown();
+  });
+
+  it('light pipeline 高风险 PROPOSAL 不能进入 fast', () => {
+    setup();
+    writeFileSync(join(TMP, 'PROPOSAL.md'), '# PROPOSAL\n\n新增数据库 migration\n\n## 待澄清问题\n\n无\n');
+    const r = checkGate('fast', TMP, { pipeline: 'light' });
+    assert.equal(r.passed, false);
+    assert.match(r.reason, /full/);
     teardown();
   });
 
@@ -118,10 +78,10 @@ describe('checkGate · pipeline-aware', () => {
     teardown();
   });
 
-  it('light pipeline 进入 review 需要 TASK 完成（不需要 TEST.md）', () => {
+  it('light pipeline 进入 integration 需要 EXECUTION 证据', () => {
     setup();
-    writeFileSync(join(TMP, 'TASK.md'), '<task id="T01" status="done">x</task>');
-    const r = checkGate('review', TMP, { pipeline: 'light' });
+    writeFileSync(join(TMP, 'EXECUTION.md'), '# EXECUTION\n\nverify: PASS\n');
+    const r = checkGate('integration', TMP, { pipeline: 'light' });
     assert.equal(r.passed, true);
     teardown();
   });
@@ -180,11 +140,11 @@ describe('checkGate · pipeline-aware', () => {
     teardown();
   });
 
-  it('light pipeline 进入 task 同样受未决问题门禁约束', () => {
+  it('light pipeline 进入 fast 同样受未决问题门禁约束', () => {
     setup();
     writeFileSync(join(TMP, 'PROPOSAL.md'),
       '# PROPOSAL\n\n## 待澄清问题\n\n- [ ] 还没问清\n\n---\n');
-    const r = checkGate('task', TMP, { pipeline: 'light' });
+    const r = checkGate('fast', TMP, { pipeline: 'light' });
     assert.equal(r.passed, false);
     assert.match(r.reason, /unresolved question/);
     teardown();
@@ -195,7 +155,7 @@ describe('state · 解析 "N / M" 双值', () => {
   it('readState 正确解析 maxRetries 双值', () => {
     setup();
     writeState(TMP, {
-      pipeline: 'standard',
+      pipeline: 'full',
       activeChange: 'demo',
       currentStage: 'dev',
       retries: 2,
@@ -227,56 +187,24 @@ describe('state · 解析 "N / M" 双值', () => {
       teardown();
     });
   });
+
+  it('旧 light 停在旧阶段时读取为 full', () => {
+    setup();
+    writeState(TMP, {
+      pipeline: 'light',
+      activeChange: 'legacy',
+      currentStage: 'dev',
+    });
+    assert.equal(readState(TMP).pipeline, 'full');
+    teardown();
+  });
 });
 
 describe('PIPELINES · 数据结构', () => {
-  it('light 是 standard 的子集', () => {
-    for (const stage of PIPELINES.light) {
-      assert.ok(PIPELINES.standard.includes(stage), `${stage} should exist in standard`);
-    }
-  });
-
-  it('standard 是 full 的子集', () => {
-    for (const stage of PIPELINES.standard) {
-      assert.ok(PIPELINES.full.includes(stage), `${stage} should exist in full`);
-    }
-  });
-
   it('每个 pipeline 都从 change 开始、以 integration 结束', () => {
-    for (const name of ['light', 'standard', 'full']) {
+    for (const name of ['light', 'full']) {
       assert.equal(PIPELINES[name][0], 'change');
       assert.equal(PIPELINES[name][PIPELINES[name].length - 1], 'integration');
     }
-  });
-});
-
-describe('router · estimateFromCode 命令注入安全', () => {
-  const RTMP = join(import.meta.dirname, '.tmp-router-inject');
-
-  it('含 shell 元字符的意图不崩溃、不执行注入', () => {
-    if (existsSync(RTMP)) rmSync(RTMP, { recursive: true });
-    mkdirSync(RTMP, { recursive: true });
-    writeFileSync(join(RTMP, 'sample.mjs'), 'export const x = 1;\n');
-    const sentinel = join(RTMP, 'PWNED');
-
-    // 恶意意图:若关键词被拼进 shell 执行,touch 会创建哨兵文件
-    const evil = `fix "$(touch ${sentinel})" and \`touch ${sentinel}\`; rm -rf x`;
-    let result;
-    assert.doesNotThrow(() => { result = estimateFromCode(evil, RTMP); });
-    assert.equal(existsSync(sentinel), false, '注入命令不应被执行');
-    // 返回值应是合法 scale 或 null,不抛错即达标
-    assert.ok(result === null || typeof result === 'string');
-
-    rmSync(RTMP, { recursive: true, force: true });
-  });
-
-  it('中文含特殊字符的意图安全处理', () => {
-    if (existsSync(RTMP)) rmSync(RTMP, { recursive: true });
-    mkdirSync(RTMP, { recursive: true });
-    writeFileSync(join(RTMP, 'a.ts'), 'const 用户 = 1;\n');
-
-    assert.doesNotThrow(() => estimateFromCode('修复 "用户$中心" 的 bug；重构', RTMP));
-
-    rmSync(RTMP, { recursive: true, force: true });
   });
 });
