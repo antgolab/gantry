@@ -42,6 +42,7 @@ export function parseTasks(taskMdPath) {
       readFiles: extractList(body, 'read_files'),
       writeFiles: extractList(body, 'write_files'),
       verify: extractField(body, 'verify'),
+      done: extractField(body, 'done'),
       estimate: parseEstimate(attrs.estimate, body),
       risk: parseRisk(attrs.risk, body),
       body,

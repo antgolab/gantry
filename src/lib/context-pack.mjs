@@ -171,19 +171,58 @@ function buildLoadOrder({ projectRoot, stage, changeId, taskId, pipeline, config
     }
   }
 
-  // 4. 当前 change 的所有上游工件 (按 pipeline 截断)
+  // 4. 当前 change 工件。DEV 只加载任务执行所需的最小上下文；其余阶段按 pipeline 截断。
   if (changeId && stage !== 'idle') {
-    const upstreamArtifacts = getUpstreamArtifacts(stage, pipeline);
-    for (const artifact of upstreamArtifacts) {
-      const resolved = resolveArtifactPath(join(projectRoot, SPECS_DIR, changeId), artifact);
-      if (resolved && existsSync(resolved.path)) {
-        const path = `${SPECS_DIR}/${changeId}/${resolved.name}`;
-        const item = { path, kind: 'artifact', required: true };
-        // dev 阶段 DESIGN.md 指定 focus 段落
-        if (stage === 'dev' && resolved.name === 'DESIGN.md') {
-          item.focus = ['## 0. 技术栈选定', '## 0.5 既有架构对齐'];
+    const changeDir = join(projectRoot, SPECS_DIR, changeId);
+    if (stage === 'dev') {
+      const tasksResolved = resolveArtifactPath(changeDir, 'tasks');
+      const tasks = tasksResolved && existsSync(tasksResolved.path)
+        ? parseTasks(tasksResolved.path)
+        : [];
+      const task = tasks.find(candidate => candidate.id === taskId);
+      const taskIsSelfContained = Boolean(task?.verify?.trim() && task?.done?.trim());
+
+      if (!taskIsSelfContained) {
+        const specResolved = resolveArtifactPath(changeDir, 'spec');
+        if (specResolved && existsSync(specResolved.path)) {
+          items.push({
+            path: `${SPECS_DIR}/${changeId}/${specResolved.name}`,
+            kind: 'artifact',
+            required: true,
+          });
         }
+      }
+
+      const designResolved = resolveArtifactPath(changeDir, 'design');
+      if (designResolved && existsSync(designResolved.path)) {
+        items.push({
+          path: `${SPECS_DIR}/${changeId}/${designResolved.name}`,
+          kind: 'artifact',
+          required: true,
+          focus: ['## 0. 技术栈选定', '## 0.5 既有架构对齐'],
+        });
+      }
+
+      if (tasksResolved && existsSync(tasksResolved.path)) {
+        const item = {
+          path: `${SPECS_DIR}/${changeId}/${tasksResolved.name}`,
+          kind: 'artifact',
+          required: true,
+        };
+        if (taskId) item.focus = [`<task id="${taskId}"`];
         items.push(item);
+      }
+    } else {
+      const upstreamArtifacts = getUpstreamArtifacts(stage, pipeline);
+      for (const artifact of upstreamArtifacts) {
+        const resolved = resolveArtifactPath(changeDir, artifact);
+        if (resolved && existsSync(resolved.path)) {
+          items.push({
+            path: `${SPECS_DIR}/${changeId}/${resolved.name}`,
+            kind: 'artifact',
+            required: true,
+          });
+        }
       }
     }
   }

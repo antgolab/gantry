@@ -30,6 +30,8 @@ gantry hook run before:integration
 
 ## 你的职责
 
+本阶段承担最终系统证据：全量自动化、远程依赖与端到端验证。TASK 的 `<verify>` 仍只代表单个 task 的完成证据，不在此扩展为新的字段。
+
 ### 1. 跑全套自动化
 
 - 全量单测：`npm test`（或等价）

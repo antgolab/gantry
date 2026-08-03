@@ -43,8 +43,10 @@ gantry hook run before:task
    - `read_files` —— **参考边界**：AI 在这个任务中允许 read 的文件（支持 glob，比如 `src/repos/*`、`src/utils/date.ts`）
    - `write_files` —— **修改边界**：AI 可以创建 / 修改 / 删除的文件。**超出这个范围的 diff 会被提交前的 R6.5 边界 verify 拦住**
    - `action` —— 要做什么（不写代码，写意图）
-   - `verify` —— 一条可执行的验证命令（如 `npm test -- theme.test.ts`、`curl ... | jq ...`）
+   - `verify` —— 证明当前 task 完成的最小、直接、可重复命令（如 `npm test -- theme.test.ts`、`curl ... | jq ...`）
    - `done` —— 完成判定（一句话，对应 AC 的某个子项）
+
+`verify` 命令必须自包含运行所需的工作目录、环境与 runner，不能依赖执行者猜测。任务本身需要数据库或远程依赖时可以直接使用；这里约束的是验证范围最小，而不是禁止真实依赖。TEST 会从 AC 扩大覆盖，INTEGRATION 再做全量与端到端验证。
 
 ### 团队约定路径锚定（命门 · 仅当项目有 `.context/`）
 
@@ -144,7 +146,7 @@ Wave 3:            T05 (depends on T03, T04)
 - [ ] **每个 `write_files` 都严格在 DESIGN 「触碰模块 + 新增模块」范围内**（B3 护栏）
 - [ ] **任何任务的 `write_files` 都不包含 DESIGN 「禁动清单」中的文件**
 - [ ] **（若项目有 `.context/`）命中团队约定的任务，正确路径已写进 `action`、产物文件已锁进 `write_files`**
-- [ ] 每个任务的 `verify` 都是可执行命令
+- [ ] 每个任务的 `verify` 都是证明当前 task 完成的最小、直接、可重复命令，并自包含工作目录、环境与 runner
 - [ ] 至少有 1 个 `[P]` 标记的并行任务（除非确实全是串行）
 - [ ] 波次划分图清晰、无环依赖
 - [ ] 任务编号连续

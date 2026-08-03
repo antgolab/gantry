@@ -48,13 +48,6 @@ max_retries: 3
 4. 更新 `TASKS.md` 对应 task status="done"（兼容期接受 `TASK.md`）
 5. 如果是 wave 最后一个 task → 通知编排器 wave 完成
 
-## 强制引用规则
-
-- `core/rules/anti-rationalization.md`「开发阶段」段 — 执行前内化，发现自己在用表中借口时立即停止
-- `core/rules/scope-discipline.md` — 改动不在 write_files 中 = 越界，无例外
-- `core/rules/evidence-gates.md` — "应该没问题"不是退出证据，必须贴命令输出
-- `core/rules/operating-behaviors.md` — 6 条非协商行为全程生效
-
 ## /gantry-review --adversarial 触发建议
 
 以下情况应主动触发 `/gantry-review --adversarial`：

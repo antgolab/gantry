@@ -48,8 +48,3 @@ fresh_context: false
 
 1. 产出工件写入 .gantry/specs/<change-id>/
 2. 如需人工确认，停在人工确认关卡；特殊放行必须由用户显式确认
-
-## 强制引用规则
-
-- `core/rules/anti-rationalization.md`「规划阶段」段 — "需求很清楚不需要反问"是借口，AC 不能被一条命令验证就不够清楚
-- `core/rules/operating-behaviors.md` — 暴露假设、该推回时推回

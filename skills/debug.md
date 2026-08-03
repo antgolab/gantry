@@ -2,7 +2,6 @@
 name: gantry:debug
 description: 系统化调试（四阶段协议）
 agent: executor
-stage: dev
 ---
 
 # /gantry:debug
@@ -23,12 +22,17 @@ stage: dev
 - 输出：症状清单 + 相关代码位置
 
 ### Phase 2: Hypothesis Formation
-- 基于证据形成假设（≥2 个）
+- 当现有证据尚不能唯一确定因果时，形成至少两个竞争假设
+- 当 traceback、精确代码引用或可复现实验已经唯一确定因果时，允许一个根因假设，并写明决定性证据
 - 为每个假设列出支持/反对证据
 - 设计验证实验
 - 输出：假设列表 + 验证计划
 
 ### Phase 3: Targeted Fix
+- 进入修复前先按诊断结果路由：
+  - 影响 current change AC → 回到 current task/change，在其边界内修复与验证
+  - 独立 defect → 按风险启动新的 light/full change，不挂靠当前 change
+  - diagnosis-only → 只交付根因与证据，不修改 lifecycle 或代码
 - 选择最可能的假设
 - 实施最小化修复
 - 只修改与根因直接相关的代码

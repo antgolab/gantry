@@ -343,8 +343,10 @@ grep -rn "from.*old-helpers\|import.*old-helpers" src/ tests/
 
 ### 3. 跑 verify
 
-按 `<verify>` 命令执行，**贴出真实输出**到 `EXECUTION.md`；例外任务同步写入 `SUMMARY.md`。
+只运行当前 task 的 focused verification：按 `<verify>` 命令执行，**贴出真实输出**到 `EXECUTION.md`；例外任务同步写入 `SUMMARY.md`。
 只有 verify 通过才能进入下一步。
+
+`<verify>` 可以连接当前任务完成所必需的数据库或远程依赖；规则不是禁止真实依赖，而是不在 DEV 重复运行与当前 task 无关的全套测试。跨 AC 扩面留给 TEST，全量与端到端留给 INTEGRATION。
 
 ### 4. 提交前 self-review（书本驱动 6 维 · 装了 brooks-lint 优先）
 

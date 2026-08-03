@@ -75,6 +75,13 @@ describe('install', () => {
     assert.ok(!skills.includes('gantry-task'), 'should not expose internal phase-only skills');
     assert.ok(!skills.includes('gantry-check-req'), 'should not expose retired requirement gate skill');
     assert.ok(!skills.includes('gantry-doubt'), 'should not expose retired adversarial review skill');
+    const debugSkill = readFileSync(join(skillsDir, 'gantry-debug', 'SKILL.md'), 'utf8');
+    assert.ok(!debugSkill.includes('Context Pack 协议'), 'debug should not require lifecycle context pack');
+    assert.ok(!debugSkill.includes('.gantry/core/phases/4-dev.md'), 'debug should not inherit DEV phase');
+    assert.ok(debugSkill.includes('影响 current change AC'), 'debug should route current-change findings');
+    assert.ok(debugSkill.includes('独立 defect'), 'debug should route independent defects');
+    assert.ok(debugSkill.includes('diagnosis-only'), 'debug should support diagnosis without lifecycle mutation');
+    assert.ok(debugSkill.includes('允许一个根因假设'), 'conclusive evidence should allow one root-cause hypothesis');
     const sampleSkill = join(skillsDir, skills[0], 'SKILL.md');
     assert.ok(existsSync(sampleSkill), `${sampleSkill} should exist`);
     const sample = readFileSync(sampleSkill, 'utf8');

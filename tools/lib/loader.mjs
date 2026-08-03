@@ -22,7 +22,6 @@ export function loadCore(rootDir) {
     phases: dirFiles('phases'),
     templates: dirFiles('templates'),
     reference: dirFiles('reference'),
-    ruleFiles: dirFiles('rules'),
   };
 }
 

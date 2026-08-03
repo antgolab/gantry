@@ -124,7 +124,7 @@ test('loadOrder: idle 阶段不加载 agent prompt', () => {
   } finally { cleanup(root); }
 });
 
-test('loadOrder: dev 阶段含 phase + 上游工件 + LESSONS,不默认加载核心长文档', () => {
+test('loadOrder: dev 自足任务只加载当前 TASK、聚焦 DESIGN 和 LESSONS', () => {
   const root = createFixture('load-dev');
   try {
     const changeId = 'feat-x';
@@ -132,10 +132,13 @@ test('loadOrder: dev 阶段含 phase + 上游工件 + LESSONS,不默认加载核
     mkdirSync(join(root, 'docs'), { recursive: true });
     writeFileSync(join(root, 'docs', 'METHODOLOGY.md'), '# methodology', 'utf-8');
     writeFileSync(join(root, 'docs', 'RULES.md'), '# rules', 'utf-8');
-    writeFileSync(join(root, '.gantry/specs', changeId, 'CHANGE.md'), '#', 'utf-8');
-    writeFileSync(join(root, '.gantry/specs', changeId, 'REQUIREMENT.md'), '#', 'utf-8');
+    writeFileSync(join(root, '.gantry/specs', changeId, 'PROPOSAL.md'), '#', 'utf-8');
+    writeFileSync(join(root, '.gantry/specs', changeId, 'SPEC.md'), '#', 'utf-8');
     writeFileSync(join(root, '.gantry/specs', changeId, 'DESIGN.md'), '#', 'utf-8');
-    writeFileSync(join(root, '.gantry/specs', changeId, 'TASK.md'), '<task id="T01"></task>', 'utf-8');
+    writeFileSync(join(root, '.gantry/specs', changeId, 'TASKS.md'), `<task id="T01">
+<verify>node --test tests/unit.test.mjs</verify>
+<done>目标行为通过测试，且现有行为无回归</done>
+</task>`, 'utf-8');
     writeFileSync(join(root, '.gantry/specs/LESSONS.md'), '#', 'utf-8');
 
     writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: 'T01', pipeline: 'full' });
@@ -149,12 +152,37 @@ test('loadOrder: dev 阶段含 phase + 上游工件 + LESSONS,不默认加载核
     assert.ok(!paths.includes('docs/METHODOLOGY.md'), 'METHODOLOGY.md 不应默认进入运行时 loadOrder');
     assert.ok(!paths.includes('docs/RULES.md'), 'RULES.md 不应默认进入运行时 loadOrder');
     assert.ok(paths.includes('.gantry/core/phases/4-dev.md'), 'phase prompt 缺失');
-    assert.ok(paths.some(p => p.endsWith('TASK.md')), 'TASK.md 缺失');
+    assert.ok(!paths.some(p => p.endsWith('PROPOSAL.md')), 'DEV 不应加载 PROPOSAL.md');
+    assert.ok(!paths.some(p => p.endsWith('SPEC.md')), '自足任务不应加载 SPEC.md');
+    assert.ok(paths.some(p => p.endsWith('TASKS.md')), 'TASKS.md 缺失');
     assert.ok(paths.some(p => p.endsWith('DESIGN.md')), 'DESIGN.md 缺失');
     assert.ok(paths.some(p => p.endsWith('LESSONS.md')), 'LESSONS.md 缺失');
 
+    const tasksItem = pack.loadOrder.find(i => i.path.endsWith('TASKS.md'));
+    assert.deepEqual(tasksItem.focus, ['<task id="T01"']);
     const designItem = pack.loadOrder.find(i => i.path.endsWith('DESIGN.md'));
-    assert.ok(designItem.focus, 'DESIGN.md 应有 focus 段');
+    assert.deepEqual(designItem.focus, ['## 0. 技术栈选定', '## 0.5 既有架构对齐']);
+  } finally { cleanup(root); }
+});
+
+test('loadOrder: dev 任务缺少 verify 或 done 时回退加载 SPEC，但仍不加载 PROPOSAL', () => {
+  const root = createFixture('load-dev-spec-fallback');
+  try {
+    const changeId = 'feat-x';
+    mkdirSync(join(root, '.gantry/specs', changeId), { recursive: true });
+    writeFileSync(join(root, '.gantry/specs', changeId, 'PROPOSAL.md'), '# proposal', 'utf-8');
+    writeFileSync(join(root, '.gantry/specs', changeId, 'SPEC.md'), '# spec', 'utf-8');
+    writeFileSync(join(root, '.gantry/specs', changeId, 'DESIGN.md'), '# design', 'utf-8');
+    writeFileSync(join(root, '.gantry/specs', changeId, 'TASKS.md'), `<task id="T01">
+<verify>node --test tests/unit.test.mjs</verify>
+</task>`, 'utf-8');
+    writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: 'T01', pipeline: 'full' });
+
+    const pack = buildPack(root);
+    const paths = pack.loadOrder.map(i => i.path);
+
+    assert.ok(paths.some(p => p.endsWith('SPEC.md')), '非自足任务应回退加载 SPEC.md');
+    assert.ok(!paths.some(p => p.endsWith('PROPOSAL.md')), 'DEV 即使回退也不应加载 PROPOSAL.md');
   } finally { cleanup(root); }
 });
 

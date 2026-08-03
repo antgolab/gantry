@@ -41,9 +41,3 @@ fresh_context: false
 1. 产出工件写入 .gantry/specs/<change-id>/
 2. § 9 沉淀建议（如有）写入 DESIGN.md 末尾
 3. 如需人工确认，停在人工确认关卡；特殊放行必须由用户显式确认
-
-## 强制引用规则
-
-- `core/rules/anti-rationalization.md`「设计阶段」段 — "这个方案明显最好"不是理由，至少列一个替代方案
-- `core/rules/evidence-gates.md` — 设计退出需要：替代方案 + 选择理由 + 风险说明
-- `core/rules/operating-behaviors.md` — 强制简单、暴露假设
