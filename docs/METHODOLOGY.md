@@ -103,9 +103,6 @@ PROPOSAL → SPEC → DESIGN → [2a UI-DESIGN]* → TASKS → DEV → TEST → 
 | `<task-id>-PROGRESS.md` | **临时**文件——任务执行中途清窗时写入，含「已排除方案」反重复段。任务完成后删除。详见 RULES R1.5/R1.6/R1.7 | AI |
 | `LESSONS.md`（`.gantry/specs/` 根）| **项目级常驻**——跨 change 失败知识库。每个 DEV 任务开工前必扫；INTEGRATION 阶段提名新条目。详见 RULES R1.8 | AI 提名 + 人工筛 |
 | `STATE.md`（`.gantry/planning/STATE.md`）| 跨会话状态（当前位置 / 中断任务 / 暂停原因 / 高价值决策）| AI 维护，人可改 |
-
-> 兼容迁移期内，运行时仍接受旧命名：`CHANGE.md` / `REQUIREMENT.md` / `TASK.md` / `SUMMARY.md`。新产出应优先使用新命名。
-
 ### CONTEXT 写入边界
 
 `CONTEXT.md` 只收**后续 change 会直接消费的项目级规则**。单个 change 内才有意义的事实，写在该 change 的 `SPEC.md` / `DESIGN.md` / `EXECUTION.md`，不要升入 CONTEXT。
@@ -129,7 +126,7 @@ PROPOSAL → SPEC → DESIGN → [2a UI-DESIGN]* → TASKS → DEV → TEST → 
 | **Architect** | PROPOSAL / SPEC | DESIGN.md + ADR | DESIGN 阶段 |
 | **UI Director** | SPEC + DESIGN | UI-DESIGN.md（含 design tokens）| 2a UI-DESIGN 阶段（前端项目）|
 | **Planner** | DESIGN（+ UI-DESIGN）| TASKS.md | TASK 阶段 |
-| **Dev**（多实例并行）| TASKS 中一项 | 代码 + change 级 EXECUTION（例外时单独 SUMMARY） | DEV 阶段，每任务一个 fresh context |
+| **Dev**（wave 子 Agent）| TASKS 中一个 wave | 代码 + change 级 EXECUTION（例外时单独 SUMMARY） | DEV 阶段，每 wave 一个新子 Agent；wave 内逐任务刷新 pack |
 | **Reviewer** | diff + SPEC | REVIEW.md | REVIEW 阶段（建议双轮：同模型 spec 审 + 异模型代码审）|
 | **Verifier** | 构建产物 + AC | UAT.md / fix-plan | INTEGRATION 阶段 |
 
@@ -139,10 +136,10 @@ PROPOSAL → SPEC → DESIGN → [2a UI-DESIGN]* → TASKS → DEV → TEST → 
 
 ## 7 个核心机制（已内化进各阶段 prompt）
 
-1. **任务拆解** — 拆到 fresh context 跑得完且自带 verify 的最小单元，按文件冲突切而不是按层切
+1. **任务拆解** — 拆成可独立 verify / commit / done 的最小单元，再按依赖与文件冲突组成 wave
 2. **Prompt 组织** — 模板 + 文件引用 + 验证锚点；不靠对话堆叠
-3. **上下文控制** — 阶段切换 = 清窗 + 重新载入指定 .md
-4. **代码生成策略** — 默认分步（每任务 fresh context），仅小特性允许一次性
+3. **上下文控制** — 阶段切换 = 清窗；DEV 每 wave 新建子 Agent，wave 内每 task 重新生成并读取 context pack
+4. **代码生成策略** — 每 wave 一个子 Agent，wave 内逐任务独立实现、验证和提交
 5. **测试生成** — 测试从 AC 派生而非从实现派生；bug 修复必伴随回归测试
 6. **审查 / Refine 循环** — 至少两轮，至少一轮跨模型 spot-check
 7. **自迭代** — 失败自动产 fix-plan 回炉，最多 3 轮，超限人工介入

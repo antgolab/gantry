@@ -27,19 +27,19 @@ fresh_context: false
 
 1. 读取 .gantry/planning/STATE.md 确认当前阶段
 2. change：接收用户一句话描述
-3. requirement：读取 `PROPOSAL.md`（兼容期接受 `CHANGE.md`）
+3. requirement：读取 `PROPOSAL.md`
 4. task：读取 DESIGN.md + UI-DESIGN.md（如有）
 
 ## 执行协议
 
-- change → 按 `.gantry/core/phases/0-change.md`，产出 `PROPOSAL.md`（兼容期接受 `CHANGE.md`）
+- change → 按 `.gantry/core/phases/0-change.md`，产出 `PROPOSAL.md`
   - 自动生成 change-id
   - 二阶反问澄清
   - 影响范围评估
-- requirement → 按 `.gantry/core/phases/1-requirement.md`，产出 `SPEC.md`（兼容期接受 `REQUIREMENT.md`）
+- requirement → 按 `.gantry/core/phases/1-requirement.md`，产出 `SPEC.md`
   - AC 使用 Given/When/Then 格式
   - 明确 v1 / v2 / out-of-scope
-- task → 按 `.gantry/core/phases/3-task.md`，产出 `TASKS.md`（兼容期接受 `TASK.md`）
+- task → 按 `.gantry/core/phases/3-task.md`，产出 `TASKS.md`
   - XML 格式任务定义
   - 依赖关系 + [P] 并行标记
   - 每个任务 ≤ fresh-context 可完成

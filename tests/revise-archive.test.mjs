@@ -25,12 +25,12 @@ afterEach(() => {
 function seedShippedChange(changeId, { withRequirement = true } = {}) {
   const specsDir = join(tmpDir, '.gantry/specs', changeId);
   mkdirSync(specsDir, { recursive: true });
-  writeFileSync(join(specsDir, 'CHANGE.md'), `# CHANGE — ${changeId}\n`);
+  writeFileSync(join(specsDir, 'PROPOSAL.md'), `# PROPOSAL — ${changeId}\n`);
   if (withRequirement) {
-    writeFileSync(join(specsDir, 'REQUIREMENT.md'), `# REQUIREMENT — ${changeId}\n\n## AC\n- AC-1: foo\n`);
+    writeFileSync(join(specsDir, 'SPEC.md'), `# SPEC — ${changeId}\n\n## AC\n- AC-1: foo\n`);
   }
   writeFileSync(join(specsDir, 'DESIGN.md'), `# DESIGN — ${changeId}\n`);
-  writeFileSync(join(specsDir, 'TASK.md'), `# TASK — ${changeId}\n`);
+  writeFileSync(join(specsDir, 'TASKS.md'), `# TASKS — ${changeId}\n`);
 }
 
 describe('archive', () => {
@@ -77,6 +77,21 @@ describe('archive', () => {
 
   it('archive 无活跃 change 时报错', () => {
     assert.throws(() => run('archive'), /无活跃变更可收尾/);
+  });
+
+  it('archive 重置 autonomous 为 OFF（不残留 auto 置位的标志）', () => {
+    seedShippedChange('demo-feat');
+    run('change "demo-feat"');
+    const statePath = join(tmpDir, '.gantry/planning', 'STATE.md');
+    // change 后 autonomous 必为 false；确定性置 true，模拟 auto/dispatch 置位后的残留
+    const before = readFileSync(statePath, 'utf-8');
+    assert.match(before, /-\s*\*\*autonomous\*\*:\s*`false`/, '前置：change 后 autonomous 应为 false');
+    const mutated = before.replace(/-\s*\*\*autonomous\*\*:\s*`false`/, '- **autonomous**: `true`');
+    assert.notEqual(mutated, before, '替换应生效（不得空转）');
+    writeFileSync(statePath, mutated);
+    run('archive --force');
+    const after = readFileSync(statePath, 'utf-8');
+    assert.match(after, /-\s*\*\*autonomous\*\*:\s*`false`/, `归档后 autonomous 应为 false，实际: ${after.match(/\*\*autonomous\*\*: `[^`]*`/)?.[0]}`);
   });
 });
 

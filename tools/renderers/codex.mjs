@@ -65,7 +65,7 @@ function codexRoot(core, commands) {
 - 不依赖聊天记忆；以仓库工件为准。
 - 执行阶段型 gantry skill 时读取 \`.gantry/planning/context-pack.json\`，按 \`loadOrder\` 最小加载当前阶段所需文件；其中 \`agent-prompt\` 与 \`phase-prompt\` 都是执行约束。 \`gantry-change\` 首次执行若 pack 不存在，先运行 \`gantry change "<描述>"\` 创建 pack。
 - \`docs/RULES.md\` / \`docs/METHODOLOGY.md\` 是规则源文件；仅在解释规则、修改 gantry 框架或 \`context-pack\` 明确要求时读取。
-- 严格遵守 \`TASKS.md\`（兼容期接受 \`TASK.md\`）的 \`read_files\` / \`write_files\` 边界。
+- 严格遵守 \`TASKS.md\` 的 \`read_files\` / \`write_files\` 边界。
 - 完成前必须运行并报告 verify 证据。
 - 累计 / 输入 token > 200k 或上下文窗口使用率 > 85% 时，写 \`<task-id>-PROGRESS.md\` 后清窗。
 - 禁止把长规则或长工件复制进聊天；用 \`@文件路径\` 引用。
@@ -149,7 +149,24 @@ description: ${oneLine(description)}
 ---
 
 ${body.trim()}
+${cmdName === 'auto' ? codexAutoAdapter() : ''}
 `;
+}
+
+function codexAutoAdapter() {
+  return [
+    '',
+    '## Codex wave 子 Agent 适配',
+    '',
+    '- 每个 wave 使用一次 `spawn_agent` 创建一个新子 Agent，`agent_type="worker"`、`fork_turns="none"`；不得让子 Agent 继承 orchestrator 的长对话。',
+    '- message 必须包含 waveId、有序 taskIds，以及“你不是唯一在工作区工作的 Agent，不得撤销他人修改”。',
+    '- message 要求子 Agent 在 wave 内逐个 task 运行 `gantry context dev --task <id>`，读取 `.agents/skills/gantry-exec/SKILL.md` 和当前 context pack，完成 verify、提交、`gantry done <task-id>`；任一 task 失败立即停止。',
+    '- message 必须明确该 wave 子 Agent 是叶子执行者：禁止调用 `spawn_agent` 或 `followup_task` 创建、恢复或委派其他子 Agent，必须直接执行分配的 task。',
+    '- 子 Agent 禁止执行 `gantry advance`。调用 `wait_agent` 同步等待该 wave 子 Agent 完成；任一时刻只运行一个。',
+    '- wave 失败重试必须再次调用 `spawn_agent` 创建新子 Agent，不得对失败 Agent 使用 `followup_task` 继续实现。',
+    '- `gantry dispatch --json` 返回 `fallback_main` 时停止创建子 Agent；主 Agent 在当前上下文按 taskIds 逐个刷新 context pack 并直接完成剩余 task，完成后重新 dispatch。',
+    '',
+  ].join('\n');
 }
 
 // --- Utilities ---

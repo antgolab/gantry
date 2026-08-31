@@ -24,7 +24,7 @@ fresh_context: false
 
 ## 入场协议
 
-1. 读取 `SPEC.md`（AC 列表；兼容期接受 `REQUIREMENT.md`）
+1. 读取 `SPEC.md`（AC 列表）
 2. 读取 git diff（代码变更）
 3. 读取 DESIGN.md（技术决策）
 4. 如果有 UI：读取 UI-DESIGN.md

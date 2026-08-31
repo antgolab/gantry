@@ -112,7 +112,7 @@ export function buildPack(projectRoot, overrides = {}) {
     taskId,
     loadOrder: buildLoadOrder({ projectRoot, stage, changeId, taskId, pipeline, config }),
     checklists: buildChecklists({ projectRoot, stage, changeId, taskId }),
-    lessons: stage === 'dev' || stage === 'fast' ? grepLessons(projectRoot, taskId) : [],
+    lessons: stage === 'dev' || stage === 'fast' ? grepLessons(projectRoot, taskId, changeId) : [],
     retryHistory: {
       count: state.retries || 0,
       lastFailure: state.pauseReason
@@ -372,7 +372,7 @@ function buildDevChecklists({ projectRoot, changeId, taskId }) {
     return [{
       id: 'task-not-found',
       trigger: false,
-      reason: `task ${taskId} 不在 ${getPreferredArtifactName('tasks')}（兼容旧 TASK.md）中`,
+      reason: `task ${taskId} 不在 ${getPreferredArtifactName('tasks')} 中`,
     }];
   }
 
@@ -673,38 +673,74 @@ function buildIntegrationChecklists({ projectRoot, changeId }) {
 
 // === lessons (dev 阶段) ===
 
-function grepLessons(projectRoot, taskId) {
+// LESSONS 条目标题：模板正文用 ### L-NNN(三级),历史内核只认 ## L-NNN(二级)。
+// 两种都要能被 split 命中,否则按模板写的条目检索恒空。
+const LESSON_HEADING = /^#{2,3}\s+L-\d+/;
+
+/**
+ * 收集当前任务的检索文本(小写),供与 lesson 的「关键词」字段做子串求交。
+ * 来源:task 的 title + body + write_files。Kernel 不做 NLP,只做确定性子串匹配。
+ * 无 change/task 上下文(如 fast 阶段无 per-task)时返回空串,调用方据此退回"不过滤"。
+ */
+function collectTaskText(projectRoot, changeId, taskId) {
+  if (!changeId || !taskId) return '';
+  const resolved = resolveArtifactPath(join(projectRoot, SPECS_DIR, changeId), 'tasks');
+  if (!resolved || !existsSync(resolved.path)) return '';
+  const task = parseTasks(resolved.path).find(t => t.id === taskId);
+  if (!task) return '';
+  const parts = [task.title || '', task.body || '', ...(task.writeFiles || [])];
+  return parts.join(' ').toLowerCase();
+}
+
+/**
+ * 检索与当前任务相关的 active LESSONS 条目。
+ *
+ * 匹配方式(确定性,零 AI 推理):把每条 lesson 的「关键词」字段(专为 grep 设计的
+ * 空格分隔符号表)与当前任务文本做子串求交——lesson 关键词多为代码符号 / 文件名 /
+ * API 名(见 LESSONS 入库质检门),对中文关键词和 dark-mode 这类带连字符的 token
+ * 用 includes 一并覆盖。taskId 直配作为补充信号。
+ *
+ * 无任务上下文时(fast 阶段无 per-task)不过滤,返回全部 active。
+ */
+function grepLessons(projectRoot, taskId, changeId) {
   const lessonsPath = join(projectRoot, SPECS_DIR, 'LESSONS.md');
   if (!existsSync(lessonsPath)) return [];
 
   const content = readFileSync(lessonsPath, 'utf-8');
-  const blocks = content.split(/(?=^##\s+L-\d+)/m).filter(b => /^##\s+L-\d+/.test(b));
+  const blocks = content.split(/(?=^#{2,3}\s+L-\d+)/m).filter(b => LESSON_HEADING.test(b));
   if (blocks.length === 0) return [];
 
-  // 取本任务相关关键词:taskId 本身 + change 相关词
-  // (Kernel 不做 NLP,只做"如果 taskId 在文本里出现就算命中")
-  const keywords = [];
-  if (taskId) keywords.push(taskId);
+  const taskText = collectTaskText(projectRoot, changeId, taskId);
 
   const lessons = [];
   for (const block of blocks) {
-    const idMatch = block.match(/^##\s+(L-\d+)/m);
+    const idMatch = block.match(/^#{2,3}\s+(L-\d+)/m);
     if (!idMatch) continue;
     const id = idMatch[1];
-    const statusMatch = block.match(/状态[::]\s*(\S+)/);
+    // 模板字段为粗体格式 `- **状态**: xxx`,故"状态"与冒号间要吃掉可选的 `**` 与空白;
+    // 兼容裸 `状态:`。否则 statusMatch 恒 null,deprecated/superseded 条目会被误当 active。
+    const statusMatch = block.match(/状态\**\s*[::]\s*(\S+)/);
     const status = statusMatch ? statusMatch[1] : 'active';
-    const summaryMatch = block.match(/^##\s+L-\d+\s+(.+)$/m);
+    if (status !== 'active') continue;
+    const summaryMatch = block.match(/^#{2,3}\s+L-\d+\s+(.+)$/m);
     const summary = summaryMatch ? summaryMatch[1].trim() : '';
 
-    if (status !== 'active') continue;
-
-    const matchedKeywords = keywords.filter(k => block.includes(k));
-    if (matchedKeywords.length > 0 || keywords.length === 0) {
-      lessons.push({
-        id, summary, status,
-        matchedKeywords: matchedKeywords.length > 0 ? matchedKeywords : null,
-      });
+    if (!taskText) {
+      // 无任务上下文:不过滤,全部 active 返回(matchedKeywords 未知)
+      lessons.push({ id, summary, status, matchedKeywords: null });
+      continue;
     }
+
+    // lesson 的「关键词」字段(**关键词**: a b c) → 与任务文本子串求交
+    const kwMatch = block.match(/\*\*关键词\*\*[::]\s*(.+)/);
+    const lessonTokens = kwMatch ? kwMatch[1].toLowerCase().split(/\s+/).filter(Boolean) : [];
+    const hits = lessonTokens.filter(t => taskText.includes(t));
+    if (taskId && taskText.includes(taskId.toLowerCase()) && !hits.includes(taskId.toLowerCase())) {
+      hits.push(taskId.toLowerCase());
+    }
+    if (hits.length === 0) continue; // 有任务上下文但无交集 → 不命中,降噪
+
+    lessons.push({ id, summary, status, matchedKeywords: hits });
   }
 
   return lessons;
@@ -715,8 +751,8 @@ function grepLessons(projectRoot, taskId) {
 function buildNextCommands(stage, taskId) {
   if (stage === 'dev' && taskId) {
     return {
-      onSuccess: `gantry done ${taskId} && gantry advance`,
-      onFailure: 'gantry advance --skip',
+      onSuccess: `gantry done ${taskId}`,
+      onFailure: null,
     };
   }
   if (stage === 'idle') {

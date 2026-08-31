@@ -38,7 +38,7 @@ gantry change "给订单列表加导出功能"
 /gantry-next         # → SPEC.md
 /gantry-next         # → DESIGN.md
 /gantry-next         # → TASKS.md
-/gantry-exec         # → DEV(逐任务在 fresh context 循环)
+/gantry-exec         # → DEV(每 wave 一个子 Agent，wave 内逐任务执行)
 /gantry-next         # → TEST
 /gantry-next         # → REVIEW
 gantry archive       # → INTEGRATION + 归档

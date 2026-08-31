@@ -50,7 +50,6 @@ export const PHASE_FILES = {
   knowledge:    'K-knowledge.md',
   architect:    'A-architect.md',
   evolve:       'A-evolve.md',
-  restyle:      'L-restyle.md',
   fast:         'F-fast.md',
 };
 
@@ -101,7 +100,7 @@ export function checkGate(targetStage, specsDir, config, state) {
 
   // 动态门禁：根据 pipeline 决定前驱
   //   task 默认要 DESIGN.md
-  //   dev 默认要 TASKS.md/TASK.md
+  //   dev 默认要 TASKS.md
   //   review 默认要 TEST.md
   if (targetStage === 'task') {
     if (pipelineStages && !pipelineStages.includes('design')) {
@@ -261,6 +260,14 @@ function checkAllTasksDone(specsDir) {
     return { passed: false, reason: `${resolved.name} 中没有解析到任务` };
   }
   if (allTasksDone(tasks)) {
+    const executionFile = resolveArtifactPath(specsDir, 'execution')?.path;
+    if (!executionFile || !existsSync(executionFile)) {
+      return { passed: false, reason: `缺少 ${getPreferredArtifactName('execution')}` };
+    }
+    const execution = readFileSync(executionFile, 'utf-8');
+    if (/^\s*-\s*[a-z][a-z-]*:\s*TODO\b/im.test(execution)) {
+      return { passed: false, reason: `${getPreferredArtifactName('execution')} 仍有 TODO，需填写真实内容或 none` };
+    }
     return { passed: true };
   }
   const pending = tasks.filter(t => t.status !== 'done').map(t => t.id);

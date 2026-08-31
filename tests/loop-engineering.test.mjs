@@ -68,10 +68,10 @@ describe('checkGate · pipeline-aware', () => {
     teardown();
   });
 
-  it('full pipeline 进入 task 需要 DESIGN.md（不接受 CHANGE.md）', () => {
+  it('full pipeline 进入 task 需要 DESIGN.md', () => {
     setup();
-    writeFileSync(join(TMP, 'CHANGE.md'), '#');
-    writeFileSync(join(TMP, 'REQUIREMENT.md'), '#');
+    writeFileSync(join(TMP, 'PROPOSAL.md'), '#');
+    writeFileSync(join(TMP, 'SPEC.md'), '#');
     const r = checkGate('task', TMP, { pipeline: 'full' });
     assert.equal(r.passed, false);
     assert.match(r.reason, /DESIGN\.md/);
@@ -88,7 +88,7 @@ describe('checkGate · pipeline-aware', () => {
 
   it('checkAllTasksDone 检测到未完成任务', () => {
     setup();
-    writeFileSync(join(TMP, 'TASK.md'), '<task id="T01" status="pending">x</task>');
+    writeFileSync(join(TMP, 'TASKS.md'), '<task id="T01" status="pending">x</task>');
     const r = checkGate('test', TMP, { pipeline: 'full' });
     assert.equal(r.passed, false);
     assert.match(r.reason, /T01/);

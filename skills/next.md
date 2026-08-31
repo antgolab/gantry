@@ -36,10 +36,10 @@ stage: auto
 
 | 目标阶段 | 前置条件 |
 |----------|----------|
-| requirement | `PROPOSAL.md` 存在（兼容期接受 `CHANGE.md`） |
-| design | `SPEC.md` 存在（兼容期接受 `REQUIREMENT.md`） |
+| requirement | `PROPOSAL.md` 存在 |
+| design | `SPEC.md` 存在 |
 | task | DESIGN.md 存在 |
-| dev | `TASKS.md` 存在（兼容期接受 `TASK.md`） |
+| dev | `TASKS.md` 存在 |
 | test | 所有 task status=done |
 | review | TEST.md 存在 |
 | integration | REVIEW.md 存在且通过 |

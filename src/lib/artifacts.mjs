@@ -1,17 +1,17 @@
 /**
- * artifacts.mjs — 工件命名兼容层
+ * artifacts.mjs — 工件命名表
  */
 
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 export const ARTIFACT_ALIASES = {
-  proposal: ['PROPOSAL.md', 'CHANGE.md'],
-  spec: ['SPEC.md', 'REQUIREMENT.md'],
+  proposal: ['PROPOSAL.md'],
+  spec: ['SPEC.md'],
   design: ['DESIGN.md'],
   'ui-design': ['UI-DESIGN.md'],
-  tasks: ['TASKS.md', 'TASK.md'],
-  execution: ['EXECUTION.md', 'SUMMARY.md'],
+  tasks: ['TASKS.md'],
+  execution: ['EXECUTION.md'],
   test: ['TEST.md'],
   review: ['REVIEW.md'],
   integration: ['UAT.md'],

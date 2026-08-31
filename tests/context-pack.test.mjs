@@ -225,10 +225,10 @@ test('loadOrder: dev 恢复时强制带入 PROGRESS.md 反重复上下文', () =
     mkdirSync(join(root, 'docs'), { recursive: true });
     writeFileSync(join(root, 'docs', 'METHODOLOGY.md'), '# methodology', 'utf-8');
     writeFileSync(join(root, 'docs', 'RULES.md'), '# rules', 'utf-8');
-    writeFileSync(join(root, '.gantry/specs', changeId, 'CHANGE.md'), '#', 'utf-8');
-    writeFileSync(join(root, '.gantry/specs', changeId, 'REQUIREMENT.md'), '#', 'utf-8');
+    writeFileSync(join(root, '.gantry/specs', changeId, 'PROPOSAL.md'), '#', 'utf-8');
+    writeFileSync(join(root, '.gantry/specs', changeId, 'SPEC.md'), '#', 'utf-8');
     writeFileSync(join(root, '.gantry/specs', changeId, 'DESIGN.md'), '#', 'utf-8');
-    writeFileSync(join(root, '.gantry/specs', changeId, 'TASK.md'), '<task id="T07"></task>', 'utf-8');
+    writeFileSync(join(root, '.gantry/specs', changeId, 'TASKS.md'), '<task id="T07"></task>', 'utf-8');
     writeFileSync(join(root, '.gantry/specs', changeId, 'T07-PROGRESS.md'),
       '# PROGRESS\n\n## 已排除的方案（反重复关键）\n\n- X-1\n\n## 当前正在做（清窗那一刻的状态）\n\n继续修复\n', 'utf-8');
 
@@ -254,7 +254,7 @@ test('checklists: dev/UI 任务触发 1.6,非 UI 不触发', () => {
   try {
     const changeId = 'add-modal';
     mkdirSync(join(root, '.gantry/specs', changeId), { recursive: true });
-    writeFileSync(join(root, '.gantry/specs', changeId, 'TASK.md'),
+    writeFileSync(join(root, '.gantry/specs', changeId, 'TASKS.md'),
       `<task id="T01">
 <title>Add modal component</title>
 <write_files>
@@ -290,7 +290,7 @@ test('checklists: 1.5 在只有 .context/MANIFEST.md(无 LESSONS)时仍触发', 
   try {
     const changeId = 'add-cache';
     mkdirSync(join(root, '.gantry/specs', changeId), { recursive: true });
-    writeFileSync(join(root, '.gantry/specs', changeId, 'TASK.md'),
+    writeFileSync(join(root, '.gantry/specs', changeId, 'TASKS.md'),
       `<task id="T01">
 <title>查用户信息加缓存</title>
 <write_files>
@@ -316,7 +316,7 @@ test('checklists: 1.5 在既无 .context 也无 LESSONS 时不触发', () => {
   try {
     const changeId = 'plain';
     mkdirSync(join(root, '.gantry/specs', changeId), { recursive: true });
-    writeFileSync(join(root, '.gantry/specs', changeId, 'TASK.md'),
+    writeFileSync(join(root, '.gantry/specs', changeId, 'TASKS.md'),
       `<task id="T01">
 <title>纯后端任务</title>
 <write_files>
@@ -338,7 +338,7 @@ test('checklists: v2 确定性类 false 为 high、关键词类 false 为 low', 
     const changeId = 'plain-task';
     mkdirSync(join(root, '.gantry/specs', changeId), { recursive: true });
     // 非 UI/schema/breaking 的纯后端任务:1.6/1.7/1.8 全 false
-    writeFileSync(join(root, '.gantry/specs', changeId, 'TASK.md'),
+    writeFileSync(join(root, '.gantry/specs', changeId, 'TASKS.md'),
       `<task id="T01"><title>实现分页逻辑</title><write_files>
 - src/service/pager.ts
 </write_files></task>`, 'utf-8');
@@ -377,7 +377,7 @@ test('checklists: schema 任务命中 1.7', () => {
   try {
     const changeId = 'add-table';
     mkdirSync(join(root, '.gantry/specs', changeId), { recursive: true });
-    writeFileSync(join(root, '.gantry/specs', changeId, 'TASK.md'),
+    writeFileSync(join(root, '.gantry/specs', changeId, 'TASKS.md'),
       `<task id="T01">
 <title>新增表 notifications</title>
 <write_files>
@@ -399,7 +399,7 @@ test('checklists: 破坏性变更 action 命中 1.8', () => {
   try {
     const changeId = 'remove-old';
     mkdirSync(join(root, '.gantry/specs', changeId), { recursive: true });
-    writeFileSync(join(root, '.gantry/specs', changeId, 'TASK.md'),
+    writeFileSync(join(root, '.gantry/specs', changeId, 'TASKS.md'),
       `<task id="T01">
 <title>删除 formatLegacyDate 函数</title>
 <write_files>
@@ -422,7 +422,7 @@ test('checklists: 英文关键词词边界匹配,不因子串误报(止血缺陷
     mkdirSync(join(root, '.gantry/specs', changeId), { recursive: true });
     // "confront" 含子串 font，"iconic" 含 icon，"delegate" 含子串但非 delete；
     // 词边界匹配下都不应触发 UI(1.6) 或 breaking(1.8)
-    writeFileSync(join(root, '.gantry/specs', changeId, 'TASK.md'),
+    writeFileSync(join(root, '.gantry/specs', changeId, 'TASKS.md'),
       `<task id="T01"><title>confront the iconic delegate flow</title><write_files>
 - src/service/flow.ts
 </write_files></task>`, 'utf-8');
@@ -440,7 +440,7 @@ test('checklists: 独立英文关键词仍正常命中', () => {
   try {
     const changeId = 'add-icon';
     mkdirSync(join(root, '.gantry/specs', changeId), { recursive: true });
-    writeFileSync(join(root, '.gantry/specs', changeId, 'TASK.md'),
+    writeFileSync(join(root, '.gantry/specs', changeId, 'TASKS.md'),
       `<task id="T01"><title>add an icon to the header</title><write_files>
 - src/service/x.ts
 </write_files></task>`, 'utf-8');
@@ -495,17 +495,17 @@ test('checklists: change 阶段 PROPOSAL 待澄清清空后不含触发器', () 
 
 // === 阶段完成后的机械推进命令 ===
 
-test('next commands: dev 含 done + advance 链', () => {
+test('next commands: dev worker 只标记 done，不推进阶段', () => {
   const root = createFixture('advance-dev');
   try {
     const changeId = 'foo';
     mkdirSync(join(root, '.gantry/specs', changeId), { recursive: true });
-    writeFileSync(join(root, '.gantry/specs', changeId, 'TASK.md'),
+    writeFileSync(join(root, '.gantry/specs', changeId, 'TASKS.md'),
       '<task id="T05"></task>', 'utf-8');
     writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: 'T05' });
     const pack = buildPack(root);
-    assert.ok(pack.next.onSuccess.includes('done T05'));
-    assert.ok(pack.next.onSuccess.includes('advance'));
+    assert.equal(pack.next.onSuccess, 'gantry done T05');
+    assert.equal(pack.next.onFailure, null);
   } finally { cleanup(root); }
 });
 
@@ -532,5 +532,83 @@ test('确定性: 同输入两次 build 结果一致 (除 generatedAt)', () => {
     delete a.generatedAt;
     delete b.generatedAt;
     assert.deepEqual(a, b);
+  } finally { cleanup(root); }
+});
+
+// === lessons 检索(锁死三个曾令检索失效的坏点)===
+
+// 构造一个 dev 阶段 + LESSONS + 单任务的 fixture,任务文本可控。
+function makeLessonsFixture(name, { lessons, taskBody, writeFiles = [] }) {
+  const root = createFixture(name);
+  const changeId = 'feat-x';
+  mkdirSync(join(root, '.gantry/specs', changeId), { recursive: true });
+  writeFileSync(join(root, '.gantry/specs/LESSONS.md'), lessons, 'utf-8');
+  const wf = writeFiles.length ? `\n<write_files>${writeFiles.join(',')}</write_files>` : '';
+  writeFileSync(join(root, '.gantry/specs', changeId, 'TASKS.md'),
+    `<task id="T01">\n${taskBody}${wf}\n<verify>node --test</verify>\n<done>ok</done>\n</task>`, 'utf-8');
+  writeState(root, { currentStage: 'dev', activeChange: changeId, currentTask: 'T01', pipeline: 'full' });
+  return root;
+}
+
+// 坏点 A:模板条目用 ### 三级标题,旧 split 只认 ## 二级 → blocks=0 恒空。
+test('lessons: 三级标题 ### L-NNN 能被检索(修复检索恒空)', () => {
+  const root = makeLessonsFixture('lesson-h3', {
+    lessons: `### L-001 · [arch] 主题切换 FOUC
+- **状态**: active
+- **关键词**: theme dark-mode localstorage
+`,
+    taskBody: '实现 dark-mode 主题切换持久化',
+  });
+  try {
+    const pack = buildPack(root);
+    assert.ok(pack.lessons.some(l => l.id === 'L-001'), '三级标题条目应被命中');
+  } finally { cleanup(root); }
+});
+
+// 坏点 B:关键词字段 × 任务文本子串求交——相关命中、无关降噪。
+test('lessons: 按「关键词」字段与任务文本求交,无关条目不命中', () => {
+  const root = makeLessonsFixture('lesson-kw', {
+    lessons: `### L-001 · [ux] 主题 FOUC
+- **状态**: active
+- **关键词**: theme dark-mode localstorage
+
+### L-002 · [lib] axios 重试
+- **状态**: active
+- **关键词**: axios interceptor retry
+`,
+    taskBody: '实现 dark-mode 主题切换',
+    writeFiles: ['src/theme/localstorage.ts'],
+  });
+  try {
+    const pack = buildPack(root);
+    const ids = pack.lessons.map(l => l.id);
+    assert.ok(ids.includes('L-001'), '主题相关条目应命中');
+    assert.ok(!ids.includes('L-002'), 'axios 无关条目应被降噪');
+    const l1 = pack.lessons.find(l => l.id === 'L-001');
+    assert.ok(l1.matchedKeywords.includes('theme'), 'matchedKeywords 应含交集词');
+  } finally { cleanup(root); }
+});
+
+// 坏点 C:粗体状态字段 `- **状态**: deprecated` 曾因正则错配恒被当 active。
+test('lessons: deprecated/superseded 条目被过滤(粗体状态字段)', () => {
+  const root = makeLessonsFixture('lesson-status', {
+    lessons: `### L-001 · [arch] 仍生效
+- **状态**: active
+- **关键词**: theme migration
+
+### L-002 · [data] 已废弃
+- **状态**: deprecated:old-stack
+- **关键词**: theme migration
+
+### L-003 · [arch] 被取代
+- **状态**: superseded-by:L-001
+- **关键词**: theme migration
+`,
+    taskBody: 'theme migration 相关任务',
+  });
+  try {
+    const pack = buildPack(root);
+    const ids = pack.lessons.map(l => l.id);
+    assert.deepEqual(ids, ['L-001'], '仅 active 条目应返回,deprecated/superseded 过滤');
   } finally { cleanup(root); }
 });

@@ -171,7 +171,24 @@ ${fmLines.join('\n')}
 ---
 
 ${body.trim()}
+${cmdName === 'auto' ? claudeAutoAdapter() : ''}
 `;
+}
+
+function claudeAutoAdapter() {
+  return [
+    '',
+    '## Claude Code wave 子 Agent 适配',
+    '',
+    '- 每个 wave 调用一次 `Agent` 工具创建新子 Agent，设置 `subagent_type: "general-purpose"`、`run_in_background: false`，同步等待该 wave 返回。',
+    '- 每次只运行一个 wave 子 Agent；禁止使用并行 Agent 调用，也禁止通过 resume 复用失败子 Agent 的上下文。',
+    '- prompt 必须包含 waveId、有序 taskIds，以及“你不是唯一在工作区工作的 Agent，不得撤销他人修改”。',
+    '- prompt 要求子 Agent 在 wave 内逐个 task 运行 `gantry context dev --task <id>`，读取 `.claude/skills/gantry-exec/SKILL.md` 和当前 context pack，完成 verify、提交、`gantry done <task-id>`；任一 task 失败立即停止。',
+    '- prompt 必须明确该 wave 子 Agent 是叶子执行者：禁止调用 `Agent` 工具或通过 resume 创建、恢复、委派其他子 Agent，必须直接执行分配的 task。',
+    '- 子 Agent 禁止执行 `gantry advance`。失败重试必须再次调用 `Agent` 工具创建新的 `general-purpose` 子 Agent。',
+    '- `gantry dispatch --json` 返回 `fallback_main` 时停止创建子 Agent；主 Agent 在当前上下文按 taskIds 逐个刷新 context pack 并直接完成剩余 task，完成后重新 dispatch。',
+    '',
+  ].join('\n');
 }
 
 // --- Utilities ---

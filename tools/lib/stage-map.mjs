@@ -40,6 +40,5 @@ export const STAGE_PHASE_MAP = {
   fast: 'F-fast',
   scan: 'I-intel-scan',
   knowledge: 'K-knowledge',
-  restyle: 'L-restyle',
   health: 'M-health',
 };

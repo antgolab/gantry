@@ -1,7 +1,7 @@
 # 横向命令 · M-health — 代码库健康巡检
 
 > **触发方式**：`docs/GO.md` + `健康检查 / health / 体检 / 技术债扫描 / 巡检`
-> 不属于任何 change，不写 `PROPOSAL.md` / `SPEC.md`（兼容期接受旧命名）。直接产出健康报告。
+> 不属于任何 change，不写 `PROPOSAL.md` / `SPEC.md`。直接产出健康报告。
 
 ## 角色
 
@@ -192,7 +192,7 @@ AI 用 grep + import 分析画一个简化 Mermaid 依赖图，标出循环依�
 
 ### 步骤 5 · 反哺到 Gantry 工件
 
-- 🔴 Critical → 自动开新 `PROPOSAL`（编号如 `health-fix-2026-q1`，兼容期接受旧 `CHANGE`），AI 进入 `0-change` 流程产 `PROPOSAL.md`
+- 🔴 Critical → 自动开新 `PROPOSAL`（编号如 `health-fix-2026-q1`），AI 进入 `0-change` 流程产 `PROPOSAL.md`
 - 🟡 Scheduled → 追加到 `.gantry/specs/CONTEXT.md` 的「技术债」段
 - 🟢 Monitored → 追加到 `.gantry/specs/LESSONS.md`（用 `观察` 类型 entry）
 - 综合分趋势 → 长期保留在 `.gantry/specs/health/` 目录，可画图

@@ -97,11 +97,11 @@ function loadChanges(specsRoot) {
 
 function inspectChange(dir, id) {
   const want = {
-    PROPOSAL: ['PROPOSAL.md', 'CHANGE.md'],
-    SPEC: ['SPEC.md', 'REQUIREMENT.md'],
+    PROPOSAL: ['PROPOSAL.md'],
+    SPEC: ['SPEC.md'],
     DESIGN: ['DESIGN.md'],
-    TASKS: ['TASKS.md', 'TASK.md'],
-    EXECUTION: ['EXECUTION.md', 'SUMMARY.md'],
+    TASKS: ['TASKS.md'],
+    EXECUTION: ['EXECUTION.md'],
     TEST: ['TEST.md'],
     REVIEW: ['REVIEW.md'],
   };
@@ -201,11 +201,11 @@ ${Object.entries(byAuthor)
 
 | 阶段产物 | 产出数 | 覆盖率 |
 |---|---|---|
-| PROPOSAL.md（兼容 CHANGE.md） | ${coverage.PROPOSAL} | ${pct(coverage.PROPOSAL, changeIds.length)}% |
-| SPEC.md（兼容 REQUIREMENT.md） | ${coverage.SPEC} | ${pct(coverage.SPEC, changeIds.length)}% |
+| PROPOSAL.md | ${coverage.PROPOSAL} | ${pct(coverage.PROPOSAL, changeIds.length)}% |
+| SPEC.md | ${coverage.SPEC} | ${pct(coverage.SPEC, changeIds.length)}% |
 | DESIGN.md | ${coverage.DESIGN} | ${pct(coverage.DESIGN, changeIds.length)}% |
-| TASKS.md（兼容 TASK.md） | ${coverage.TASKS} | ${pct(coverage.TASKS, changeIds.length)}% |
-| EXECUTION.md（兼容 SUMMARY.md） | ${coverage.EXECUTION} | ${pct(coverage.EXECUTION, changeIds.length)}% |
+| TASKS.md | ${coverage.TASKS} | ${pct(coverage.TASKS, changeIds.length)}% |
+| EXECUTION.md | ${coverage.EXECUTION} | ${pct(coverage.EXECUTION, changeIds.length)}% |
 | TEST.md | ${coverage.TEST} | ${pct(coverage.TEST, changeIds.length)}% |
 | REVIEW.md | ${coverage.REVIEW} | ${pct(coverage.REVIEW, changeIds.length)}% |
 

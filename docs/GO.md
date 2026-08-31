@@ -62,7 +62,7 @@ Gantry 的文件分两类，**加载策略不同**：
 
 - 用户已显式指定 light
 - 当前是恢复中断任务（直接走 R1.5 重启协议，不重新估）
-- 用户跑横向命令（L-restyle / M-health）— 这些有自己的预算
+- 用户跑横向命令（M-health）— 这些有自己的预算
 
 ### 真实成本影响因子（让估算更准）
 
@@ -81,7 +81,7 @@ Gantry 的文件分两类，**加载策略不同**：
 
 | 你的诉求 | 选 |
 |---|---|
-| 想要全套产物（CHANGE / REQUIREMENT / DESIGN / TASK / SUMMARY × N / TEST / REVIEW） | 完整 |
+| 想要全套产物（PROPOSAL / SPEC / DESIGN / TASKS / EXECUTION / TEST / REVIEW） | 完整 |
 | 明确的低风险局部修复 | light（`change → fast → integration`）|
 | 只想跑某一阶段（如只 review / 只 design / 只 体检）| 单点 · 见 README 决策表 |
 | 代码 < 50 行 · 一次性修补 · hackathon | 不走 Gantry，走 7 个原生 skill 更划算 |
@@ -121,7 +121,7 @@ Forge adapter: detected / not detected
 | `设计` + `<已有需求>` / `架构` / `design` | `phases/2-design.md` | 当 REQUIREMENT 已存在时；后端项目 |
 | `选技术` / `选栈` / `选框架` / `tech stack` / `用什么开发` / `迁移评估` | `phases/2-design.md` 步骤 0 | 只需技术栈选型时入口 |
 | `UI` / `视觉` / `美学` / `theme` / `design system` / `design tokens` | `phases/2a-ui-design.md` | 前端项目，用户可见 UI |
-| `换调性` / `改风格` / `换风格` / `redesign` / `restyle` / `重做视觉` / `换皮` | `phases/L-restyle.md` | 已有项目换视觉，保留功能 |
+| `换调性` / `改风格` / `换风格` / `redesign` / `restyle` / `重做视觉` / `换皮` | `phases/0-change.md` | 纯视觉改版走普通 change + `2a-ui-design`（视觉变+功能变拆两个 change）|
 | `健康检查` / `health` / `体检` / `技术债扫描` / `巡检` / `brooks-health` / `brooks-sweep` / `brooks-audit` / `brooks-debt` / `扫冗余` / `找死代码` / `找重复` / `清未用导出` / `清未用依赖` / `dedupe` / `dead code` | `phases/M-health.md` | 代码库周期性巡检 + 冗余扫描（步骤 2.5），不属任何 change |
 | `扫描代码` / `scan` / `intel` / `入场扫描` / `给项目体检` / `老项目首次访问` | `phases/I-intel-scan.md` | 公开入口：`/gantry-context scan`。生成 / 更新 `CONTEXT.md`，brownfield 项目首次使用必跑 |
 | `同步架构` / `沉淀架构` / `evolve` / `架构演进` / `同步 CONTEXT` / `整理沉淀` | `phases/A-evolve.md` | 公开入口：`/gantry-context evolve`。扫近期归档 change 的 DESIGN § 9，批量 review + patch CONTEXT.md / ARCHITECTURE.md（不属任何 change）|
@@ -285,8 +285,8 @@ read_file path="gantry/reference/tech-stacks.md" offset=380 limit=60
 ✅ 路由：2-design
 ✅ Change-ID：companion-platform
 ✅ 已加载：
-   - .gantry/specs/companion-platform/PROPOSAL.md（全读，52 行；兼容期接受 CHANGE.md）
-   - .gantry/specs/companion-platform/SPEC.md（全读，98 行；兼容期接受 REQUIREMENT.md）
+   - .gantry/specs/companion-platform/PROPOSAL.md（全读，52 行）
+   - .gantry/specs/companion-platform/SPEC.md（全读，98 行）
    - .gantry/specs/CONTEXT.md（全读，41 行）
    - gantry/reference/tech-stacks.md（仅查「适用矩阵」，line 380-405，提取出 5 张候选卡）
 ✅ 未加载：ui-aesthetics.md / test-pyramid.md / ui-anti-patterns.md（后面阶段才需）

@@ -1,6 +1,6 @@
 # Regression Demo · brooks-lint 两条路径输出一致性
 
-> **目的**：验证 4-dev / 5-test / 6-review 的「装了 brooks-lint」路径 A 与「内置回退」路径 B 都能产出 **4 要素 + R/T 编号** 的统一格式，让 Gantry 下游（fix 任务追加、TASK.md 编号延续）无缝接收。
+> **目的**：验证 4-dev / 5-test / 6-review 的「装了 brooks-lint」路径 A 与「内置回退」路径 B 都能产出 **4 要素 + R/T 编号** 的统一格式，让 Gantry 下游（fix 任务追加、TASKS.md 编号延续）无缝接收。
 >
 > **怎么用**：给任意一个 AI 跑 `## 任务` 段，拿它的输出对照 `## 验收清单`。两条路径都过清单 = 体系融合 OK。
 
@@ -127,7 +127,7 @@ AI 自己按 R1~R6 过 diff，发现的问题数会**少一些**（按 brooks-li
 
 ### 下游可接收
 
-- [ ] 🔴 项可以被复制到 `TASK.md` 末尾作为 `T-FIX-NN` 任务（路径 A 的 Remedy 段足够明确，AI 能直接执行）
+- [ ] 🔴 项可以被复制到 `TASKS.md` 末尾作为 `T-FIX-NN` 任务（路径 A 的 Remedy 段足够明确，AI 能直接执行）
 - [ ] 🟡 项可以被记入 SUMMARY.md「已知接受 + 理由」段
 - [ ] 🟢 项可以被记入 SUMMARY.md「已知小问题」段
 

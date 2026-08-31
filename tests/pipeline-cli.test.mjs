@@ -38,19 +38,6 @@ describe('pipeline CLI', () => {
     assert.match(state(), /模式\*\*: `full`/);
   });
 
-  it('首次命令把旧 standard 配置和状态一次性迁移为 full', () => {
-    const configPath = join(tmpDir, '.gantry/planning/config.json');
-    const statePath = join(tmpDir, '.gantry/planning/STATE.md');
-    const config = JSON.parse(readFileSync(configPath, 'utf-8'));
-    config.pipeline = 'standard';
-    writeFileSync(configPath, JSON.stringify(config, null, 2));
-    writeFileSync(statePath, state().replace('`full`', '`standard`'));
-
-    assert.match(run('status'), /pipeline 迁移.*→ full/);
-    assert.equal(JSON.parse(readFileSync(configPath, 'utf-8')).pipeline, 'full');
-    assert.match(state(), /模式\*\*: `full`/);
-  });
-
   it('只有显式参数才创建 light change', () => {
     const output = run('change --pipeline light --id fix-typo "fix README typo"');
     assert.match(output, /管线: light/);

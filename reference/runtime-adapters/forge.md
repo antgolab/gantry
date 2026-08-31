@@ -23,7 +23,7 @@ Forge 不应该成为 Gantry 的依赖。
 ```text
 gantry/GO.md
 gantry/phases/4-dev.md
-gantry/templates/TASK.md
+gantry/templates/TASKS.md
 .claude/hooks/forge-pretool-guard.ps1
 .claude/hooks/forge-session-audit.ps1
 ```

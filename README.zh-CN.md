@@ -299,7 +299,7 @@ gantry change --pipeline light "描述需求"
 | `phases/2-design.md` | 把需求变成技术设计 + ADR + 风险矩阵 | ✅ 完全独立 | 架构评审；技术选型对比；写设计文档 |
 | `phases/2a-ui-design.md` | UI 美学方向决策 + design tokens + 反 AI-slop 自检（仅前端项目）| ✅ 完全独立 | 任何前端项目开工前；redesign；从设计稿提取 design system |
 | `phases/3-task.md` | 把设计拆成可并行的原子任务 + verify 命令 | ✅ 完全独立 | 工作分解；冲刺规划；把大功能拆给团队 |
-| `phases/4-dev.md` | 在 fresh context 中执行**单个任务**（含 TDD + 提交 + 断点恢复 + UI anti-pattern 扫描）| ⚠️ 半独立 | 严格依赖 `TASKS.md`（兼容旧 `TASK.md`）中的 `verify` 字段 |
+| `phases/4-dev.md` | 每 wave 新建子 Agent，并在 wave 内逐任务刷新 context pack（含 TDD + 提交 + 断点恢复 + UI anti-pattern 扫描）| ⚠️ 半独立 | 严格依赖 `TASKS.md` 中的 `verify` 字段 |
 | `phases/5-test.md` | 从验收准则派生测试矩阵 + UAT 脚本 | ✅ 完全独立 | 给已有功能补测试；写 QA 脚本；做覆盖率审计 |
 | `phases/6-review.md` | 双 / 三轮审查（spec 合规 + 代码质量 + UI 视觉 + 跨模型 spot-check）| ✅ 完全独立 | 给一段 diff 让 AI 评审；merge 前自查；安全审计 |
 | `phases/7-integration.md` | UAT 引导 + 失败诊断 + LESSONS 提名 + 归档 | ⚠️ 半独立 | UAT 引导部分可单跑 |
@@ -315,7 +315,6 @@ gantry change --pipeline light "描述需求"
 | `/gantry-context evolve` | `phases/A-evolve.md` | 上下文增量同步：扫近期归档 change 的 SPEC 候选 patch + DESIGN §9，逐项 review 后 patch CONTEXT / ARCHITECTURE | 每月 / 每季批量同步；里程碑发布后凝固架构决策 |
 | `/gantry-knowledge curate` | `phases/C-curator.md` | 知识库维护 + 团队健康巡检：LESSONS 状态整理 / knowledge 过期检测 / CONVENTIONS 漂移检测 | 月度知识库维护；季度规则 retro；事故后知识沉淀 |
 | `/gantry-health` | `phases/M-health.md` | 代码库周期性巡检：6+6 维衰退诊断 / 技术债优先级 + 冗余扫描 | 月度 / 季度体检；里程碑前估价；接手陌生项目首周 |
-| 手动引用 `phases/L-restyle.md` | `phases/L-restyle.md` | 一键换调性：保留功能不变，只换视觉 | 产品视觉陈旧；品牌换新；做暗色版 / 高端版 |
 
 ### 制品模板（14 个）
 
@@ -489,7 +488,7 @@ gantry change "加功能"     # 之后可用 CLI 或 IDE skill 正常走流程
 
 1. **每阶段一次 fresh context**：阶段切换时清窗，靠制品文件传递状态，不靠对话堆叠
 2. **每个产出可被一个文件承载**：没有隐式状态，没有"AI 记得"
-3. **任务必带 verify 命令**：`TASKS.md`（兼容旧 `TASK.md`）每项含可执行验证命令，否则不允许进入执行
+3. **任务必带 verify 命令**：`TASKS.md` 每项含可执行验证命令，否则不允许进入执行
 4. **审查至少两轮**：spec 合规 + 代码质量；建议其中一轮跨模型
 5. **失败是输入，不是终点**：UAT 失败自动产 fix-plan，回到 `4-dev`，最多 3 轮
 6. **Artifact-first，非 Phase-gated**：阶段可跳过、可回炉，但制品不能缺席

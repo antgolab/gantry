@@ -22,10 +22,10 @@ gantry hook run before:review
 
 ## 输入
 
-- `@.gantry/specs/<change-id>/SPEC.md`（兼容期接受 `REQUIREMENT.md`）
+- `@.gantry/specs/<change-id>/SPEC.md`
 - `@.gantry/specs/<change-id>/DESIGN.md`（如有）
 - `@.gantry/specs/<change-id>/UI-DESIGN.md`（如是前端项目）
-- `@.gantry/specs/<change-id>/TASKS.md`（兼容期接受 `TASK.md`）
+- `@.gantry/specs/<change-id>/TASKS.md`
 - `@.gantry/specs/<change-id>/TEST.md`
 - 本次变更的 git diff（用户提供或 AI 通过工具获取）
 - `@gantry/reference/ui-anti-patterns.md`（如是前端项目）
@@ -215,7 +215,7 @@ AI 自己逐个维度诊断 diff，输出上面同样的 4 要素格式，发现
 
 ### 产出修复任务
 
-对所有 Critical 和决定要修的 Major，**追加到 `TASKS.md`** 末尾（兼容期接受 `TASK.md`），编号延续（如 `T-FIX-01`），并触发回到 `4-dev`。
+对所有 Critical 和决定要修的 Major，**追加到 `TASKS.md`** 末尾，编号延续（如 `T-FIX-01`），并触发回到 `4-dev`。
 
 ## 输出
 

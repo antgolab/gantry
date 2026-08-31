@@ -7,7 +7,7 @@
  * Usage: gantry <command> [options]
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, cpSync, readdirSync, rmSync, unlinkSync, renameSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, cpSync, readdirSync, rmSync, unlinkSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
@@ -16,7 +16,7 @@ import { spawnSync } from 'node:child_process';
 import { readState, writeState, updateState, transitionStage } from './lib/state.mjs';
 import { STAGES, getNextStage, checkGate, PHASE_FILES } from './lib/phases.mjs';
 import { PLANNING_DIR, SPECS_DIR, specsPath } from './lib/paths.mjs';
-import { parseTasks, getProgress } from './lib/tasks.mjs';
+import { parseTasks, getProgress, scheduleWaves } from './lib/tasks.mjs';
 import { runHook, listHooks } from './lib/hooks.mjs';
 import { writeContextPack, readContextPack, PACK_PATH } from './lib/context-pack.mjs';
 import { getPreferredArtifactName, resolveArtifactPath } from './lib/artifacts.mjs';
@@ -58,7 +58,7 @@ const SKILL_DIRS = [
 const [,, command, ...args] = process.argv;
 
 const commands = {
-  status, change, pipeline, auto, advance, context, done, hook, install, uninstall, archive, unarchive, metrics, version,
+  status, change, pipeline, auto, dispatch, advance, context, done, hook, install, uninstall, archive, unarchive, metrics, version,
   help,
 };
 
@@ -99,7 +99,6 @@ function status(args) {
     console.log('项目未初始化。运行 gantry install 开始。');
     return;
   }
-  migrateLegacyPipelines(projectRoot);
 
   const state = readState(projectRoot);
   const json = args.includes('--json');
@@ -135,7 +134,7 @@ function status(args) {
     console.log(`\n⏸  当前阶段 ${state.currentStage} 需人工确认：审阅本阶段产物后运行 /gantry-next 继续。`);
   }
 
-  // 任务进度（dev 阶段且有 TASKS.md/TASK.md 时显示）
+  // 任务进度（dev 阶段且有 TASKS.md 时显示）
   if (state.activeChange && state.currentStage === 'dev') {
     const taskFile = resolveArtifactPath(join(projectRoot, SPECS_DIR, state.activeChange), 'tasks')?.path;
     if (taskFile && existsSync(taskFile)) {
@@ -386,6 +385,109 @@ function auto(args) {
 }
 
 /**
+ * gantry dispatch
+ *   DEV 阶段为 autonomous orchestrator 机械选择一个 canonical wave。
+ *   这里只更新状态与 context pack；子 Agent 的创建由宿主运行时负责。
+ */
+function dispatch(args) {
+  const projectRoot = process.cwd();
+  ensureInit(projectRoot);
+
+  const state = readState(projectRoot);
+  const json = args.includes('--json');
+  if (state.currentStage !== 'dev') {
+    console.error(`dispatch 只允许在 dev 阶段运行（当前: ${state.currentStage}）`);
+    process.exit(1);
+  }
+  if (!state.activeChange) {
+    console.error('当前无活跃 change');
+    process.exit(1);
+  }
+
+  const taskResolved = resolveArtifactPath(join(projectRoot, SPECS_DIR, state.activeChange), 'tasks');
+  if (!taskResolved?.path || !existsSync(taskResolved.path)) {
+    console.error(`${getPreferredArtifactName('tasks')} 不存在`);
+    process.exit(1);
+  }
+
+  const tasks = parseTasks(taskResolved.path);
+  let schedule;
+  try {
+    // 用完整任务图计算 canonical waves，避免部分完成后 wave 编号漂移。
+    // wave 内由一个子 Agent 串行执行，因此保留已有 wave 分组。
+    schedule = scheduleWaves(tasks.map(task => ({ ...task, status: 'pending' })));
+  } catch (error) {
+    console.error(`任务无法调度: ${error.message}`);
+    process.exit(1);
+  }
+
+  const pendingIds = new Set(tasks.filter(task => task.status !== 'done').map(task => task.id));
+  const waveIndex = schedule.waves.findIndex(wave => wave.some(task => pendingIds.has(task.id)));
+
+  if (waveIndex === -1) {
+    updateState(projectRoot, {
+      autonomous: true,
+      currentWave: null,
+      currentTask: null,
+      retries: 0,
+      pauseReason: null,
+    });
+    writeContextPack(projectRoot, { stage: 'dev', taskId: null });
+    const result = { status: 'all_done' };
+    console.log(json ? JSON.stringify(result) : '✓ DEV 所有任务已完成');
+    return;
+  }
+
+  const waveId = waveIndex + 1;
+  const taskIds = schedule.waves[waveIndex]
+    .map(task => task.id)
+    .filter(taskId => pendingIds.has(taskId));
+  const sameWave = state.currentWave === waveId;
+  const retries = sameWave ? state.retries + 1 : 0;
+
+  if (retries > state.maxRetries) {
+    // 当前请求不再创建子 Agent，也不能计入已实际执行的 retry。
+    // 把剩余首个 task 装入 context pack，由主 Agent 在当前上下文接管。
+    const exhaustedRetries = state.maxRetries;
+    const firstTaskId = taskIds[0];
+    updateState(projectRoot, {
+      autonomous: true,
+      currentWave: waveId,
+      currentTask: firstTaskId,
+      activeAgent: 'executor',
+      retries: exhaustedRetries,
+      pauseReason: null,
+    });
+    writeContextPack(projectRoot, { stage: 'dev', taskId: firstTaskId });
+    const result = {
+      status: 'fallback_main',
+      waveId,
+      taskIds,
+      retries: exhaustedRetries,
+      maxRetries: state.maxRetries,
+    };
+    console.log(json
+      ? JSON.stringify(result)
+      : `↪ wave ${waveId} 重试已耗尽，降级由主 Agent 接管: ${taskIds.join(', ')}`);
+    return;
+  }
+
+  const firstTaskId = taskIds[0];
+  updateState(projectRoot, {
+    autonomous: true,
+    currentWave: waveId,
+    currentTask: firstTaskId,
+    activeAgent: 'executor',
+    retries,
+    pauseReason: null,
+  });
+  writeContextPack(projectRoot, { stage: 'dev', taskId: firstTaskId });
+
+  const result = { status: 'dispatched', waveId, taskIds };
+  console.log(json ? JSON.stringify(result) : `✓ 已调度 wave ${waveId}: ${taskIds.join(', ')}`);
+}
+
+/**
  * 单步推进。返回 { stop, reachedEnd, exitCode }
  */
 function nextOnce(projectRoot, { isSkip = false } = {}) {
@@ -533,6 +635,14 @@ function context(args) {
   const wantJson = overrides._json;
   delete overrides._json;
 
+  if (overrides.stage === 'dev' && overrides.taskId) {
+    updateState(projectRoot, {
+      currentTask: overrides.taskId,
+      activeAgent: 'executor',
+      pauseReason: null,
+    });
+  }
+
   const pack = writeContextPack(projectRoot, overrides);
   if (wantJson) {
     console.log(JSON.stringify(pack, null, 2));
@@ -588,6 +698,10 @@ function done(args) {
   }
   writeFileSync(taskFile, updated, 'utf-8');
 
+  if (state.currentTask === taskId) {
+    updateState(projectRoot, { currentTask: null, pauseReason: null });
+  }
+
   const executionPath = join(projectRoot, specsPath(changeId, getPreferredArtifactName('execution')));
   if (!existsSync(executionPath)) {
     const skeleton = `# EXECUTION: ${changeId}
@@ -596,24 +710,31 @@ function done(args) {
 
 ## Entries
 
-### ${taskId}
+${executionTaskEntry(taskId)}
+`;
+    writeFileSync(executionPath, skeleton, 'utf-8');
+  } else {
+    const existing = readFileSync(executionPath, 'utf-8');
+    if (!existing.includes(`### ${taskId}`)) {
+      writeFileSync(executionPath, `${existing.trimEnd()}\n\n${executionTaskEntry(taskId)}\n`, 'utf-8');
+    }
+  }
+
+  console.log(`✓ task ${taskId} 已标记完成`);
+  console.log(`  EXECUTION: ${specsPath(changeId, getPreferredArtifactName('execution'))}`);
+}
+
+function executionTaskEntry(taskId) {
+  return `### ${taskId}
 
 - status: done
 - completed_at: ${new Date().toISOString()}
 - summary: TODO
 - verify: TODO
 - evidence: TODO
-`;
-    writeFileSync(executionPath, skeleton, 'utf-8');
-  } else {
-    const existing = readFileSync(executionPath, 'utf-8');
-    if (!existing.includes(`### ${taskId}`)) {
-      writeFileSync(executionPath, `${existing.trimEnd()}\n\n### ${taskId}\n\n- status: done\n- completed_at: ${new Date().toISOString()}\n- summary: TODO\n- verify: TODO\n- evidence: TODO\n`, 'utf-8');
-    }
-  }
-
-  console.log(`✓ task ${taskId} 已标记完成`);
-  console.log(`  EXECUTION: ${specsPath(changeId, getPreferredArtifactName('execution'))}`);
+- problem: TODO (无则 none，不得凑数)
+- cause: TODO (problem 为 none 时写 none)
+- next: TODO (无则 none)`;
 }
 
 /**
@@ -723,10 +844,7 @@ function initializeProject(projectRoot, { pipeline, tool, primaryAgent }) {
   installCorePhases(projectRoot);
   installCoreAgents(projectRoot);
 
-  if (!created) {
-    migrateLegacyPipelines(projectRoot);
-    return { created };
-  }
+  if (!created) return { created };
 
   mkdirSync(planningDir, { recursive: true });
 
@@ -763,7 +881,6 @@ function initializeProject(projectRoot, { pipeline, tool, primaryAgent }) {
     currentWave: null,
     currentTask: null,
     activeAgent: null,
-    autonomous: false,
     stagesRun: 0,
     maxStages: config.autonomous.maxStagesPerRun,
     retries: 0,
@@ -1022,6 +1139,7 @@ function archive(args) {
     currentWave: null,
     currentTask: null,
     activeAgent: null,
+    autonomous: false,
     stagesRun: 0,
     retries: 0,
     pauseReason: null,
@@ -1123,6 +1241,9 @@ function help() {
   /gantry-next        在客户端中执行当前阶段产物并推进（不是 CLI 命令）
 
   auto                自动多阶段推进（步数取 config.autonomous.maxStagesPerRun），遇门禁失败 / 人工确认关卡 / 终态即停
+
+  dispatch            DEV 自动模式选择下一个 canonical wave，并刷新首个 task 的 context pack
+    --json              输出 { status, waveId?, taskIds? }
 
   status              查看当前状态、待确认关卡
     --json              输出 JSON 格式
@@ -1400,45 +1521,6 @@ function ensureInit(projectRoot) {
     console.error('项目未初始化。运行 gantry install 开始。');
     process.exit(1);
   }
-  migrateLegacyPipelines(projectRoot);
-}
-
-function migrateLegacyPipelines(projectRoot) {
-  const configPath = join(projectRoot, PLANNING_DIR, 'config.json');
-  const statePath = join(projectRoot, PLANNING_DIR, 'STATE.md');
-  let migrated = false;
-
-  if (existsSync(configPath)) {
-    try {
-      const config = JSON.parse(readFileSync(configPath, 'utf-8'));
-      if (config.pipeline === 'standard') {
-        config.pipeline = 'full';
-        writeFileAtomic(configPath, JSON.stringify(config, null, 2));
-        migrated = true;
-      }
-    } catch {
-      // readConfig 会按既有容错策略处理损坏配置。
-    }
-  }
-
-  if (existsSync(statePath)) {
-    const raw = readFileSync(statePath, 'utf-8');
-    const legacyStandard = /- \*\*模式\*\*:\s*`standard`/.test(raw);
-    const legacyLight = /- \*\*模式\*\*:\s*`light`/.test(raw);
-    const normalized = readState(projectRoot);
-    if (legacyStandard || (legacyLight && normalized.pipeline === 'full')) {
-      writeState(projectRoot, normalized);
-      migrated = true;
-    }
-  }
-
-  if (migrated) console.log('↑ pipeline 迁移: standard/旧 light → full');
-}
-
-function writeFileAtomic(path, content) {
-  const tempPath = `${path}.tmp-${process.pid}`;
-  writeFileSync(tempPath, content, 'utf-8');
-  renameSync(tempPath, path);
 }
 
 

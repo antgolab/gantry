@@ -209,7 +209,7 @@ dependency, security, concurrency, and destructive changes must use the default 
 | Mechanism | How it works | Failure mode addressed |
 |---|---|---|
 | Phase gates | The CLI refuses to advance when required artifacts are missing | Skipped process |
-| Context boundaries | Each task can run in a fresh context using Markdown artifacts as state | Long-context collapse |
+| Context boundaries | Each DEV wave gets a new subagent; every task refreshes its context pack and remains independently verified and committed | Long-context collapse |
 | Declared file scope | Tasks declare writable files and verify diffs before completion | Scope drift |
 | Risky-change protocol | Destructive or public-interface changes require reference checks | Hidden breakage |
 | Knowledge base | UAT failures and lessons are captured into reusable project knowledge | Knowledge loss |

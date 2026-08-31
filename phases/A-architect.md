@@ -1,7 +1,7 @@
 # 横向命令 · A-architect — 建立 / 重构项目级 ARCHITECTURE.md
 
 > **触发方式**：`/gantry-context architect` / `docs/GO.md` + `建立架构 / 架构梳理 / 重构架构 / architect / 重审 ADR`
-> 不属于任何 change，不写 `PROPOSAL.md` / `CHANGE.md`。直接产出 / 重构 `.gantry/specs/ARCHITECTURE.md`。
+> 不属于任何 change，不写 `PROPOSAL.md`。直接产出 / 重构 `.gantry/specs/ARCHITECTURE.md`。
 
 ## 角色
 

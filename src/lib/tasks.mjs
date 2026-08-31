@@ -1,6 +1,6 @@
 /**
  * tasks.mjs — TASKS.md XML 解析 + wave 分组 + 执行调度
- * 解析 gantry 的 TASKS.md 格式（兼容 TASK.md），支持 wave 并行执行
+ * 解析 gantry 的 TASKS.md 格式，支持 wave 并行执行
  */
 
 import { readFileSync, existsSync } from 'node:fs';
@@ -14,9 +14,9 @@ const DEFAULT_SCHEDULER_OPTIONS = {
 };
 
 /**
- * 解析 TASKS.md/TASK.md 中的任务列表
+ * 解析 TASKS.md 中的任务列表
  * 支持 XML 格式: <task id="T01" status="pending" parallel="true" depends="T00">
- * @param {string} taskMdPath - TASKS.md/TASK.md 文件路径
+ * @param {string} taskMdPath - TASKS.md 文件路径
  * @returns {Array} 任务数组
  */
 export function parseTasks(taskMdPath) {

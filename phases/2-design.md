@@ -22,8 +22,8 @@ gantry hook run before:design
 
 ## 输入
 
-- `@.gantry/specs/<change-id>/SPEC.md`（兼容期接受 `REQUIREMENT.md`）
-- `@.gantry/specs/<change-id>/PROPOSAL.md`（兼容期接受 `CHANGE.md`，含项目类型与调性信息）
+- `@.gantry/specs/<change-id>/SPEC.md`
+- `@.gantry/specs/<change-id>/PROPOSAL.md`（含项目类型与调性信息）
 - **项目上下文文档**（从 `STATE.md` 读 `ai_context_doc` 字段决定）：
   - 有 `ai_context_doc: <path>` → 读那个文档（如 `AGENTS.md` / `CLAUDE.md`）
   - 没 `ai_context_doc` 或 `ai_context_doc: CONTEXT.md` → 读 `@.gantry/specs/CONTEXT.md`
@@ -46,7 +46,7 @@ gantry hook run before:design
 
 **判定标准**：与 `phases/0-change.md` 步骤 0.4.1 完全一致（5 条命中条件 + 反例）。
 
-**已跑过 0-change 的不必重判**：如果 `<change-id>/PROPOSAL.md`（兼容期接受 `CHANGE.md`）末尾有「## 架构层影响声明」段或「## 走 A-architect 后回来」标记，说明 0.4 已处理，**直接跳到步骤 0**。
+**已跑过 0-change 的不必重判**：如果 `<change-id>/PROPOSAL.md` 末尾有「## 架构层影响声明」段或「## 走 A-architect 后回来」标记，说明 0.4 已处理，**直接跳到步骤 0**。
 
 **首次到这步的判定**：
 

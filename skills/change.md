@@ -8,7 +8,7 @@ requiresApproval: true
 
 # /gantry:change
 
-启动一个新的变更提案。将模糊想法转化为结构化的 `PROPOSAL.md`（兼容期接受 `CHANGE.md`）。
+启动一个新的变更提案。将模糊想法转化为结构化的 `PROPOSAL.md`。
 
 ## 执行协议
 
@@ -18,7 +18,7 @@ requiresApproval: true
 4. 读取 `.gantry/planning/context-pack.json`，按 `loadOrder` 加载 `.gantry/core/phases/0-change.md`
 5. 执行 `.gantry/core/phases/0-change.md` 完整流程
 6. **反问澄清（强制前置门）**：把"为什么/给谁/解决什么/何时算完"问到清楚，每轮最多 3 个问题，等用户回答。按 `@gantry/reference/grilling-discipline.md` 执行——每问**带推荐答案 + 理由**、能查代码的**先查代码库**再确认、按依赖顺序深度优先。**只要还有未澄清的点就继续问，不准提前产出 PROPOSAL。**
-7. 产出 `.gantry/specs/<change-id>/PROPOSAL.md`（兼容期接受 `CHANGE.md`）。**`## 待澄清问题` 段必须为 `无`**——带未勾选项的 PROPOSAL 会被 `/gantry-next` 门禁阻断。
+7. 产出 `.gantry/specs/<change-id>/PROPOSAL.md`。**`## 待澄清问题` 段必须为 `无`**——带未勾选项的 PROPOSAL 会被 `/gantry-next` 门禁阻断。
 8. 更新 STATE.md（stage=change, agent=planner）
 9. 停在人工确认关卡，等待用户审阅后继续
 

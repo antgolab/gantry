@@ -25,7 +25,7 @@ fresh_context: false
 
 ## 入场协议
 
-1. 读取 `SPEC.md` 确认需求范围（兼容期接受 `REQUIREMENT.md`）
+1. 读取 `SPEC.md` 确认需求范围
 2. 读取 CONTEXT.md 确认项目约束（如有）
 3. 如果是 brownfield：grep 既有架构模式，并与 `ARCHITECTURE.md` / `CONTEXT.md` 对齐
 

@@ -25,9 +25,9 @@ gantry hook run before:test
 
 ## 输入
 
-- `@.gantry/specs/<change-id>/SPEC.md`（AC + 非功能性需求；兼容期接受 `REQUIREMENT.md`）
+- `@.gantry/specs/<change-id>/SPEC.md`（AC + 非功能性需求）
 - `@.gantry/specs/<change-id>/DESIGN.md`（**必读 `## 0. 技术栈选定`**——5 轮各项的工具选择必须匹配栈：JS 用 Vitest / Playwright / k6，Python 用 pytest / locust，Go 用 testing / vegeta）
-- `@.gantry/specs/<change-id>/TASKS.md`（兼容期接受 `TASK.md`）
+- `@.gantry/specs/<change-id>/TASKS.md`
 - `@.gantry/specs/<change-id>/EXECUTION.md`
 - 各任务的 `*-SUMMARY.md`（仅高风险/例外任务存在）
 - 已存在的测试代码

@@ -60,7 +60,7 @@
 
 ### 通用预算（必须事先约定）
 
-写在 `REQUIREMENT.md` 的"非功能性需求"段：
+写在 `SPEC.md` 的"非功能性需求"段：
 
 ```yaml
 performance:

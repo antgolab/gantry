@@ -84,9 +84,9 @@
 
 ## R2 · 阶段门（Stage Gates）
 
-- **R2.1** 没有 `PROPOSAL.md` 不能进 `REQUIREMENT`（兼容期接受 `CHANGE.md`）。
-- **R2.2** 没有 `SPEC.md` 不能进 `DESIGN`（兼容期接受 `REQUIREMENT.md`）。
-- **R2.3** 没有 `TASKS.md` 不能写代码（兼容期接受 `TASK.md`）。每个任务必须含可执行的 `verify` 命令。
+- **R2.1** 没有 `PROPOSAL.md` 不能进 `REQUIREMENT`。
+- **R2.2** 没有 `SPEC.md` 不能进 `DESIGN`。
+- **R2.3** 没有 `TASKS.md` 不能写代码。每个任务必须含可执行的 `verify` 命令。
 - **R2.4** 任何任务在 `verify` 通过前不能勾选完成。
 - **R2.5** `REVIEW.md` 标为「严重」的项目，必须修复或显式标注「已知接受」并经人工确认，否则不能进 `INTEGRATION`。
 - **R2.6** `INTEGRATION` 阶段的 UAT 失败时，自动生成 fix-plan 回到 `DEV`，**最多重试 3 轮**，超限必须暂停。

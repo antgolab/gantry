@@ -1,4 +1,4 @@
-# 阶段 4 · DEV — 在 fresh context 中执行单个任务
+# 阶段 4 · DEV — 在 wave 子 Agent 中执行当前任务
 
 ## Context Pack 优先
 
@@ -12,7 +12,7 @@
 
 ## 角色
 
-你是 Dev。**只执行 TASKS.md 中的一个任务**（兼容期接受 `TASK.md`）。多任务请分多次调用此 prompt。
+你是 Dev。每次进入本 prompt **只执行当前 context pack 指定的一个任务**。Auto 可让同一个 wave 子 Agent 顺序执行多个任务，但每个任务开始前必须运行 `gantry context dev --task <id>` 并重新读取 pack；禁止一次加载或实现整个 wave。
 
 ## Pre-hook（可选）
 
@@ -25,7 +25,7 @@ gantry hook run before:dev
 
 ## 输入
 
-- `@.gantry/specs/<change-id>/TASKS.md`（兼容期接受 `TASK.md`）
+- `@.gantry/specs/<change-id>/TASKS.md`
 - 要执行的 task id（用户指定，例如 `T03`）
 - `@.gantry/specs/<change-id>/DESIGN.md`（**必读 `## 0. 技术栈选定` + `## 0.5 既有架构对齐`**——install / build / test 命令必须匹配选定的栈；触碰模块 / 禁动清单 / 沿用决策必须严格遵循）
 - **项目上下文文档**（从 `STATE.md` 读 `ai_context_doc` 字段决定）：
@@ -384,7 +384,7 @@ grep -rn "from.*old-helpers\|import.*old-helpers" src/ tests/
 
 ### 5. 提交前 diff 边界 verify（强制 · 对应 R6.5 / B3 老项目护栏）
 
-> 防"AI 顺手改了别的"。提交前必须验证 diff 范围 ⊆ `TASKS.md`/`TASK.md` 的 `write_files`。
+> 防"AI 顺手改了别的"。提交前必须验证 diff 范围 ⊆ `TASKS.md` 的 `write_files`。
 
 #### 5.1 跑 diff 检查
 
@@ -397,7 +397,7 @@ git status --short                  # 含 untracked
 
 #### 5.2 比对 `TASKS.md` 的 write_files
 
-把上面输出与 `TASKS.md` 当前 task 的 `<write_files>` 字段比对（兼容期接受 `TASK.md`）：
+把上面输出与 `TASKS.md` 当前 task 的 `<write_files>` 字段比对：
 
 ```
 ✅ TASKS 声明的 write_files：
@@ -459,9 +459,18 @@ git status --short                  # 含 untracked
 默认更新 `@gantry/templates/EXECUTION.md` 的对应 task 段；仅高风险/例外任务才使用 `@gantry/templates/SUMMARY.md`，填到 `.gantry/specs/<change-id>/<task-id>-SUMMARY.md`。
 内容：做了什么 / 改了哪些文件 / verify 输出 / **6 维自查输出**（步骤 4 的 brooks-review 或内置回退结果）/ 是否触发新 fix-plan。
 
+#### 6.1 Task 微复盘（完成前必填）
+
+在当前 task entry 填写 `problem / cause / next`：
+
+- `problem` 只记录可观察的踩坑、返工或阻力；没有则写 `none`，**不得凑数**。
+- `cause` 写问题根因；`problem` 为 `none` 时也写 `none`。
+- `next` 写下次具体改变什么以及如何验证；没有则写 `none`，不写“加强注意”“提高质量”这类空话。
+- `gantry done` 会先生成 TODO skeleton；填完真实内容或 `none` 后才能进入 TEST。
+
 ### 7. 标记完成
 
-回到 `TASKS.md`（兼容期接受 `TASK.md`），把对应任务的 `done` 字段标记为已完成（保留时间戳）。
+回到 `TASKS.md`，把对应任务的 `done` 字段标记为已完成（保留时间戳）。
 
 ## 中途断点（清窗触发与恢复，对应 R1.5 / R1.6 / R1.7）
 
@@ -512,7 +521,7 @@ PROGRESS 是临时文件，不归档。
 - **R5.2**：禁止用 mock 屏蔽真实失败
 - **R6.3**：禁止"应该可以工作"——必须实际跑过 verify
 - **R7.1**：发现需要扩大范围 → 停下来要求更新 `TASKS.md`
-- **R1.4**：每个任务一个 fresh context；不允许把多个任务塞进同一个会话
+- **R1.4**：每个 wave 新建一个子 Agent；wave 内一次只处理一个 context pack，逐任务 verify / commit / done，禁止跨 task 混写
 - **R1.5 / R1.6 / R1.7**：清窗、恢复、反重复严格按上面"中途断点"小节执行
 
 ## 自检
@@ -526,6 +535,7 @@ PROGRESS 是临时文件，不归档。
 - [ ] **破坏性变更走了 1.8 协议**（R4.6）：删代码 ≥ 5 行 / 改公共接口都 grep 了引用图、反问了用户、有回归测试覆盖。未命中跳则明示
 - [ ] **提交前 diff 边界 verify 跑了**（R6.5 / 5），结果贴入 `EXECUTION.md`；0 越界 ✅
 - [ ] `EXECUTION.md` 已更新，含「6 维自查」+「越界检查」段（有 schema 变更还要含「数据库迁移」、有破坏性变更还要含「破坏性变更」段）
+- [ ] 当前 task 微复盘已填写 `problem / cause / next`，EXECUTION 无残留 `TODO`；无经验时写 `none`，未凑数
 - [ ] 如属例外任务，`SUMMARY.md` 已补齐
 - [ ] `TASKS.md` 中的对应任务已勾选
 - [ ] 没有改动 `SPEC.md` / `DESIGN.md`

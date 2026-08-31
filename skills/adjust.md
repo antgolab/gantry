@@ -25,7 +25,7 @@ stage: current
 1. 读取 `.gantry/planning/STATE.md`，确认存在当前活跃 change。
 2. 创建或追加 `.gantry/specs/<change-id>/PATCH.md`：
    - 记录本次新发现。
-   - 根据描述推断必须更新项，例如 `SPEC.md`、`DESIGN.md`、`TASKS.md`、`DEV`、`TEST.md`（兼容期接受旧命名）。
+   - 根据描述推断必须更新项，例如 `SPEC.md`、`DESIGN.md`、`TASKS.md`、`DEV`、`TEST.md`。
    - 如影响上游阶段，更新 `.gantry/planning/STATE.md` 的当前阶段。
 3. 后续阶段完成对应工作后，在 `PATCH.md` 勾选检查项
 4. `/gantry:next` 会阻止未关闭的当前阶段 patch 项

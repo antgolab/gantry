@@ -38,7 +38,7 @@ requiresApproval: false
 输入：
 - 目标文件内容（`PROPOSAL.md` / PRD / 需求文档）
 - 如有：`.gantry/specs/CONTEXT.md`（术语表 + 已锁业务决策）
-- 如有：既有 `SPEC.md`（兼容期接受 `REQUIREMENT.md`）中与本次需求相关的业务约束
+- 如有：既有 `SPEC.md` 中与本次需求相关的业务约束
 
 只审查产品职责范围，不评审技术设计、架构方案、数据库 Schema、接口协议、测试方案或发布运维方案。
 
@@ -77,7 +77,7 @@ requiresApproval: false
 输入：
 - 当前 git diff
 - DESIGN.md 相关段落
-- `SPEC.md`（兼容期接受 `REQUIREMENT.md`）相关 AC
+- `SPEC.md` 相关 AC
 - 当前方案的一句话决策理由
 
 审查维度：

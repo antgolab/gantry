@@ -52,9 +52,9 @@
 
 ## R2 · 阶段门
 
-- **R2.1** 没 `PROPOSAL.md` 不能进 `REQUIREMENT`（兼容期接受 `CHANGE.md`）
-- **R2.2** 没 `SPEC.md` 不能进 `DESIGN`（兼容期接受 `REQUIREMENT.md`）
-- **R2.3** 没 `TASKS.md` 不能写代码（兼容期接受 `TASK.md`）；每任务必含可执行 `verify`
+- **R2.1** 没 `PROPOSAL.md` 不能进 `REQUIREMENT`
+- **R2.2** 没 `SPEC.md` 不能进 `DESIGN`
+- **R2.3** 没 `TASKS.md` 不能写代码；每任务必含可执行 `verify`
 - **R2.4** verify 未通过禁止标记完成
 
 ## R4 · 提交与产物
@@ -76,7 +76,7 @@
 
 ## R7 · 范围控制
 
-- **R7.1** 严禁悄悄扩大范围；超出 `TASKS.md`（兼容期接受 `TASK.md`）必须先停下
+- **R7.1** 严禁悄悄扩大范围；超出 `TASKS.md`必须先停下
 - **R7.2** 同次提交不允许混入多个无关任务
 
 ---

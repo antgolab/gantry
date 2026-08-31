@@ -147,7 +147,7 @@ gantry hook run before:change
    - 是否触及架构（需要更新 `DESIGN.md` / 新增 ADR）？
    - 是否影响现有 AC？
 3. **范围排除**：明确写出**这次不做什么**。
-4. **生成 PROPOSAL.md**：使用 `@gantry/templates/PROPOSAL.md` 模板，填好后保存到 `.gantry/specs/<change-id>/PROPOSAL.md`（兼容期如需可保留旧名映射）。
+4. **生成 PROPOSAL.md**：使用 `@gantry/templates/PROPOSAL.md` 模板，填好后保存到 `.gantry/specs/<change-id>/PROPOSAL.md`。
    - **硬约束**：`## 待澄清问题` 段必须为 `无`。若仍有未决问题，说明步骤 1 没走完——**回到步骤 1 继续反问，不要先生成文件**。带未勾选项（`- [ ]`）的 PROPOSAL 会被 `/gantry-next` 阶段门禁阻断。
 5. **Pipeline 复核**：
    - 默认 `full`：`REQUIREMENT → DESIGN → [UI-DESIGN] → TASK → DEV → TEST → REVIEW → INTEGRATION`

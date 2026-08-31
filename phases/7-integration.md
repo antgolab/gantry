@@ -22,7 +22,7 @@ gantry hook run before:integration
 
 ## 输入
 
-- `@.gantry/specs/<change-id>/SPEC.md`（兼容期接受 `REQUIREMENT.md`；含「关键用户路径」成功判据）
+- `@.gantry/specs/<change-id>/SPEC.md`（含「关键用户路径」成功判据）
 - `@.gantry/specs/<change-id>/DESIGN.md`（跨服务时必读 `§2.1 路径服务序列`——断点归属的事实源）
 - `@.gantry/specs/<change-id>/TEST.md`（含 UAT 脚本）
 - `@.gantry/specs/<change-id>/REVIEW.md`
@@ -93,13 +93,34 @@ gantry hook run before:integration
 任何失败（自动测试或 UAT）：
 
 1. 切到「Diagnose 子角色」，定位 root cause（不是症状）
-2. 产出 fix-plan：追加到 `TASKS.md`（兼容期接受 `TASK.md`），编号 `T-FIX-XX`，含完整 verify
+2. 产出 fix-plan：追加到 `TASKS.md`，编号 `T-FIX-XX`，含完整 verify
 3. 回到 `phases/4-dev.md` 执行修复
 4. 修完回到本步重跑
 
 **R2.6**：自动重试 ≤ 3 轮。第 3 轮仍失败必须停下来要求人工决策。
 
-### 5. 提名 LESSONS（在 ARCHIVE 之前必跑，对应 R1.8）
+### 5. 聚合反思（在 ARCHIVE 之前必跑）
+
+扫描本次 change 的 `EXECUTION.md`、所有例外 `*-SUMMARY.md` 的决策与偏离，以及任何遗留 `*-PROGRESS.md` 的已排除方案。只从已有证据归纳，不补写没有发生的过程。
+
+在 `EXECUTION.md` 末尾维护下面的唯一聚合段。若 `## Retrospective` 已存在，更新原段，**不得重复追加**：
+
+```markdown
+## Retrospective
+
+### Keep
+<被证据证明有效、下次继续采用的做法；无则 none>
+
+### Problem
+<返工、等待、误判、失败及根因；无则 none>
+
+### Next
+<下次具体改变什么 + 如何验证；无则 none>
+```
+
+Keep / Problem / Next 没有有效内容时明确记录 `none`，不得凑数。只基于下面的提名条件和现有证据决定是否把经验写入 LESSONS，不维护复发次数或晋升状态机。
+
+### 6. 提名与更新 LESSONS（在 ARCHIVE 之前必跑，对应 R1.8）
 
 扫本次 change 的 `EXECUTION.md`、所有例外 `*-SUMMARY.md` 的「决策与偏离」段，以及任何遗留的 `*-PROGRESS.md`「已排除方案」段。
 按 `@gantry/templates/LESSONS.md` 末尾的「提名条件」筛选：
@@ -109,18 +130,18 @@ gantry hook run before:integration
 - 6 个月内有合理概率被再次尝试 → 提名
 - 否则不入库（避免污染）
 
-把入选的失败按 LESSONS.md 的条目格式追加到 `.gantry/specs/LESSONS.md`，编号续上 `L-NNN`，必须填齐：标签 / 关键词 / 适用栈 / 状态。
+把入选的失败或成功经验按 LESSONS.md 的条目格式追加到 `.gantry/specs/LESSONS.md`，编号续上 `L-NNN`，必须填齐关键词、状态、问题场景、原因、当前推荐做法和验证记录。
+若本次 EXECUTION 引用了现有 `L-NNN`，只根据真实证据追加「验证记录」或更新推荐做法；没有采用差异与验证结果时不修改条目。
 **复核**：扫一眼现有 active 条目，看是否有本次 change 让它们 `superseded` 或 `deprecated`，标注上。
 
-### 6. 收尾（CLOSE）— 归档由 archive 命令执行
+### 7. 收尾（CLOSE）— 归档由 archive 命令执行
 
 全部通过后：
 
 - 在 `.gantry/specs/CHANGELOG.md` 追加一行（日期 / change-id / 一句话摘要 / PR 链接 / 新增 LESSONS 条目编号）
-- 运行 `gantry archive` 收尾（归档到 `_archive` 并重置 STATE 到 idle）
-- **`.gantry/specs/<change-id>/` 保留在原位**；`_archive` 保存一份归档副本
+- 运行 `gantry archive` 收尾（把 `.gantry/specs/<change-id>/` 整体**移动**到 `_archive/<change-id>/`，并重置 STATE 到 idle）；`unarchive <id>` 可从归档恢复
 
-#### 6.0 收尾与归档
+#### 7.0 收尾与归档
 
 `gantry archive` 默认复制归档，不删除源目录。
 
@@ -134,7 +155,7 @@ gantry hook run before:integration
    保留历史归档：gantry archive --keep-history
 ```
 
-#### 6.1 项目级架构文档同步（不在本步做 · 走 A-evolve）
+#### 7.1 项目级架构文档同步（不在本步做 · 走 A-evolve）
 
 本 change 的 `DESIGN.md § 9 架构沉淀建议` **不在收尾时立即合并到 `CONTEXT.md`**。原因：单个 change 视角窄，容易把临时决策错升项目级。
 
@@ -153,10 +174,10 @@ gantry hook run before:integration
   N = `grep -c '^### 9\\.' DESIGN.md`，如果整段是"无架构层面沉淀建议"则 N=0，不必提示
 - **禁止**在本步直接修改 `.gantry/specs/CONTEXT.md`——它的更新统一走 `/gantry-context evolve` 或 `/gantry-context scan`
 
-### 7. 出 PR（可选）
+### 8. 出 PR（可选）
 
 如果用户用 git 流水线：
-- 检查 PR 标题/正文已自动从 `PROPOSAL.md` + `EXECUTION.md` 拼装（兼容期接受旧命名）
+- 检查 PR 标题/正文已自动从 `PROPOSAL.md` + `EXECUTION.md` 拼装
 - 列出涉及的文件、AC 覆盖、UAT 结论
 - 把 `.gantry/specs/` 内的文件归类到 PR 描述（不污染代码 diff）
 
@@ -180,8 +201,9 @@ gantry hook run before:integration
 - [ ] 跨服务:每条 Journey 端到端跑过 + 断点已判定归属 + 全部通过或已回退修复重跑通过（单服务已写明跳过）
 - [ ] 每条 UAT 都有人工通过/失败标注
 - [ ] 失败的项目都已经过最多 3 轮自动重试，超限的已暂停
+- [ ] `EXECUTION.md` 只有一个 `## Retrospective`，Keep / Problem / Next 均有证据或明确为 none
 - [ ] CHANGELOG 已追加
-- [ ] `archive` 后源 `.gantry/specs/<change-id>/` 仍保留；默认存在 `_archive/<change-id>/` 副本
+- [ ] `archive` 后源 `.gantry/specs/<change-id>/` 已移动到 `_archive/<change-id>/`，源目录不再存在；`unarchive <id>` 可恢复
 
 ## Post-hook（可选）
 
