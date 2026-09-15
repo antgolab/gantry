@@ -26,8 +26,8 @@ function teardown() {
 }
 
 describe('getNextStage · PIPELINES 跳过', () => {
-  it('只保留 full 和 light 两条管线', () => {
-    assert.deepEqual(Object.keys(PIPELINES).sort(), ['full', 'light']);
+  it('保留 full/light/micro 三条管线(ADR-001)', () => {
+    assert.deepEqual(Object.keys(PIPELINES).sort(), ['full', 'light', 'micro']);
   });
 
   it('light pipeline: change → fast → integration', () => {

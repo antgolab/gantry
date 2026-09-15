@@ -1,7 +1,8 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const CLI = join(import.meta.dirname, '..', 'src', 'cli.mjs');
@@ -22,8 +23,9 @@ function writeArtifact(changeId, name, content) {
 }
 
 beforeEach(() => {
-  tmpDir = join(import.meta.dirname, `.tmp-pipeline-cli-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-  mkdirSync(tmpDir, { recursive: true });
+  // tmpDir 必须在 git 仓库外 (os tmpdir)，否则 detectFsSnapshot 会读到本仓库脏 diff，
+  // 导致「纯 README typo」被误判为 cross-module-change → full，与 AC-1 自动分档相矛盾。
+  tmpDir = mkdtempSync(join(tmpdir(), 'pipeline-cli-'));
   run('install --tool codex');
 });
 
@@ -32,10 +34,10 @@ afterEach(() => {
 });
 
 describe('pipeline CLI', () => {
-  it('change 默认 full，不再根据 fix/bug 自动降级', () => {
+  it('change 无 --tier 时按判据引擎自动分档：纯 README typo → micro', () => {
     const output = run('change --id fix-typo "fix README typo"');
-    assert.match(output, /管线: full/);
-    assert.match(state(), /模式\*\*: `full`/);
+    assert.match(output, /管线: micro/);
+    assert.match(output, /code: tier_decided/);
   });
 
   it('首次命令把旧 standard 配置和状态一次性迁移为 full', () => {
@@ -57,13 +59,14 @@ describe('pipeline CLI', () => {
     assert.match(state(), /模式\*\*: `light`/);
   });
 
-  it('显式 light 命中高风险时拒绝且不创建 change', () => {
-    assert.throws(
-      () => run('change --pipeline light --id risky "新增数据库 migration"'),
-      /light 不允许高风险变更/,
-    );
-    assert.match(state(), /活跃 Change\*\*: `无`/);
-    assert.equal(existsSync(join(tmpDir, '.gantry/specs/risky')), false);
+  it('--tier light 覆写硬红线：落 light 并记录 override (auto-detected: full)', () => {
+    const output = run('change --tier light --id risky "新增数据库 migration"');
+    assert.match(output, /管线: light/);
+    assert.match(output, /code: tier_override_recorded/);
+    assert.match(state(), /模式\*\*: `light`/);
+    const exec = readFileSync(join(tmpDir, '.gantry/specs/risky/EXECUTION.md'), 'utf-8');
+    assert.match(exec, /auto: full/);
+    assert.match(exec, /tier-override: user requested light \(auto-detected: full\)/);
   });
 
   it('pipeline full 只允许活跃 change 从 light 单向提升', () => {
