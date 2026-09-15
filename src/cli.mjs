@@ -1,5 +1,11 @@
 #!/usr/bin/env node
 
+const [nodeMajor] = process.versions.node.split('.').map(Number);
+if (nodeMajor < 18) {
+  console.error('gantry requires Node.js >= 18 (current: ' + process.versions.node + ')');
+  process.exit(2);
+}
+
 /**
  * gantry CLI — 阶段驱动编排器
  * 零依赖，纯 Node.js
@@ -21,7 +27,14 @@ import { runHook, listHooks } from './lib/hooks.mjs';
 import { writeContextPack, readContextPack, PACK_PATH } from './lib/context-pack.mjs';
 import { getPreferredArtifactName, resolveArtifactPath } from './lib/artifacts.mjs';
 import { readConfig } from './lib/config.mjs';
-import { assessLightEligibility, normalizePipeline, proposalHasUiImpact } from './lib/pipeline-policy.mjs';
+import { normalizePipeline, proposalHasUiImpact } from './lib/pipeline-policy.mjs';
+import { decideTier } from './lib/tier-router.mjs';
+import { knowledge } from './commands/knowledge.mjs';
+import { getEvents as frictionGetEvents, getScore as frictionGetScore } from './lib/friction.mjs';
+import { proposeLearning } from './lib/curator.mjs';
+import { write as writeLearning } from './lib/learnings/index.mjs';
+import { validateLearningsConfig } from './lib/config-schema.mjs';
+import { createInterface } from 'node:readline/promises';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -59,14 +72,14 @@ const [,, command, ...args] = process.argv;
 
 const commands = {
   status, change, pipeline, auto, advance, context, done, hook, install, uninstall, archive, unarchive, metrics, version,
-  help,
+  help, knowledge,
 };
 
 // IDE-only skills：AI 驱动的阶段 / 动作命令，只在 IDE 中以 /gantry-<name> 执行，
 // 不是 CLI 子命令(CLI 只做机械操作)。用户误在 CLI 里敲这些时，给出精准引导，
 // 而非笼统的「未知命令」——避免把人引向不存在的 gantry help 死路。
 const IDE_ONLY_SKILLS = new Set([
-  'next', 'exec', 'adjust', 'resume', 'review', 'health', 'knowledge', 'debug', 'fast',
+  'next', 'exec', 'adjust', 'resume', 'review', 'health', 'debug', 'fast',
 ]);
 
 if (!command || command === '--help' || command === '-h') {
@@ -206,34 +219,88 @@ function formatContextSignal(contextUsage = {}) {
 
 /**
  * gantry change — 启动新变更
+ *
+ * pipeline 决策由 tier-router.decideTier 自动判定 (micro|light|full)。
+ * --tier <micro|light|full> 覆写自动判定 (tierOverride 优先)；
+ * --pipeline 作为 deprecated alias，与 --tier 同时给出时 --tier 优先。
+ * --dry-run 只打印决策 JSON (含 tier/hits/score)，不落 STATE、不建目录。
+ *
+ * opts.fsSnapshot 供测试注入，覆盖 git 探测。
  */
-function change(args) {
+function change(args, opts = {}) {
   const projectRoot = process.cwd();
-  ensureInit(projectRoot);
+  const isDryRun = args.includes('--dry-run');
+
+  if (!isDryRun) {
+    ensureInit(projectRoot);
+  }
 
   // 提取描述：跳过 --flag 及其值
-  const description = stripFlags(args, ['--pipeline', '--tool', '--id']).join(' ');
+  const description = stripFlags(args, ['--pipeline', '--tool', '--id', '--tier']).join(' ');
   if (!description) {
     console.error('用法: gantry change "<变更描述>"');
     process.exit(1);
   }
 
-  const state = readState(projectRoot);
-  if (state.activeChange) {
-    console.error(`已有活跃变更: ${state.activeChange}`);
-    console.error('请先完成或归档当前变更 (gantry archive)');
-    process.exit(1);
-  }
-
-  const flagPipeline = getFlag(args, '--pipeline');
-  const pipeline = normalizePipeline(flagPipeline || 'full');
-  if (pipeline === 'light') {
-    const eligibility = assessLightEligibility(description);
-    if (!eligibility.eligible) {
-      console.error(`light 不允许高风险变更: ${eligibility.risks.join(', ')}`);
-      console.error('请改用: gantry change --pipeline full "<描述>"');
+  if (!isDryRun) {
+    const state = readState(projectRoot);
+    if (state.activeChange) {
+      console.error(`已有活跃变更: ${state.activeChange}`);
+      console.error('请先完成或归档当前变更 (gantry archive)');
       process.exit(1);
     }
+  }
+
+  // tier 覆写解析：--tier 优先于 deprecated --pipeline
+  const rawTier = getFlag(args, '--tier');
+  const rawPipeline = getFlag(args, '--pipeline');
+  let tierOverride = null;
+  if (rawTier != null) {
+    tierOverride = normalizeTierValue(rawTier);
+    if (!tierOverride) {
+      console.error(`无效的 --tier: ${rawTier}（可选 micro|light|full）`);
+      process.exit(1);
+    }
+    if (rawPipeline != null) {
+      console.error(`⚠ --tier 与 --pipeline 同时给出，--tier 优先，忽略 --pipeline ${rawPipeline}`);
+    }
+  } else if (rawPipeline != null) {
+    tierOverride = normalizeTierValue(rawPipeline);
+    if (!tierOverride) {
+      console.error(`无效的 --pipeline: ${rawPipeline}（可选 light|full，建议改用 --tier）`);
+      process.exit(1);
+    }
+  }
+
+  // 自动判定 (纯函数) + 覆写
+  const fsSnapshot = opts.fsSnapshot ?? detectFsSnapshot(projectRoot);
+  const decision = decideTier(description, fsSnapshot, {});
+  const effectiveTier = tierOverride ?? decision.tier;
+
+  const tierDecisionLines = [
+    '## tier-decision',
+    `auto: ${decision.tier}`,
+    `hits: ${JSON.stringify(decision.hits)}`,
+    `score: ${decision.score}`,
+  ];
+  if (tierOverride) {
+    tierDecisionLines.push(`tier-override: user requested ${tierOverride} (auto-detected: ${decision.tier})`);
+  }
+
+  if (isDryRun) {
+    const result = {
+      tier: effectiveTier,
+      pipeline: effectiveTier,
+      hits: decision.hits,
+      score: decision.score,
+      code: 'tier_dry_run',
+    };
+    if (tierOverride) {
+      result.tierOverride = true;
+      result['tier-override'] = `user requested ${tierOverride} (auto-detected: ${decision.tier})`;
+    }
+    console.log(JSON.stringify(result));
+    return;
   }
 
   // 生成 change-id
@@ -241,9 +308,16 @@ function change(args) {
   const specsDir = join(projectRoot, SPECS_DIR, changeId);
   mkdirSync(specsDir, { recursive: true });
 
+  // 写 tier-decision 段到 EXECUTION.md
+  writeFileSync(
+    join(specsDir, getPreferredArtifactName('execution')),
+    `# EXECUTION: ${changeId}\n\n${tierDecisionLines.join('\n')}\n`,
+    'utf-8',
+  );
+
   // 更新状态
   updateState(projectRoot, {
-    pipeline,
+    pipeline: effectiveTier,
     activeChange: changeId,
     currentStage: 'change',
     activeAgent: 'planner',
@@ -252,8 +326,10 @@ function change(args) {
   // 写一次 pack,让 skill 立刻有可消费的上下文
   try { writeContextPack(projectRoot); } catch { /* non-blocking */ }
 
+  const code = tierOverride ? 'tier_override_recorded' : 'tier_decided';
   console.log(`✓ 变更已创建: ${changeId}`);
-  console.log(`  管线: ${pipeline}`);
+  console.log(`  管线: ${effectiveTier}`);
+  console.log(`  code: ${code}`);
   console.log(`  工件目录: ${specsPath(changeId)}/`);
   console.log(`  当前阶段: change (变更提案)`);
   console.log(`  上下文: ${PACK_PATH}`);
@@ -979,10 +1055,10 @@ function archiveChange(projectRoot, changeId, { keepHistory = false, quiet = fal
 /**
  * gantry archive — 收尾并归档当前 change
  */
-function archive(args) {
+async function archive(args, opts = {}) {
   const positional = args.filter(a => !a.startsWith('--'));
   if (positional.length > 0) {
-    console.error('用法: gantry archive [--force] [--keep-history]');
+    console.error('用法: gantry archive [--force] [--keep-history] [--skip-learning]');
     process.exit(1);
   }
 
@@ -1004,6 +1080,18 @@ function archive(args) {
   }
 
   const finishedChange = state.activeChange;
+  const skipLearning = args.includes('--skip-learning');
+
+  // === friction 汇总 hook (T15) ===
+  // 采集必须在 archiveChange 移动 change 目录之前完成,否则 getEvents 读不到事件。
+  let frictionEvents = null;
+  if (!skipLearning) {
+    const learningsCfg = validateLearningsConfig(readConfig(projectRoot).learnings).merged;
+    const { threshold, weights } = learningsCfg.friction;
+    if (frictionGetScore(finishedChange, weights) >= threshold) {
+      frictionEvents = frictionGetEvents(finishedChange);
+    }
+  }
 
   let archiveResult;
   try {
@@ -1029,10 +1117,68 @@ function archive(args) {
     contextUsage: { tokens: null, windowPercent: null },
   });
 
+  if (frictionEvents) {
+    await summarizeFrictionLearning(projectRoot, finishedChange, frictionEvents, opts);
+  }
+
   console.log(`✓ 变更已收尾: ${finishedChange}`);
   console.log(`  状态已重置为 idle`);
   console.log(`  已归档到 ${specsPath('_archive', archiveResult.archiveName)}/`);
   console.log(`  恢复: gantry unarchive ${finishedChange}`);
+}
+
+/**
+ * friction 汇总 → 候选 learning → y/n/edit 决策 → 落盘 team/。
+ * autoConfirmChoice 由 opts 或 GANTRY_AUTO_CONFIRM 环境变量注入(测试用),跳过 stdin 交互。
+ */
+async function summarizeFrictionLearning(projectRoot, changeId, events, opts) {
+  const candidate = proposeLearning(changeId, events, {});
+  const auto = opts.autoConfirmChoice ?? process.env.GANTRY_AUTO_CONFIRM;
+  const choice = ['y', 'n', 'edit'].includes(auto) ? auto : await promptYNE(candidate);
+
+  if (choice === 'y') {
+    await writeLearning('team', candidate);
+    console.log(`  学习已写入 .gantry/learnings/team/${candidate.id}.md`);
+  } else if (choice === 'edit') {
+    await editAndWriteLearning(projectRoot, candidate);
+    console.log(`  学习已写入 .gantry/learnings/team/${candidate.id}.md`);
+  } else {
+    console.log(`  已跳过 friction 学习`);
+  }
+}
+
+async function promptYNE(candidate) {
+  console.log('\n检测到摩擦事件,生成 learning 候选:');
+  console.log(`  id: ${candidate.id}`);
+  console.log(`  标签: ${candidate.tags.join(', ')}`);
+  console.log(candidate.body);
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    for (;;) {
+      const answer = (await rl.question('\n采纳为 team learning? [y/n/edit] ')).trim().toLowerCase();
+      if (answer === 'y' || answer === 'n' || answer === 'edit') return answer;
+      console.log('请输入 y / n / edit');
+    }
+  } finally {
+    rl.close();
+  }
+}
+
+async function editAndWriteLearning(projectRoot, candidate) {
+  const editor = process.env.EDITOR || process.env.VISUAL || 'vi';
+  const learningsDir = join(projectRoot, '.gantry', 'learnings');
+  mkdirSync(learningsDir, { recursive: true });
+  const draftPath = join(learningsDir, `.draft-${candidate.id}-${process.pid}.md`);
+  writeFileSync(draftPath, candidate.body, 'utf-8');
+  try {
+    const r = spawnSync(editor, [draftPath], { stdio: 'inherit' });
+    if (r.error) throw r.error;
+    if (r.status !== 0) throw new Error(`编辑器退出码 ${r.status}`);
+    const editedBody = readFileSync(draftPath, 'utf-8');
+    await writeLearning('team', { ...candidate, body: editedBody });
+  } finally {
+    if (existsSync(draftPath)) unlinkSync(draftPath);
+  }
 }
 
 /**
@@ -1130,6 +1276,7 @@ function help() {
   archive             收尾并归档当前 change（仅 integration 阶段可用）
     --force             跳过阶段检查强制收尾
     --keep-history      保留旧归档，新归档加版本后缀
+    --skip-learning     跳过 friction 汇总 learning 生成
 
 安装 / 分发:
   install -g          安装 gantry 到各工具全局目录（不初始化当前项目）
@@ -1470,6 +1617,54 @@ function stripFlags(args, flagsWithValue = []) {
 
 
 
+
+/**
+ * 归一化 tier 覆写值 (micro|light|full)，非法值返回 null。
+ */
+function normalizeTierValue(value) {
+  if (value === 'micro' || value === 'light' || value === 'full') return value;
+  return null;
+}
+
+/**
+ * 构造 fsSnapshot 供 decideTier 判定：
+ *   modifiedFiles      git diff --name-only HEAD
+ *   newFiles           git ls-files --others --exclude-standard
+ *   pkgJsonDepsDelta   git diff HEAD -- package.json 是否改动 dependencies/devDependencies 段（简化为 boolean → ['dependencies']）
+ * 非 git 仓库或 git 命令失败 → 空快照（不抛异常）。
+ */
+function detectFsSnapshot(projectRoot) {
+  const snapshot = { modifiedFiles: [], newFiles: [], pkgJsonDepsDelta: [] };
+
+  if (!isGitRepo(projectRoot)) return snapshot;
+
+  snapshot.modifiedFiles = gitLines(projectRoot, ['diff', '--name-only', 'HEAD']);
+  snapshot.newFiles = gitLines(projectRoot, ['ls-files', '--others', '--exclude-standard']);
+
+  const pkgDiff = gitText(projectRoot, ['diff', 'HEAD', '--', 'package.json']);
+  if (/["']?(dependencies|devDependencies)["']?\s*:/.test(pkgDiff)) {
+    snapshot.pkgJsonDepsDelta = ['dependencies'];
+  }
+
+  return snapshot;
+}
+
+function isGitRepo(projectRoot) {
+  const r = spawnSync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: projectRoot, encoding: 'utf-8' });
+  return r.status === 0;
+}
+
+function gitLines(projectRoot, args) {
+  const r = spawnSync('git', args, { cwd: projectRoot, encoding: 'utf-8' });
+  if (r.status !== 0) return [];
+  return String(r.stdout || '').split('\n').map((s) => s.trim()).filter(Boolean);
+}
+
+function gitText(projectRoot, args) {
+  const r = spawnSync('git', args, { cwd: projectRoot, encoding: 'utf-8' });
+  if (r.status !== 0) return '';
+  return String(r.stdout || '');
+}
 
 function generateChangeId(description, projectRoot, explicitId = null) {
   const source = explicitId || extractChangeSubject(description);

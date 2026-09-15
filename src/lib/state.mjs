@@ -7,7 +7,6 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from '
 import { join } from 'node:path';
 import { PLANNING_DIR } from './paths.mjs';
 import { getAgentForStage } from './agents.mjs';
-import { normalizePipeline } from './pipeline-policy.mjs';
 
 const STATE_FILE = 'STATE.md';
 
@@ -28,11 +27,70 @@ function defaultState() {
     retries: 0,
     maxRetries: 3,
     pauseReason: null,
+    verifyFailCount: 0,
     contextUsage: {
       tokens: null,
       windowPercent: null,
     },
   };
+}
+
+/**
+ * 归一化 pipeline 三值枚举 { micro, light, full }。
+ *
+ * - 合法值原样返回；
+ * - 其他值 (undefined / 'standard' / 未知) 默认 'full'；
+ * - 禁止 micro → full 回退 (ADR-001)。
+ *
+ * 注：本函数是 state 读取路径的本地定义。pipeline-policy.mjs 的 normalizePipeline
+ * 仍为二值 (light/full, 未知抛错)，供 cli/config 使用；T08 边界纪律限定只改 state.mjs，
+ * 故这里单独维护 state 侧的 micro 感知归一化，不污染 shared policy。
+ */
+export function normalizePipeline(value) {
+  if (value === 'micro' || value === 'light' || value === 'full') return value;
+  return 'full';
+}
+
+// pipeline audit：审查所有 `pipeline === 'light'` 判断点是否需要接纳 'micro'
+// ---------------------------------------------------------------------------
+// 1) src/lib/state.mjs (本文件 parseStateMd 的旧 light 兜底)：
+//    → micro 不适用。原因：ADR-001 明确禁止 micro→full 回退，该兜底只服务旧 light
+//      迁移（loop-engineering.test.mjs「旧 light 停在旧阶段时读取为 full」）。
+// 2) src/lib/phases.mjs:93 (integration gate：pipeline==='light' ? execution : review)：
+//    → micro 不适用。原因：micro 阶段图为 change→dev→done (DESIGN 2.4)，不含
+//      integration 阶段；micro 的 verify 保护由本文件 recordVerifyResult 承担，
+//      micro 阶段图扩容归 T10 (phases.mjs)，不在 T08 边界内。
+// 3) src/cli.mjs:230 (`if (pipeline === 'light')`) 与 :1429 (legacy standard/light)：
+//    → micro 不适用 / 待 CLI 任务审查。原因：CLI 层 pipeline 分支与 --tier 覆写归
+//      T12 处理，T08 不触碰 cli.mjs。
+// ---------------------------------------------------------------------------
+
+/**
+ * 记录 micro 档 verify 结果 (升档保护核心)。
+ *
+ * 控制流选择：返回 { state, exitCode } 而非抛异常 —— verify 失败是业务状态而非
+ * 程序错误，用返回值承载 CLI 退出码，避免用异常做控制流。
+ *
+ * 语义：
+ *   - 仅 state.pipeline === 'micro' 且 pass === false 时 verifyFailCount++；
+ *   - 累计达 2 时置 state.pauseReason = 'micro-verify-failed-2x'，返回
+ *     exitCode 'micro_verify_failed'；
+ *   - 其他 pipeline (light/full) 或 pass===true 时 count 不动，exitCode 为 null。
+ *
+ * @param {object} state - 状态对象 (原地修改)
+ * @param {boolean} pass - 本次 verify 是否通过
+ * @returns {{ state: object, exitCode: string|null }}
+ */
+export function recordVerifyResult(state, pass) {
+  if (state.pipeline !== 'micro' || pass !== false) {
+    return { state, exitCode: null };
+  }
+  state.verifyFailCount = (state.verifyFailCount ?? 0) + 1;
+  if (state.verifyFailCount >= 2) {
+    state.pauseReason = 'micro-verify-failed-2x';
+    return { state, exitCode: 'micro_verify_failed' };
+  }
+  return { state, exitCode: null };
 }
 
 /**
@@ -126,12 +184,15 @@ function parseStateMd(content) {
         break;
       }
       case '暂停原因': state.pauseReason = kv.value === '—' ? null : kv.value; break;
+      case '验证失败计数': state.verifyFailCount = parseInt(kv.value) || 0; break;
       case '上下文 token': state.contextUsage.tokens = kv.value === '—' ? null : parseInt(kv.value) || null; break;
       case '窗口使用率': state.contextUsage.windowPercent = kv.value === '—' ? null : parseFloat(kv.value) || null; break;
     }
   }
 
   state.pipeline = normalizePipeline(state.pipeline);
+  // pipeline audit #1：旧 light 迁移兜底 —— 仅 light 停在非法阶段时回退 full；
+  // micro 不在此列 (ADR-001 禁止 micro→full 回退)。
   if (state.pipeline === 'light' && !['change', 'fast', 'integration', 'idle'].includes(state.currentStage)) {
     state.pipeline = 'full';
   }
@@ -164,6 +225,7 @@ function renderStateMd(state) {
 - **autonomous**: \`${state.autonomous}\`
 - **已执行阶段数**: \`${state.stagesRun} / ${state.maxStages}\`
 - **重试计数**: \`${state.retries} / ${state.maxRetries}\`
+- **验证失败计数**: \`${state.verifyFailCount ?? 0}\`
 - **暂停原因**: \`${state.pauseReason ?? '—'}\`
 - **上下文 token**: \`${state.contextUsage?.tokens ?? '—'}\`
 - **窗口使用率**: \`${state.contextUsage?.windowPercent ?? '—'}\`

@@ -27,11 +27,13 @@ export const STAGES = {
 // 横向命令（任何阶段可触发）
 
 // 快捷管线：定义 pipeline 实际包含哪些阶段
+//   micro — 极简路径，CHANGE → DEV → DONE（不生成 SPEC/DESIGN/TASKS 占位）
 //   light — 显式低风险路径，CHANGE → FAST → INTEGRATION
 //   full  — 默认完整路径
 export const PIPELINES = {
   full:     ['change', 'requirement', 'design', 'ui-design', 'task', 'dev', 'test', 'review', 'integration'],
   light:    ['change', 'fast', 'integration'],
+  micro:    ['change', 'dev', 'done'],
 };
 
 // 阶段 → 核心 phase prompt 文件映射
@@ -124,6 +126,11 @@ export function checkGate(targetStage, specsDir, config, state) {
     return { passed: true };
   }
   if (targetStage === 'dev') {
+    // micro 无 task 阶段：dev 前驱是 change，只要求 PROPOSAL/CHANGE 就绪，
+    // 不生成也不要求 TASKS.md 占位。
+    if (pipelineStages && !pipelineStages.includes('task')) {
+      return checkProposalReady(specsDir);
+    }
     return checkArtifact(specsDir, 'tasks');
   }
   if (targetStage === 'review') {

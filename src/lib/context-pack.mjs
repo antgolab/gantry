@@ -24,9 +24,23 @@ import { getPreferredArtifactName, resolveArtifactPath } from './artifacts.mjs';
 import { readConfig } from './config.mjs';
 import { getAgentFile, getAgentForStage } from './agents.mjs';
 import { assessLightEligibility } from './pipeline-policy.mjs';
+import { checkPack } from './review-lane-guard.mjs';
 
 const SCHEMA_VERSION = 2;
 const PACK_FILENAME = 'context-pack.json';
+
+// learnings recall 注入的团队目录与索引路径(见 small-team-mode DESIGN ADR-005)
+const LEARNINGS_TEAM_DIR = '.gantry/learnings/team';
+const LEARNINGS_INDEX_REL = `${LEARNINGS_TEAM_DIR}/.index/bm25.json`;
+
+// learnings facade 懒加载:依赖缺失/未就绪时静默降级,不阻塞 pack 生成。
+// 顶层 await 让后续 buildPack 保持同步;import 失败时 bm25Module 置 null,recallLearnings 直接跳过。
+let bm25Module = null;
+try {
+  bm25Module = await import('./learnings/index.mjs');
+} catch {
+  bm25Module = null;
+}
 
 // === UI / Schema / Breaking-change 触发关键词 (机械化判定) ===
 const UI_FILE_EXT = /\.(css|scss|sass|less|tsx|jsx|vue|svelte|html|astro)$/i;
@@ -103,7 +117,7 @@ export function buildPack(projectRoot, overrides = {}) {
   const taskId = overrides.taskId !== undefined ? overrides.taskId : state.currentTask;
   const pipeline = overrides.pipeline || state.pipeline || 'full';
 
-  return {
+  const pack = {
     schemaVersion: SCHEMA_VERSION,
     generatedAt: new Date().toISOString(),
     stage,
@@ -121,6 +135,19 @@ export function buildPack(projectRoot, overrides = {}) {
     },
     next: buildNextCommands(stage, taskId),
   };
+
+  // REVIEW lane 上下文隔离 gate (T14):仅在 review 阶段且未显式关闭
+  // (config.reviewLaneStrict === false) 时扫描 loadOrder 是否泄漏 DEV 上下文。
+  // 命中则附加 warnings 字段,CLI 据此设 exit code 'review_context_leak' +
+  // state.pauseReason='R2.4/review-context-leak'。
+  if (stage === 'review' && config.reviewLaneStrict !== false) {
+    const { violations } = checkPack(pack, { strict: true });
+    if (violations.length > 0) {
+      pack.warnings = violations;
+    }
+  }
+
+  return pack;
 }
 
 // === loadOrder ===
@@ -227,6 +254,11 @@ function buildLoadOrder({ projectRoot, stage, changeId, taskId, pipeline, config
     }
   }
 
+  // 4.5 团队 learnings BM25 recall 前置预检。
+  // 顺序决定:放在 artifacts 之后、LESSONS/进度之前 —— recall 是"相似经验建议"(required:false),
+  // 不是原始 spec,应先给足 agent 原始上下文(agent/phase/artifact),再补可跳过的 recall 建议。
+  items.push(...recallLearnings({ projectRoot, changeId, config }));
+
   // 5. 中断恢复上下文
   if (changeId && taskId && stage === 'dev') {
     const progressPath = `${SPECS_DIR}/${changeId}/${taskId}-PROGRESS.md`;
@@ -249,6 +281,60 @@ function buildLoadOrder({ projectRoot, stage, changeId, taskId, pipeline, config
   }
 
   return items;
+}
+
+// === learning recall 前置注入 ===
+
+/**
+ * BM25 recall 前置预检:用当前 change 描述(PROPOSAL.md 内容)检索团队 learnings,
+ * 命中条目按 score 降序注入 loadOrder(kind: 'learning', required: false)。
+ *
+ * 静默 fallback(任一条件不满足直接返回 [],不抛异常、不影响既有 pack 生成):
+ *   - config.learnings.enabled === false 或 config.learnings.recall.enabled !== true
+ *   - 无 activeChange / PROPOSAL 不存在
+ *   - 索引文件不存在 / bm25 模块未就绪 / loadIndex 失败
+ */
+function recallLearnings({ projectRoot, changeId, config }) {
+  const learnings = config?.learnings;
+  if (learnings?.enabled === false) return [];
+  if (learnings?.recall?.enabled !== true) return [];
+  if (!bm25Module?.loadIndex || !bm25Module?.query) return [];
+
+  const description = readChangeDescription(projectRoot, changeId);
+  if (!description) return [];
+
+  const indexPath = join(projectRoot, LEARNINGS_INDEX_REL);
+  if (!existsSync(indexPath)) return [];
+
+  let index;
+  try {
+    index = bm25Module.loadIndex(indexPath);
+  } catch {
+    return [];
+  }
+
+  const relevanceMin = learnings.recall?.relevancePreCheck ?? 0.3;
+  const results = bm25Module.query(index, description, { relevanceMin });
+  return results
+    .map((r) => ({
+      path: `${LEARNINGS_TEAM_DIR}/${r.id}.md`,
+      kind: 'learning',
+      required: false,
+      matched: r.matched,
+      score: r.score,
+    }))
+    .sort((a, b) => b.score - a.score);
+}
+
+function readChangeDescription(projectRoot, changeId) {
+  if (!changeId) return '';
+  const resolved = resolveArtifactPath(join(projectRoot, SPECS_DIR, changeId), 'proposal');
+  if (!resolved || !existsSync(resolved.path)) return '';
+  try {
+    return readFileSync(resolved.path, 'utf-8');
+  } catch {
+    return '';
+  }
 }
 
 /**

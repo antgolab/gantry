@@ -47,5 +47,8 @@
   "homepage": "https://github.com/antgolab/gantry#readme",
   "bugs": {
     "url": "https://github.com/antgolab/gantry/issues"
+  },
+  "dependencies": {
+    "wink-bm25-text-search": "3.1.2"
   }
 }
