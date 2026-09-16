@@ -111,14 +111,14 @@ done
 
 ---
 
-## P2 / P3 TODO
+## P2 / P3 已交付
 
 - ✅ **P2 · driver** — `.gantry/loop/loop.sh` 循环消费 `loop-next`,配合 `.gantry/loop/test-commands.yml` 定义 verify + covers
 - ✅ **P2 · loop-guard** — 上下文 token / step 上限熔断,见 [docs/loop-guard.md](./loop-guard.md)
-- ⏳ **P3 · EXECUTION.md self-heal 缓冲** — DEV 阶段验证失败时,自愈记录落 EXECUTION.md(不走 PATCH)
-- ⏳ **P3 · AC 强校验闸** — integration 前 `checkAcCoverage` 必须全绿
+- ✅ **P3 · EXECUTION.md self-heal 缓冲** — DEV 阶段 verify 失败,`gantry heal` 追加根因到 EXECUTION.md;`heal --check` 达 R2.5 上限时写 fence.blockedReason,见 [docs/self-heal.md](./self-heal.md)
+- ✅ **P3 · AC 强校验闸** — `gantry ac-gate` + integration 门禁末端 `checkAcCoverage` 硬闸,缺 AC 覆盖阻塞进 integration,见 [docs/self-heal.md](./self-heal.md)
 
-P2 change: `.gantry/specs/gantry-loop-p2-driver/`(收尾后归档到 `_archive/`)。
+P2 / P3 change 收尾后归档到 `.gantry/specs/_archive/`。
 
 ---
 
