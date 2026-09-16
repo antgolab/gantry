@@ -11,11 +11,16 @@
  *   - 白名单单 token 输出契约(pdlc S4)
  *
  * 依赖单向:loop.mjs → phases.mjs(读 STAGES),phases 不反向依赖 loop。
+ * AC 覆盖判定已下沉到叶子模块 ac-coverage.mjs(T-FIX-01,断开循环),此处 re-export。
  */
 
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { STAGES, PIPELINES } from './phases.mjs';
+// T-FIX-01 · REVIEW Round 2 · R5:AC 覆盖判定已抽到叶子模块 ac-coverage.mjs,
+// phases.mjs 现在直接 import 那个模块,不再反向依赖 loop.mjs。此处保留 re-export
+// 以维持既有 test / cli 的 `from './loop.mjs'` 路径不动。
+export { checkAcCoverage, extractAcIds } from './ac-coverage.mjs';
+// 注:extractAcIds 供 loop 自身兜底逻辑潜在使用亦通过 re-export 暴露。
+// 若未来 loop.mjs 内部需要直接调用,统一 import from './ac-coverage.mjs'。
 
 /**
  * loop-next 白名单:driver 只信这 10 个 token,其他一律 blocked。
@@ -117,64 +122,5 @@ function deriveNextFromStage(currentStage, pipelineKey) {
 }
 
 // --- AC 覆盖校验(C2)---
-
-/**
- * 检查 SPEC.md 里所有 AC 编号是否都被 test-commands.yml 里某个命令的 covers 覆盖。
- *
- * @param {string} specsDir - .gantry/specs/<change-id>/
- * @param {object|null} testCommands - 解析后的 test-commands.yml,null 表示无该文件
- * @returns {{ covered: string[], missing: string[], skipped?: boolean }}
- */
-export function checkAcCoverage(specsDir, testCommands) {
-  if (testCommands == null) {
-    return { covered: [], missing: [], skipped: true };
-  }
-
-  const specPath = join(specsDir, 'SPEC.md');
-  if (!existsSync(specPath)) {
-    return { covered: [], missing: [], skipped: true };
-  }
-
-  const acIds = extractAcIds(readFileSync(specPath, 'utf-8'));
-  if (acIds.length === 0) {
-    return { covered: [], missing: [], skipped: true };
-  }
-
-  // 收集所有 covers 项(合并所有命令)
-  const allCovers = new Set();
-  for (const cmdKey of Object.keys(testCommands)) {
-    const covers = testCommands[cmdKey]?.covers;
-    if (Array.isArray(covers)) {
-      for (const c of covers) allCovers.add(c);
-    }
-  }
-
-  const wildcard = allCovers.has('*');
-  const covered = [];
-  const missing = [];
-  for (const ac of acIds) {
-    if (wildcard || allCovers.has(ac)) covered.push(ac);
-    else missing.push(ac);
-  }
-  // 保留通配符信息(方便 driver 上报)
-  if (wildcard) covered.push('*');
-  return { covered, missing, skipped: false };
-}
-
-/**
- * 抠出 SPEC.md 里的 AC 编号(AC-1, AC-2, ...)。
- * 语法:行首 `###` 或 `####` 后紧跟 `AC-<数字>` 单词边界。
- */
-export function extractAcIds(content) {
-  const ids = new Set();
-  const regex = /^#{2,4}\s+(AC-\d+)\b/gm;
-  let m;
-  while ((m = regex.exec(content)) != null) {
-    ids.add(m[1]);
-  }
-  return Array.from(ids).sort((a, b) => {
-    const na = parseInt(a.slice(3), 10);
-    const nb = parseInt(b.slice(3), 10);
-    return na - nb;
-  });
-}
+// T-FIX-01(REVIEW Round 2 · R5):checkAcCoverage / extractAcIds 迁移到
+// src/lib/ac-coverage.mjs。本模块顶部的 re-export 保留既有 import 路径。

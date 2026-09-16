@@ -8,7 +8,9 @@ import { join, resolve } from 'node:path';
 import { parseTasks, allTasksDone } from './tasks.mjs';
 import { artifactExists, getPreferredArtifactName, resolveArtifactPath } from './artifacts.mjs';
 import { assessLightEligibility } from './pipeline-policy.mjs';
-import { checkAcCoverage } from './loop.mjs';
+// T-FIX-01(REVIEW Round 2 · R5):直接 import 叶子模块,不再走 loop.mjs 的
+// re-export,避免 phases → loop → phases 的循环 import。
+import { checkAcCoverage } from './ac-coverage.mjs';
 import { parseTestCommands } from './test-commands.mjs';
 
 // 固定管线阶段定义
