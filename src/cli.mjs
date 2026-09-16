@@ -19,7 +19,10 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { readState, writeState, updateState, transitionStage, readFence, writeFence } from './lib/state.mjs';
+import {
+  readState, writeState, updateState, transitionStage,
+  readFence, writeFence, writeFenceBlockedReason,
+} from './lib/state.mjs';
 import { STAGES, getNextStage, checkGate, PHASE_FILES } from './lib/phases.mjs';
 import { computeNextStep, WHITELIST, checkAcCoverage } from './lib/loop.mjs';
 import { checkLoopGuard } from './lib/loop-guard.mjs';
@@ -421,22 +424,12 @@ function loopGuard() {
     process.exit(0);
   }
 
-  // 熔断:写 fence.blockedReason(非覆盖),用于下一次 loop-next 自然返回 blocked
+  // 熔断:写 fence.blockedReason(非覆盖),用于下一次 loop-next 自然返回 blocked。
+  // T-FIX-03:走 writeFenceBlockedReason helper,与 heal --check 共用同一策略。
   const reason = `loop-guard: ${verdict.reason}`;
-  const existing = fence.lastStageResult?.blockedReason;
-  if (existing == null || existing === '') {
-    try {
-      writeFence(projectRoot, {
-        ...fence,
-        lastStageResult: {
-          ...(fence.lastStageResult ?? {}),
-          ok: false,
-          blockedReason: reason,
-        },
-      });
-    } catch (err) {
-      process.stderr.write(`[loop-guard warn] writeFence 失败: ${err.message}\n`);
-    }
+  const r = writeFenceBlockedReason(projectRoot, reason);
+  if (r.error) {
+    process.stderr.write(`[loop-guard warn] writeFence 失败: ${r.error}\n`);
   }
 
   process.stderr.write(`[loop-guard warn] ${verdict.reason}\n`);
@@ -481,22 +474,14 @@ function heal(args) {
       process.stdout.write(`ok · attempts=${count}/${limit}\n`);
       process.exit(0);
     }
-    // 熔断:写 fence.blockedReason(不覆盖非空,与 loop-guard 一致)
-    try {
-      const fence = readFence(projectRoot);
-      const existing = fence.lastStageResult?.blockedReason;
-      if (existing == null || existing === '') {
-        writeFence(projectRoot, {
-          ...fence,
-          lastStageResult: {
-            ...(fence.lastStageResult ?? {}),
-            ok: false,
-            blockedReason: `heal: limit exceeded task=${parsed.taskId}`,
-          },
-        });
-      }
-    } catch (err) {
-      process.stderr.write(`[heal warn] writeFence 失败: ${err.message}\n`);
+    // 熔断:写 fence.blockedReason(不覆盖非空,与 loop-guard 一致)。
+    // T-FIX-03:走 writeFenceBlockedReason helper,消除与 loop-guard 的重复。
+    const r = writeFenceBlockedReason(
+      projectRoot,
+      `heal: limit exceeded task=${parsed.taskId}`,
+    );
+    if (r.error) {
+      process.stderr.write(`[heal warn] writeFence 失败: ${r.error}\n`);
     }
     process.stderr.write(`[heal] limit exceeded, task=${parsed.taskId}\n`);
     process.stdout.write(`blocked · attempts=${count}/${limit}\n`);

@@ -194,6 +194,44 @@ export function transitionStage(projectRoot, fromStage, toStage) {
 // --- fence 读写(机器可读区,供 loop-next / driver 消费)---
 
 /**
+ * 写入 fence.lastStageResult.blockedReason,"谁先熔断谁负责"策略。
+ *
+ * T-FIX-03(REVIEW Round 2 · R3):抽出 loop-guard 与 heal --check 两处熔断
+ * 路径共享的"已有非空 blockedReason 不覆盖"策略,避免概念级重复。
+ *
+ * @param {string} projectRoot
+ * @param {string} reason - 熔断原因(将写到 fence.lastStageResult.blockedReason)
+ * @param {object} [options]
+ * @param {boolean} [options.overwrite=false] - true 时无条件覆盖,默认 false 只在
+ *   已有值为空/null 时才写。
+ * @returns {{ written: boolean, existing: string|null, error?: string }} 未写(已
+ *   有非空)返回 written:false + existing;写成功 written:true;IO 异常返回
+ *   written:false + error(不抛,由调用者决定是否 warn)。
+ */
+export function writeFenceBlockedReason(projectRoot, reason, options = {}) {
+  const { overwrite = false } = options;
+  try {
+    const fence = readFence(projectRoot);
+    const existing = fence.lastStageResult?.blockedReason ?? null;
+    if (!overwrite && existing != null && existing !== '') {
+      return { written: false, existing };
+    }
+    writeFence(projectRoot, {
+      ...fence,
+      lastStageResult: {
+        ...(fence.lastStageResult ?? {}),
+        ok: false,
+        blockedReason: reason,
+      },
+    });
+    return { written: true, existing };
+  } catch (err) {
+    return { written: false, existing: null, error: err.message };
+  }
+}
+
+
+/**
  * 读取 STATE.md 尾部的 gantry:state JSON fence。
  *
  * fence 缺失或解析失败时降级返回 defaultFence(),不抛错——保证 loop-next
