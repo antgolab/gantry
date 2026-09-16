@@ -4,10 +4,12 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { parseTasks, allTasksDone } from './tasks.mjs';
 import { artifactExists, getPreferredArtifactName, resolveArtifactPath } from './artifacts.mjs';
 import { assessLightEligibility } from './pipeline-policy.mjs';
+import { checkAcCoverage } from './loop.mjs';
+import { parseTestCommands } from './test-commands.mjs';
 
 // 固定管线阶段定义
 export const STAGES = {
@@ -92,9 +94,13 @@ export function checkGate(targetStage, specsDir, config, state) {
     design:      () => checkArtifact(specsDir, 'spec'),
     'ui-design': () => checkArtifact(specsDir, 'design'),
     test:        () => checkAllTasksDone(specsDir),
-    integration: () => pipeline === 'light'
-      ? checkExecutionPassed(specsDir)
-      : checkReviewPassed(specsDir),
+    integration: () => {
+      const base = pipeline === 'light'
+        ? checkExecutionPassed(specsDir)
+        : checkReviewPassed(specsDir);
+      if (!base.passed) return base;
+      return checkAcGate(specsDir);
+    },
   };
 
   if (staticGates[targetStage]) {
@@ -297,6 +303,33 @@ function checkExecutionPassed(specsDir) {
   const content = readFileSync(executionFile, 'utf-8');
   if (!/(?:verify|验证)[^\n]*(?:pass|通过)|(?:pass|通过)[^\n]*(?:verify|验证)/i.test(content)) {
     return { passed: false, reason: `${getPreferredArtifactName('execution')} 缺少 verify 通过证据` };
+  }
+  return { passed: true };
+}
+
+/**
+ * integration 门禁末端 · SPEC AC 覆盖强校验(P3 ADR-003)。
+ *
+ * 与 P1 `checkAcCoverage` + P2 `parseTestCommands` 直接对接。
+ * 缺失 → hard block;SPEC 无 AC 或 test-commands.yml 缺失 → skip 降级。
+ * 门禁 fail 时,由上层 advance 已有失败路径写 fence.blockedReason(非覆盖)。
+ */
+function checkAcGate(specsDir) {
+  const root = resolve(specsDir, '..', '..', '..');
+  const tcPath = join(root, '.gantry/loop/test-commands.yml');
+  if (!existsSync(tcPath)) {
+    return { passed: true, skipReason: 'ac-gate: test-commands.yml 缺失,跳过 AC 覆盖检查' };
+  }
+  const testCommands = parseTestCommands(tcPath);
+  const cov = checkAcCoverage(specsDir, testCommands);
+  if (cov.skipped) {
+    return { passed: true, skipReason: 'ac-gate: SPEC 无 AC 或 test-commands.yml 无有效 covers' };
+  }
+  if (cov.missing && cov.missing.length > 0) {
+    return {
+      passed: false,
+      reason: `ac-gate: missing ${cov.missing.join(', ')}`,
+    };
   }
   return { passed: true };
 }
