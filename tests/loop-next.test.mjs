@@ -1,0 +1,135 @@
+/**
+ * loop-next.test.mjs — computeNextStep 判定序 + 白名单契约
+ *
+ * 对齐 AC-3 / AC-4。
+ */
+
+import { test } from 'node:test';
+import { strict as assert } from 'node:assert';
+import { computeNextStep, WHITELIST, CONVERGE_CONDITIONS } from '../src/lib/loop.mjs';
+
+function makeState(overrides = {}) {
+  return {
+    pipeline: 'full',
+    currentStage: 'design',
+    currentWave: null,
+    previousWave: null,
+    nextStep: null,
+    lastStageResult: null,
+    ...overrides,
+  };
+}
+
+test('AC-4 · blockedReason 优先于任何其他判定', () => {
+  const state = makeState({
+    currentStage: 'integration',
+    lastStageResult: { ok: true, blockedReason: 'needs human decision' },
+    nextStep: 'done',
+  });
+  assert.equal(computeNextStep(state), 'blocked');
+});
+
+test('AC-3 · full pipeline 在 integration + ok 时 done', () => {
+  const state = makeState({
+    pipeline: 'full',
+    currentStage: 'integration',
+    lastStageResult: { ok: true, blockedReason: null },
+  });
+  assert.equal(computeNextStep(state), 'done');
+});
+
+test('AC-3 · light pipeline 在 integration + ok 时 done', () => {
+  const state = makeState({
+    pipeline: 'light',
+    currentStage: 'integration',
+    lastStageResult: { ok: true, blockedReason: null },
+  });
+  assert.equal(computeNextStep(state), 'done');
+});
+
+test('AC-3 · micro pipeline 在 dev + ok 时 done', () => {
+  const state = makeState({
+    pipeline: 'micro',
+    currentStage: 'dev',
+    lastStageResult: { ok: true, blockedReason: null },
+  });
+  assert.equal(computeNextStep(state), 'done');
+});
+
+test('AC-3 · full 未到 integration 时按 pipeline 顺序推进(跳过 ui-design 条件阶段)', () => {
+  const state = makeState({
+    pipeline: 'full',
+    currentStage: 'design',
+    lastStageResult: null,
+  });
+  // ui-design 是条件阶段,loop 自动派发时跳过 → design 直接接 task
+  const next = computeNextStep(state);
+  assert.equal(next, 'gantry-task', `期望 gantry-task, got ${next}`);
+});
+
+test('AC-3 · state.nextStep 命中白名单时直接返回', () => {
+  const state = makeState({
+    pipeline: 'full',
+    currentStage: 'dev',
+    nextStep: 'gantry-test',
+  });
+  assert.equal(computeNextStep(state), 'gantry-test');
+});
+
+test('AC-3 · state.nextStep 不在白名单时走兜底', () => {
+  const state = makeState({
+    pipeline: 'full',
+    currentStage: 'dev',
+    nextStep: 'invalid-token',
+  });
+  const next = computeNextStep(state);
+  assert.equal(next, 'gantry-test'); // pipeline 下 dev 后继
+});
+
+test('AC-3 · idle → gantry-change', () => {
+  const state = makeState({ currentStage: 'idle' });
+  assert.equal(computeNextStep(state), 'gantry-change');
+});
+
+test('AC-3 · 输出严格在白名单', () => {
+  const states = [
+    makeState({ currentStage: 'idle' }),
+    makeState({ currentStage: 'change' }),
+    makeState({ currentStage: 'requirement' }),
+    makeState({ currentStage: 'design' }),
+    makeState({ currentStage: 'task' }),
+    makeState({ currentStage: 'dev' }),
+    makeState({ currentStage: 'test' }),
+    makeState({ currentStage: 'review' }),
+    makeState({ currentStage: 'integration', lastStageResult: { ok: true } }),
+    makeState({ currentStage: null }),
+    { pipeline: 'unknown-pipeline' },
+    null,
+    undefined,
+    { pipeline: 'full', currentStage: 'nonexistent' },
+  ];
+  for (const s of states) {
+    const token = computeNextStep(s);
+    assert.ok(
+      WHITELIST.includes(token),
+      `state ${JSON.stringify(s)} → ${token} 不在白名单`,
+    );
+  }
+});
+
+test('AC-3 · 未知 pipeline 回退到 full 语义', () => {
+  const state = makeState({
+    pipeline: 'unknown',
+    currentStage: 'integration',
+    lastStageResult: { ok: true, blockedReason: null },
+  });
+  assert.equal(computeNextStep(state), 'done');
+});
+
+test('AC-3 · CONVERGE_CONDITIONS 冻结不可变', () => {
+  assert.throws(() => { CONVERGE_CONDITIONS.full = () => true; });
+});
+
+test('AC-3 · WHITELIST 冻结不可变', () => {
+  assert.throws(() => { WHITELIST.push('gantry-hack'); });
+});
