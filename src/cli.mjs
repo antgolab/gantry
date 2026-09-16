@@ -21,8 +21,14 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { readState, writeState, updateState, transitionStage, readFence, writeFence } from './lib/state.mjs';
 import { STAGES, getNextStage, checkGate, PHASE_FILES } from './lib/phases.mjs';
-import { computeNextStep, WHITELIST } from './lib/loop.mjs';
+import { computeNextStep, WHITELIST, checkAcCoverage } from './lib/loop.mjs';
 import { checkLoopGuard } from './lib/loop-guard.mjs';
+import { parseTestCommands } from './lib/test-commands.mjs';
+import {
+  appendHealAttempt,
+  readHealLog,
+  shouldStopHealing,
+} from './lib/self-heal.mjs';
 import { PLANNING_DIR, SPECS_DIR, specsPath } from './lib/paths.mjs';
 import { parseTasks, getProgress } from './lib/tasks.mjs';
 import { runHook, listHooks } from './lib/hooks.mjs';
@@ -77,6 +83,8 @@ const commands = {
   help, knowledge,
   'loop-next': loopNext,
   'loop-guard': loopGuard,
+  'heal': heal,
+  'ac-gate': acGate,
 };
 
 // IDE-only skills：AI 驱动的阶段 / 动作命令，只在 IDE 中以 /gantry-<name> 执行，
@@ -434,6 +442,152 @@ function loopGuard() {
   process.stderr.write(`[loop-guard warn] ${verdict.reason}\n`);
   process.stdout.write('blocked\n');
   process.exit(2);
+}
+
+/**
+ * gantry heal <taskId> — 记录一次 dev verify 失败(SPEC AC-4)。
+ * gantry heal --check <taskId> — 查询 R2.5 上限(SPEC AC-5)。
+ *
+ * 记录模式:
+ *   heal <taskId> --reason X [--command Y] [--stderr Z|-]
+ *   → stdout `recorded #<n>`, exit 0
+ *
+ * 查询模式(--check):
+ *   heal --check <taskId>
+ *   → K<3: stdout `ok · attempts=K/3`, exit 0
+ *   → K>=3: stdout `blocked · attempts=K/3`, exit 2 + 写 fence.blockedReason(不覆盖)
+ */
+function heal(args) {
+  const projectRoot = process.cwd();
+  const parsed = parseHealArgs(args);
+  const state = safeReadState(projectRoot);
+  if (!state?.activeChange) {
+    process.stderr.write('[heal] no active change\n');
+    process.exit(1);
+  }
+  const execPath = resolveArtifactPath(
+    join(projectRoot, SPECS_DIR, state.activeChange),
+    'execution',
+  )?.path;
+  if (!execPath || !existsSync(execPath)) {
+    process.stderr.write('[heal] execution file missing\n');
+    process.exit(1);
+  }
+
+  if (parsed.check) {
+    const log = readHealLog(execPath);
+    const { stop, count, limit } = shouldStopHealing(log, parsed.taskId);
+    if (!stop) {
+      process.stdout.write(`ok · attempts=${count}/${limit}\n`);
+      process.exit(0);
+    }
+    // 熔断:写 fence.blockedReason(不覆盖非空,与 loop-guard 一致)
+    try {
+      const fence = readFence(projectRoot);
+      const existing = fence.lastStageResult?.blockedReason;
+      if (existing == null || existing === '') {
+        writeFence(projectRoot, {
+          ...fence,
+          lastStageResult: {
+            ...(fence.lastStageResult ?? {}),
+            ok: false,
+            blockedReason: `heal: limit exceeded task=${parsed.taskId}`,
+          },
+        });
+      }
+    } catch (err) {
+      process.stderr.write(`[heal warn] writeFence 失败: ${err.message}\n`);
+    }
+    process.stderr.write(`[heal] limit exceeded, task=${parsed.taskId}\n`);
+    process.stdout.write(`blocked · attempts=${count}/${limit}\n`);
+    process.exit(2);
+  }
+
+  if (!parsed.reason) {
+    process.stderr.write('[heal] --reason required\n');
+    process.exit(1);
+  }
+
+  let stderrText = parsed.stderr;
+  if (stderrText === '-') {
+    try { stderrText = readFileSync(0, 'utf-8'); }
+    catch { stderrText = ''; }
+  }
+
+  try {
+    const n = appendHealAttempt(execPath, {
+      taskId: parsed.taskId,
+      reason: parsed.reason,
+      command: parsed.command,
+      stderr: stderrText,
+    });
+    process.stdout.write(`recorded #${n}\n`);
+    process.exit(0);
+  } catch (err) {
+    process.stderr.write(`[heal] ${err.message}\n`);
+    process.exit(1);
+  }
+}
+
+function parseHealArgs(args) {
+  const out = { taskId: null, reason: null, command: null, stderr: null, check: false };
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--check') out.check = true;
+    else if (a === '--reason') out.reason = args[++i];
+    else if (a === '--command') out.command = args[++i];
+    else if (a === '--stderr') out.stderr = args[++i];
+    else if (!a.startsWith('--') && out.taskId == null) out.taskId = a;
+  }
+  if (!out.taskId) {
+    process.stderr.write('[heal] taskId required\n');
+    process.exit(1);
+  }
+  return out;
+}
+
+function safeReadState(root) {
+  try { return readState(root); } catch { return null; }
+}
+
+/**
+ * gantry ac-gate — SPEC AC 覆盖强校验(SPEC AC-6)。
+ *
+ * 只读契约:
+ *   全覆盖 → stdout `ok · ac=<n>`, exit 0
+ *   有缺失 → stdout `blocked · missing=<list>`, stderr warn, exit 2
+ *   SPEC 无 AC / test-commands.yml 缺失 → stdout `skip · no-ac|no-config`, exit 0
+ * 不写 fence(交给 integration 门禁)。
+ */
+function acGate() {
+  const projectRoot = process.cwd();
+  const state = safeReadState(projectRoot);
+  if (!state?.activeChange) {
+    process.stderr.write('[ac-gate] no active change\n');
+    process.exit(1);
+  }
+  const specsDir = join(projectRoot, SPECS_DIR, state.activeChange);
+  const tcPath = join(projectRoot, '.gantry/loop/test-commands.yml');
+  if (!existsSync(tcPath)) {
+    process.stderr.write('[ac-gate] test-commands.yml missing\n');
+    process.stdout.write('skip · no-config\n');
+    process.exit(0);
+  }
+  const testCommands = parseTestCommands(tcPath);
+  const cov = checkAcCoverage(specsDir, testCommands);
+  if (cov.skipped) {
+    process.stderr.write('[ac-gate] SPEC 无 AC 编号\n');
+    process.stdout.write('skip · no-ac\n');
+    process.exit(0);
+  }
+  if (cov.missing && cov.missing.length > 0) {
+    process.stderr.write(`[ac-gate] missing coverage: ${cov.missing.join(', ')}\n`);
+    process.stdout.write(`blocked · missing=${cov.missing.join(',')}\n`);
+    process.exit(2);
+  }
+  const acCount = cov.covered.filter(x => x !== '*').length;
+  process.stdout.write(`ok · ac=${acCount}\n`);
+  process.exit(0);
 }
 
 /**
