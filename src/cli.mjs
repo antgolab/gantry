@@ -742,7 +742,9 @@ function nextOnce(projectRoot, { isSkip = false } = {}) {
   }
 
   // === Gate ===
-  const gateResult = checkGate(nextStage, specsDir, effectiveConfig, state);
+  // T-FIX-02(REVIEW Round 2 · R2):显式传 projectRoot,integration ac-gate
+  // 不再用 `../../..` 反推;测试路径不受影响(缺省沿 SPECS_DIR 语义反推)。
+  const gateResult = checkGate(nextStage, specsDir, effectiveConfig, state, projectRoot);
 
   if (!gateResult.passed) {
     if (gateResult.hard) {

@@ -4,7 +4,7 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, sep } from 'node:path';
 import { parseTasks, allTasksDone } from './tasks.mjs';
 import { artifactExists, getPreferredArtifactName, resolveArtifactPath } from './artifacts.mjs';
 import { assessLightEligibility } from './pipeline-policy.mjs';
@@ -12,6 +12,7 @@ import { assessLightEligibility } from './pipeline-policy.mjs';
 // re-export,避免 phases → loop → phases 的循环 import。
 import { checkAcCoverage } from './ac-coverage.mjs';
 import { parseTestCommands } from './test-commands.mjs';
+import { SPECS_DIR } from './paths.mjs';
 
 // 固定管线阶段定义
 export const STAGES = {
@@ -72,9 +73,12 @@ export const PHASE_FILES = {
  * @param {string} specsDir - .gantry/specs/<change-id>/ 目录
  * @param {object} config - 项目配置（含 pipeline）
  * @param {object} [state] - 当前状态
+ * @param {string} [projectRoot] - 项目根目录（T-FIX-02:integration ac-gate 用它读
+ *   `.gantry/loop/test-commands.yml`。缺省沿 SPECS_DIR 常量语义反推,不再用
+ *   `../../..` 计数魔法。测试 / cli 传入显式 root 更稳）。
  * @returns {{ passed: boolean, reason?: string, skipReason?: string }}
  */
-export function checkGate(targetStage, specsDir, config, state) {
+export function checkGate(targetStage, specsDir, config, state, projectRoot) {
   // 跳过已禁用的阶段
   if (config?.stages?.[targetStage]?.enabled === false) {
     return { passed: true, reason: 'stage disabled, skipping' };
@@ -101,7 +105,7 @@ export function checkGate(targetStage, specsDir, config, state) {
         ? checkExecutionPassed(specsDir)
         : checkReviewPassed(specsDir);
       if (!base.passed) return base;
-      return checkAcGate(specsDir);
+      return checkAcGate(specsDir, projectRoot);
     },
   };
 
@@ -315,9 +319,17 @@ function checkExecutionPassed(specsDir) {
  * 与 P1 `checkAcCoverage` + P2 `parseTestCommands` 直接对接。
  * 缺失 → hard block;SPEC 无 AC 或 test-commands.yml 缺失 → skip 降级。
  * 门禁 fail 时,由上层 advance 已有失败路径写 fence.blockedReason(非覆盖)。
+ *
+ * T-FIX-02(REVIEW Round 2 · R2):projectRoot 由调用者(cli advance / 测试)显式
+ * 传入;缺省用 SPECS_DIR 常量做语义反推(strip 尾部 `.gantry/specs/<id>`),取代
+ * 原来的 `../../..` 层数硬编码。SPECS_DIR 布局若改,fallback 自动跟随;调用者
+ * 传 root 则完全解耦。
  */
-function checkAcGate(specsDir) {
-  const root = resolve(specsDir, '..', '..', '..');
+function checkAcGate(specsDir, projectRoot) {
+  const root = projectRoot ?? deriveProjectRootFromSpecsDir(specsDir);
+  if (root == null) {
+    return { passed: true, skipReason: 'ac-gate: 无法定位项目根,跳过 AC 覆盖检查' };
+  }
   const tcPath = join(root, '.gantry/loop/test-commands.yml');
   if (!existsSync(tcPath)) {
     return { passed: true, skipReason: 'ac-gate: test-commands.yml 缺失,跳过 AC 覆盖检查' };
@@ -334,4 +346,22 @@ function checkAcGate(specsDir) {
     };
   }
   return { passed: true };
+}
+
+/**
+ * 从 specsDir 反推项目根:strip 尾部 `${SPECS_DIR}/<change-id>` 片段。
+ *
+ * T-FIX-02(REVIEW Round 2 · R2):替代原来的 `resolve(specsDir, '..', '..', '..')`
+ * 层数计数魔法。语义与 SPECS_DIR 常量单一绑定——若 SPECS_DIR 布局改变,反推自动
+ * 跟随;若 specsDir 不含 SPECS_DIR 片段(异常输入 / 测试污染),返回 null,由
+ * checkAcGate 降级 skip 而非 crash。
+ *
+ * 调用者显式传 projectRoot 时,本函数不会被调到——首选契约仍是"从上层拿"。
+ */
+function deriveProjectRootFromSpecsDir(specsDir) {
+  if (typeof specsDir !== 'string' || specsDir.length === 0) return null;
+  const marker = sep + SPECS_DIR.replaceAll('/', sep) + sep;
+  const idx = specsDir.lastIndexOf(marker);
+  if (idx < 0) return null;
+  return specsDir.slice(0, idx);
 }
