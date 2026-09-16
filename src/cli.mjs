@@ -19,9 +19,10 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { readState, writeState, updateState, transitionStage, readFence } from './lib/state.mjs';
+import { readState, writeState, updateState, transitionStage, readFence, writeFence } from './lib/state.mjs';
 import { STAGES, getNextStage, checkGate, PHASE_FILES } from './lib/phases.mjs';
 import { computeNextStep, WHITELIST } from './lib/loop.mjs';
+import { checkLoopGuard } from './lib/loop-guard.mjs';
 import { PLANNING_DIR, SPECS_DIR, specsPath } from './lib/paths.mjs';
 import { parseTasks, getProgress } from './lib/tasks.mjs';
 import { runHook, listHooks } from './lib/hooks.mjs';
@@ -75,6 +76,7 @@ const commands = {
   status, change, pipeline, auto, advance, context, done, hook, install, uninstall, archive, unarchive, metrics, version,
   help, knowledge,
   'loop-next': loopNext,
+  'loop-guard': loopGuard,
 };
 
 // IDE-only skills：AI 驱动的阶段 / 动作命令，只在 IDE 中以 /gantry-<name> 执行，
@@ -380,6 +382,58 @@ function loopNext() {
   process.stdout.write(`${token}\n`);
   if (token === 'blocked') process.exit(2);
   process.exit(0);
+}
+
+/**
+ * gantry loop-guard — 只读:检查上下文/步数熔断状态。
+ *
+ * 契约(SPEC AC-4):
+ *   - 未熔断:stdout `ok`,exit 0
+ *   - 已熔断:stdout `blocked`,stderr `[loop-guard warn] <reason>`,exit 2
+ *
+ * 熔断时会 writeFence 更新 fence.lastStageResult.blockedReason(ADR-002),
+ * 但不覆盖已有非空 reason(单一职责:谁先熔断谁负责)。
+ */
+function loopGuard() {
+  const projectRoot = process.cwd();
+  let state, config, fence;
+  try {
+    state = readState(projectRoot);
+    config = readConfig(projectRoot);
+    fence = readFence(projectRoot);
+  } catch (err) {
+    process.stderr.write(`[loop-guard warn] state 读取失败: ${err.message}\n`);
+    process.stdout.write('blocked\n');
+    process.exit(2);
+  }
+
+  const verdict = checkLoopGuard(state, config);
+  if (!verdict.tripped) {
+    process.stdout.write('ok\n');
+    process.exit(0);
+  }
+
+  // 熔断:写 fence.blockedReason(非覆盖),用于下一次 loop-next 自然返回 blocked
+  const reason = `loop-guard: ${verdict.reason}`;
+  const existing = fence.lastStageResult?.blockedReason;
+  if (existing == null || existing === '') {
+    try {
+      writeFence(projectRoot, {
+        ...fence,
+        lastStageResult: {
+          ...(fence.lastStageResult ?? {}),
+          ok: false,
+          blockedReason: reason,
+        },
+      });
+    } catch (err) {
+      process.stderr.write(`[loop-guard warn] writeFence 失败: ${err.message}\n`);
+    }
+  }
+
+  process.stderr.write(`[loop-guard warn] ${verdict.reason}\n`);
+  process.stdout.write('blocked\n');
+  process.exit(2);
 }
 
 /**
@@ -1317,6 +1371,8 @@ function help() {
 
   loop-next           只读输出下一步 loop token（供无监督 driver 消费）
                       白名单单 token,stdout 单行;exit 0=推进/done,exit 2=blocked
+  loop-guard          只读检查上下文/步数熔断（context/stagesRun）
+                      未熔断=ok+exit 0;熔断=blocked+exit 2,并写 fence.blockedReason
 
   status              查看当前状态、待确认关卡
     --json              输出 JSON 格式
