@@ -10,6 +10,26 @@ import { getAgentForStage } from './agents.mjs';
 
 const STATE_FILE = 'STATE.md';
 
+// fence 段:STATE.md 内嵌的机器可读 JSON,供 loop-next / driver 消费。
+// 与散文区严格解耦:散文区由 renderStateMd 生成,fence 追加在其后。
+const FENCE_BEGIN = '<!-- BEGIN gantry:state -->';
+const FENCE_END = '<!-- END gantry:state -->';
+const FENCE_REGEX = /<!-- BEGIN gantry:state -->\s*```json\s*([\s\S]+?)\s*```\s*<!-- END gantry:state -->/;
+
+/**
+ * 默认 fence 对象(fence 缺失时的降级返回)。
+ * 与散文区 defaultState() 无关——散文承载"当前阶段/管线"这类人读字段,
+ * fence 承载 loop-next 决策所需的机器字段。
+ */
+export function defaultFence() {
+  return {
+    nextStep: null,
+    lastStageResult: null,
+    currentWave: null,
+    previousWave: null,
+  };
+}
+
 /**
  * 默认状态结构
  */
@@ -136,8 +156,31 @@ export function updateState(projectRoot, updates) {
 
 /**
  * 记录阶段转换
+ *
+ * state-must-advance 断言(loop 收敛的编译期兜底):
+ *   同一 stage 传参一律视为 bug 并 throw,唯一例外是 DEV 内 wave 推进
+ *   (currentStage === 'dev' && from === to === 'dev' && currentWave 变化)。
+ *
+ *   这条断言让"跑起来但原地打转"变得不可能——比外层 stuck-stop 更早失败。
  */
 export function transitionStage(projectRoot, fromStage, toStage) {
+  if (fromStage === toStage) {
+    const cur = readState(projectRoot);
+    // previousWave 只在 fence 里持久化——散文区是给人读的,不承载这种机器旁路字段
+    const fence = readFence(projectRoot);
+    const isDevWaveAdvance = toStage === 'dev'
+      && cur.currentStage === 'dev'
+      && cur.currentWave != null
+      && fence.previousWave != null
+      && cur.currentWave !== fence.previousWave;
+    if (!isDevWaveAdvance) {
+      throw new Error(
+        `[state-must-advance] transitionStage 未真实推进: ${fromStage} → ${toStage} `
+        + `(currentStage=${cur.currentStage}, currentWave=${cur.currentWave}, fence.previousWave=${fence.previousWave}). `
+        + `同 stage 前进除 dev wave 推进外一律视为 bug。`
+      );
+    }
+  }
   return updateState(projectRoot, {
     currentStage: toStage,
     activeAgent: getAgentForStage(toStage),
@@ -146,6 +189,64 @@ export function transitionStage(projectRoot, fromStage, toStage) {
     retries: 0,
     pauseReason: null,
   });
+}
+
+// --- fence 读写(机器可读区,供 loop-next / driver 消费)---
+
+/**
+ * 读取 STATE.md 尾部的 gantry:state JSON fence。
+ *
+ * fence 缺失或解析失败时降级返回 defaultFence(),不抛错——保证 loop-next
+ * 在老 STATE.md 上仍能给出白名单 token。
+ *
+ * @param {string} projectRoot
+ * @returns {object} fence 对象
+ */
+export function readFence(projectRoot) {
+  const statePath = join(projectRoot, PLANNING_DIR, STATE_FILE);
+  if (!existsSync(statePath)) return defaultFence();
+  const content = readFileSync(statePath, 'utf-8');
+  const match = content.match(FENCE_REGEX);
+  if (!match) return defaultFence();
+  try {
+    const parsed = JSON.parse(match[1]);
+    return { ...defaultFence(), ...parsed };
+  } catch {
+    return defaultFence();
+  }
+}
+
+/**
+ * 写入 fence 段。策略:保留散文区(renderStateMd 输出)不变,fence 在其后。
+ *
+ * 若 STATE.md 已有 fence,原地替换;否则追加。始终原子写。
+ */
+export function writeFence(projectRoot, fenceObj) {
+  const planningDir = join(projectRoot, PLANNING_DIR);
+  if (!existsSync(planningDir)) mkdirSync(planningDir, { recursive: true });
+  const statePath = join(planningDir, STATE_FILE);
+
+  const prose = existsSync(statePath)
+    ? readFileSync(statePath, 'utf-8')
+    : renderStateMd(defaultState());
+
+  const fenceBlock = `${FENCE_BEGIN}\n\`\`\`json\n${JSON.stringify(fenceObj, null, 2)}\n\`\`\`\n${FENCE_END}\n`;
+
+  let next;
+  if (FENCE_REGEX.test(prose)) {
+    // 替换整个 fence 块(BEGIN 到 END 之间连注释一并替换)
+    next = prose.replace(
+      /<!-- BEGIN gantry:state -->[\s\S]+?<!-- END gantry:state -->\n?/,
+      fenceBlock,
+    );
+  } else {
+    // 追加到末尾,前置一个空行分隔散文与 fence
+    next = prose.trimEnd() + '\n\n' + fenceBlock;
+  }
+
+  const tempPath = `${statePath}.tmp-${process.pid}`;
+  writeFileSync(tempPath, next, 'utf-8');
+  renameSync(tempPath, statePath);
 }
 
 // --- 解析 / 渲染 ---
