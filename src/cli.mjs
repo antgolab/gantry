@@ -19,8 +19,9 @@ import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { readState, writeState, updateState, transitionStage } from './lib/state.mjs';
+import { readState, writeState, updateState, transitionStage, readFence } from './lib/state.mjs';
 import { STAGES, getNextStage, checkGate, PHASE_FILES } from './lib/phases.mjs';
+import { computeNextStep, WHITELIST } from './lib/loop.mjs';
 import { PLANNING_DIR, SPECS_DIR, specsPath } from './lib/paths.mjs';
 import { parseTasks, getProgress } from './lib/tasks.mjs';
 import { runHook, listHooks } from './lib/hooks.mjs';
@@ -73,6 +74,7 @@ const [,, command, ...args] = process.argv;
 const commands = {
   status, change, pipeline, auto, advance, context, done, hook, install, uninstall, archive, unarchive, metrics, version,
   help, knowledge,
+  'loop-next': loopNext,
 };
 
 // IDE-only skills：AI 驱动的阶段 / 动作命令，只在 IDE 中以 /gantry-<name> 执行，
@@ -335,6 +337,49 @@ function change(args, opts = {}) {
   console.log(`  上下文: ${PACK_PATH}`);
   console.log(`\n请执行阶段 0 (CHANGE):`);
   console.log(`  加载 .gantry/core/phases/0-change.md 并产出 ${specsPath(changeId, getPreferredArtifactName('proposal'))}`);
+}
+
+/**
+ * gantry loop-next — 只读:输出下一步白名单 token。
+ *
+ * pdlc S4 契约:stdout 恰好一行,匹配 ^(gantry-[a-z]+|done|blocked)$;
+ *              stderr 空或仅 [loop-next warn] 前缀;
+ *              exit 0 (推进 / done) / exit 2 (blocked)。
+ *
+ * 供 P2 driver 消费。本身不推进状态,不写任何文件。
+ */
+function loopNext() {
+  const projectRoot = process.cwd();
+  let state, fence;
+  try {
+    state = readState(projectRoot);
+    fence = readFence(projectRoot);
+  } catch (err) {
+    process.stderr.write(`[loop-next warn] state 读取失败: ${err.message}\n`);
+    process.stdout.write('blocked\n');
+    process.exit(2);
+  }
+
+  // 合并散文区(pipeline/currentStage/currentWave)与 fence(nextStep/lastStageResult/previousWave)
+  const merged = {
+    pipeline: state.pipeline,
+    currentStage: state.currentStage,
+    currentWave: state.currentWave,
+    previousWave: fence.previousWave,
+    nextStep: fence.nextStep,
+    lastStageResult: fence.lastStageResult,
+  };
+
+  const token = computeNextStep(merged);
+  if (!WHITELIST.includes(token)) {
+    process.stderr.write(`[loop-next warn] computeNextStep 输出非白名单: ${token}\n`);
+    process.stdout.write('blocked\n');
+    process.exit(2);
+  }
+
+  process.stdout.write(`${token}\n`);
+  if (token === 'blocked') process.exit(2);
+  process.exit(0);
 }
 
 /**
@@ -1269,6 +1314,9 @@ function help() {
   /gantry-next        在客户端中执行当前阶段产物并推进（不是 CLI 命令）
 
   auto                自动多阶段推进（步数取 config.autonomous.maxStagesPerRun），遇门禁失败 / 人工确认关卡 / 终态即停
+
+  loop-next           只读输出下一步 loop token（供无监督 driver 消费）
+                      白名单单 token,stdout 单行;exit 0=推进/done,exit 2=blocked
 
   status              查看当前状态、待确认关卡
     --json              输出 JSON 格式
