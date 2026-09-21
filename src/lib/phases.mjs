@@ -19,8 +19,7 @@ export const STAGES = {
   idle:         { label: '空闲',     next: ['change'] },
   change:       { label: '变更提案', next: ['requirement'] },
   requirement:  { label: '需求定义', next: ['design'] },
-  design:       { label: '技术设计', next: ['ui-design', 'task'] },
-  'ui-design':  { label: 'UI 设计',  next: ['task'] },
+  design:       { label: '技术设计', next: ['task'] },
   task:         { label: '任务分解', next: ['dev'] },
   dev:          { label: '开发执行', next: ['test'] },
   test:         { label: '测试验证', next: ['review'] },
@@ -36,7 +35,7 @@ export const STAGES = {
 //   light — 显式低风险路径，CHANGE → FAST → INTEGRATION
 //   full  — 默认完整路径
 export const PIPELINES = {
-  full:     ['change', 'requirement', 'design', 'ui-design', 'task', 'dev', 'test', 'review', 'integration'],
+  full:     ['change', 'requirement', 'design', 'task', 'dev', 'test', 'review', 'integration'],
   light:    ['change', 'fast', 'integration'],
   micro:    ['change', 'dev', 'done'],
 };
@@ -46,7 +45,6 @@ export const PHASE_FILES = {
   change:       '0-change.md',
   requirement:  '1-requirement.md',
   design:       '2-design.md',
-  'ui-design':  '2a-ui-design.md',
   task:         '3-task.md',
   dev:          '4-dev.md',
   test:         '5-test.md',
@@ -84,11 +82,6 @@ export function checkGate(targetStage, specsDir, config, state, projectRoot) {
     return { passed: true, reason: 'stage disabled, skipping' };
   }
 
-  // 条件跳过：ui-design 只在本次 change 明确影响 UI 时执行。
-  if (shouldSkipConditional(targetStage, config)) {
-    return { passed: true, reason: 'change has no UI impact, skipping conditional stage' };
-  }
-
   // pipeline-aware gate：dev/test/review/integration 这种"动态依赖"的阶段
   // 由调用 pipeline 决定前驱
   const pipeline = config?.pipeline;
@@ -98,7 +91,6 @@ export function checkGate(targetStage, specsDir, config, state, projectRoot) {
   const staticGates = {
     requirement: () => checkProposalReady(specsDir),
     design:      () => checkArtifact(specsDir, 'spec'),
-    'ui-design': () => checkArtifact(specsDir, 'design'),
     test:        () => checkAllTasksDone(specsDir),
     integration: () => {
       const base = pipeline === 'light'
@@ -177,7 +169,6 @@ export function getNextStage(currentStage, config) {
       for (let i = idx + 1; i < pipelineStages.length; i++) {
         const candidate = pipelineStages[i];
         if (config?.stages?.[candidate]?.enabled === false) continue;
-        if (shouldSkipConditional(candidate, config)) continue;
         return candidate;
       }
       return null;
@@ -189,31 +180,9 @@ export function getNextStage(currentStage, config) {
   const candidates = STAGES[currentStage]?.next || [];
   for (const candidate of candidates) {
     if (config?.stages?.[candidate]?.enabled === false) continue;
-    if (shouldSkipConditional(candidate, config)) continue;
     return candidate;
   }
   return null;
-}
-
-/**
- * 判定某阶段是否因「条件门」而应跳过。
- *
- * 目前唯一条件门：ui-design 配 `enabled:'auto' + condition:'ui-impact'`。
- *
- * 判定语义：
- *   config._uiImpact === true  → 本次 change 影响 UI，不跳过
- *   其他值                    → 跳过
- *
- * @param {string} stage
- * @param {object} config
- * @returns {boolean}
- */
-export function shouldSkipConditional(stage, config) {
-  const stageCfg = config?.stages?.[stage];
-  if (!stageCfg) return false;
-  if (stageCfg.enabled !== 'auto') return false;
-  if (stageCfg.condition !== 'ui-impact') return false;
-  return config?._uiImpact !== true;
 }
 
 // --- 内部辅助 ---
@@ -268,6 +237,30 @@ export function countOpenQuestions(content) {
     if (/^\s*-\s*\[\s*\]/.test(line)) open++;
   }
   return open;
+}
+
+/**
+ * hard-lock 判定(纯函数,便于单测)。
+ *
+ * design / integration:无条件锁 —— 这两个关卡的价值在人工判断决策方向,
+ * 内容无法自证。
+ *
+ * change:**内容驱动** —— PROPOSAL.md「## 待澄清问题」段清空时(0 个未勾选
+ * `- [ ]`) 视为边界已澄清,自动放行;段落缺失或还有未勾选项,保持锁。
+ * 段落判定单一事实源 = `countOpenQuestions`,与 checkGate 共用。
+ *
+ * @param {string} stage
+ * @param {string} [specsDir]  —— change 关卡读 PROPOSAL 需要;缺省保守锁
+ * @returns {boolean}
+ */
+export function requiresApproval(stage, specsDir) {
+  if (stage === 'design' || stage === 'integration') return true;
+  if (stage !== 'change') return false;
+  if (!specsDir) return true;
+  const proposal = resolveArtifactPath(specsDir, 'proposal');
+  if (!proposal || !existsSync(proposal.path)) return true;
+  const content = readFileSync(proposal.path, 'utf-8');
+  return countOpenQuestions(content) > 0;
 }
 
 function checkAllTasksDone(specsDir) {

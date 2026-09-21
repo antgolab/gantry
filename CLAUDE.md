@@ -131,8 +131,16 @@ light: idle → change → fast → integration → idle
 
 ## 可用 Skills
 
-公开 gantry skills 位于 `.claude/skills/gantry-*/`。内部阶段协议由 `/gantry-next` / `/gantry-exec` / `/gantry-review` 按需读取。
+公开 gantry skills 位于 `.claude/skills/gantry-*/`。内部阶段协议由 `/gantry-next` 按需读取,`exec` / `fast` / `knowledge` 已内部化(见下)。
 
-核心命令：`/gantry-change`、`/gantry-next`、`/gantry-exec`、`/gantry-archive`。
-扩展入口：`/gantry-auto`、`/gantry-review`、`/gantry-health`、`/gantry-context`、`/gantry-knowledge`、`/gantry-debug`、`/gantry-fast`。
+日常骨架：`/gantry-change`、`/gantry-next`、`/gantry-archive`。
+自动驾驶：`/gantry-auto`(多步推进 · 保留人工确认关卡)。
+状态类:`/gantry-status`、`/gantry-resume`、`/gantry-adjust`。
+审查与排障:`/gantry-review`、`/gantry-debug`。
+维护:`/gantry-context`(scan / architect / evolve / knowledge)、`/gantry-health`、`/gantry-unarchive`。
+
+内部化(不再作为用户命令入口):
+- `exec`:`/gantry-next` 到 dev 阶段自动触发
+- `fast`:light 挡位由 `/gantry-change` / `/gantry-auto` 内部判定
+- `knowledge`:capture / curate 并入 `/gantry-context knowledge <sub>`
 <!-- END gantry -->

@@ -21,7 +21,6 @@ export const STAGE_AGENTS = {
   requirement: 'planner',
   task: 'planner',
   design: 'architect',
-  'ui-design': 'architect',
   architect: 'architect',
   evolve: 'architect',
   dev: 'executor',

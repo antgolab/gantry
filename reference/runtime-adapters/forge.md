@@ -36,7 +36,7 @@ gantry/templates/TASK.md
 |---|---|
 | `0-change` | 记录新 change、风险、是否需要完整流程 |
 | `1-requirement` | 标记需求产物生成中，禁止直接跳到实现 |
-| `2-design` / `2a-ui-design` | 记录设计产物、架构/UI 风险 |
+| `2-design` | 记录设计产物、架构风险；PROPOSAL uiImpact=true 时同段含 § 8 UI 风险 |
 | `3-task` | 记录 task 拆分完成，作为 `4-dev` 的前置证据 |
 | `4-dev` | 进入写文件阶段，检查 task-id、routing started、测试计划 |
 | `5-test` | 记录测试证据 |

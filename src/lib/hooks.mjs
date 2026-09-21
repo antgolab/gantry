@@ -74,3 +74,29 @@ export async function runHook(config, event, projectRoot) {
 export function listHooks(config) {
   return config?.hooks || {};
 }
+
+/**
+ * 离线校验单条 hook 配置。不实际执行,只判定"能不能跑"。
+ *   shell   → 无法离线校验,标记 pending(运行时才知道)
+ *   script  → 检查文件存在性
+ *   http    → 无法离线校验(不主动发请求),标记 pending
+ *
+ * @returns { ok: boolean, type: 'shell'|'script'|'http', reason?: string, pending?: boolean }
+ */
+export function checkHook(hookDef, projectRoot) {
+  const cmd = typeof hookDef === 'string' ? hookDef : hookDef?.cmd;
+  if (!cmd) return { ok: false, type: 'shell', reason: '配置为空' };
+
+  const type = (typeof hookDef === 'object' && hookDef.type) || detectType(cmd);
+
+  if (type === 'script') {
+    const scriptPath = resolve(projectRoot, cmd);
+    if (!existsSync(scriptPath)) {
+      return { ok: false, type, reason: `脚本不存在: ${scriptPath}` };
+    }
+    return { ok: true, type };
+  }
+
+  // shell / http:不离线跑,只标记"运行时校验"
+  return { ok: true, type, pending: true };
+}

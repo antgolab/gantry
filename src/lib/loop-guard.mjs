@@ -12,6 +12,11 @@
  *   5. 都不满足                     → tripped:false
  *
  * 与 P1 loop.mjs 无耦合;driver 先跑 guard 再跑 loop-next。
+ *
+ * 注:contextUsage.tokens / contextUsage.windowPercent 需宿主 agent(Claude Code
+ * / Codex 等)通过 hook 主动写入 STATE.md。gantry CLI 是独立 Node 进程,拿不到
+ * 宿主的真实 token 使用量,不做经验估算。字段当前无生产者时,1/2 分支不会触发,
+ * 只由 3(stagesRun)兜底熔断。等接入真实数据源后此消费逻辑自然生效。
  */
 
 const DEFAULT_THRESHOLDS = Object.freeze({

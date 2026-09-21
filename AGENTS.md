@@ -26,19 +26,32 @@
 
 ## 核心 Skills
 
-- `$gantry-status`：查看当前状态
+日常骨架：
 - `$gantry-change`：启动新变更
 - `$gantry-next`：执行当前阶段并推进
-- `$gantry-exec`：执行当前任务 / wave
-- `$gantry-resume`：断点恢复
 - `$gantry-archive`：完成并归档
-- `$gantry-auto`：自主推进（保留人工确认关卡）
-- `$gantry-review`：审查入口（代码 / 需求 / 对抗）
-- `$gantry-health`：代码库健康检查
-- `$gantry-context`：上下文与架构治理
-- `$gantry-knowledge`：知识捕获与维护
-- `$gantry-debug`：系统化调试
-- `$gantry-fast`：快速路径
 
-公开 skills 位于 `.agents/skills/`；内部阶段协议由 `gantry-next` / `gantry-exec` / `gantry-review` 按需读取。
+自动驾驶：
+- `$gantry-auto`：多步自主推进（保留人工确认关卡）
+
+状态类：
+- `$gantry-status`：查看当前状态
+- `$gantry-resume`：断点恢复
+- `$gantry-adjust`：中途变化 → 打开 PATCH.md 闭环
+
+审查与排障：
+- `$gantry-review`：审查入口（代码 / 需求 / 对抗）
+- `$gantry-debug`：系统化调试
+
+维护：
+- `$gantry-context`：上下文与架构治理（scan / architect / evolve / knowledge）
+- `$gantry-health`：代码库健康检查
+- `$gantry-unarchive`：从归档恢复 change
+
+已内部化（不再作为用户命令入口）：
+- `exec`：`$gantry-next` 到 dev 阶段自动触发
+- `fast`：light 挡位由 `$gantry-change` / `$gantry-auto` 内部判定
+- `knowledge`：capture / curate 并入 `$gantry-context knowledge <sub>`
+
+公开 skills 位于 `.agents/skills/`；内部阶段协议由 `gantry-next` 按需读取。
 <!-- END gantry -->

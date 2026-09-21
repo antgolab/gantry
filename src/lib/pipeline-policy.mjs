@@ -24,6 +24,14 @@ export function assessLightEligibility(text = '') {
   return { eligible: risks.length === 0, risks };
 }
 
+/**
+ * 从 PROPOSAL.md 判断本次 change 是否影响用户可见 UI。
+ *
+ * ui-design 阶段已合入 2-design.md(2026-09-21 · 方向 A'):字段不再驱动
+ * pipeline 分支,但仍是 design 阶段决定"§ 8 前端 UI 设计"小节是否展开的
+ * 事实源。字段保留:0-change.md 步骤 0.5 依旧要求 PROPOSAL 写清 uiImpact,
+ * design 阶段读它决定要不要写前端小节。
+ */
 export function proposalHasUiImpact(text = '') {
   const content = String(text);
   return /(?:^|\n)\s*uiImpact\s*:\s*true\b/im.test(content)

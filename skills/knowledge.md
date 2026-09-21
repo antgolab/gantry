@@ -1,15 +1,15 @@
 ---
 name: gantry:knowledge
-description: 知识捕获与知识库维护（capture / curate）
+description: 已合并进 /gantry-context knowledge · 保留仅供内部 phase 引用
 agent: researcher
 stage: knowledge
 ---
 
-# /gantry:knowledge
+# /gantry:knowledge（已内部化 · 2026-09-21）
 
-知识入口。用于捕获研究、POC、技术对比等非闭环知识，也用于月度/季度知识库维护。
-
-> 安装为 Claude/Codex skill 后，显式调用名通常是 `/gantry-knowledge`；在支持命名空间斜杠命令的环境里也可写 `/gantry:knowledge`。
+> **状态**：此 skill 已从公开入口下沉为内部机制。用户命令请用 `/gantry-context knowledge <capture|curate>` 替代。
+>
+> 源文件保留是因为 `phases/K-knowledge.md` / `phases/C-curator.md` 里的触发方式说明与老归档 change 仍引用此路径；renderer 不再产出 `.claude/skills/gantry-knowledge/`。
 
 ## 用法
 

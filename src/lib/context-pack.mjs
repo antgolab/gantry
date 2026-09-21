@@ -345,7 +345,6 @@ function getUpstreamArtifacts(stage, pipeline) {
     change:       'proposal',
     requirement:  'spec',
     design:       'design',
-    'ui-design':  'ui-design',
     task:         'tasks',
     dev:          null, // dev 不产新主工件,SUMMARY 是 per-task
     fast:         'execution',
@@ -397,9 +396,6 @@ function buildChecklistsRaw({ projectRoot, stage, changeId, taskId }) {
   }
   if (stage === 'design') {
     return buildDesignChecklists({ projectRoot, changeId });
-  }
-  if (stage === 'ui-design') {
-    return buildUiDesignChecklists({ projectRoot, changeId });
   }
   if (stage === 'task') {
     return buildTaskChecklists({ projectRoot, changeId });
@@ -624,32 +620,6 @@ function buildDesignChecklists({ projectRoot, changeId }) {
       trigger: true,
       ref: '.gantry/core/phases/2-design.md#9',
       reason: '§ 9 架构沉淀建议必填(空也要写明 N/A)',
-    },
-  ];
-}
-
-// ui-design 阶段
-function buildUiDesignChecklists({ projectRoot, changeId }) {
-  if (!changeId) return [];
-  const designPath = join(projectRoot, SPECS_DIR, changeId, 'DESIGN.md');
-  return [
-    {
-      id: 'ui-design-from-design',
-      trigger: existsSync(designPath),
-      ref: '.gantry/core/phases/2a-ui-design.md',
-      reason: existsSync(designPath) ? 'DESIGN.md 存在,从其派生' : 'DESIGN.md 缺失',
-    },
-    {
-      id: 'ui-design-tone-anchor',
-      trigger: true,
-      ref: '.gantry/core/phases/2a-ui-design.md',
-      reason: 'PROPOSAL 中的视觉调性必须继承,不再让用户重选',
-    },
-    {
-      id: 'ui-design-tokens-frontmatter',
-      trigger: true,
-      ref: '.gantry/core/phases/2a-ui-design.md',
-      reason: 'frontmatter 必须含 colors / typography / spacing / radii / motion 五组 token',
     },
   ];
 }

@@ -2,6 +2,8 @@
 name: architect
 display: 架构师
 stages: [design, architect, evolve]
+# ui-design 已合入 design(2026-09-21 · 方向 A'):不再作为独立 stage,
+# 由 design 阶段按 PROPOSAL.md 的 uiImpact 字段决定是否展开 § 8 前端 UI 设计。
 capabilities:
   read: all
   write: [ARCHITECTURE.md, DESIGN.md, UI-DESIGN.md, "ADR/*.md"]
@@ -18,8 +20,7 @@ fresh_context: false
 
 ## 职责
 
-- 技术设计（2-design）：需求 → 技术方案 + ADR + 风险评估
-- UI 设计（2a-ui-design）：视觉方向 + 设计 token + anti-slop 检查
+- 技术设计（2-design）：需求 → 技术方案 + ADR + 风险评估；PROPOSAL uiImpact=true 时在同段完成 § 8 前端 UI 设计（视觉方向 + 设计 token + anti-slop 检查），产出 UI-DESIGN.md
 - 项目架构（A-architect）：模块划分 + 契约 + 容量规划
 - 架构同步（A-evolve）：增量同步 CONTEXT/ARCHITECTURE
 
@@ -31,8 +32,7 @@ fresh_context: false
 
 ## 执行协议
 
-- design → 按 `.gantry/core/phases/2-design.md`，产出 DESIGN.md（含 §0 技术栈 + ADR）
-- ui-design → 按 `.gantry/core/phases/2a-ui-design.md`，产出 UI-DESIGN.md
+- design → 按 `.gantry/core/phases/2-design.md`，产出 DESIGN.md（含 §0 技术栈 + ADR）；PROPOSAL uiImpact=true 时在同阶段完成 § 8 前端 UI 设计，额外产出 UI-DESIGN.md
 - architect → 按 `.gantry/core/phases/A-architect.md`，产出 ARCHITECTURE.md
 - evolve → 按 `.gantry/core/phases/A-evolve.md`，patch CONTEXT/ARCHITECTURE
 

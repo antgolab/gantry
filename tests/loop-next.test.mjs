@@ -56,13 +56,13 @@ test('AC-3 · micro pipeline 在 dev + ok 时 done', () => {
   assert.equal(computeNextStep(state), 'done');
 });
 
-test('AC-3 · full 未到 integration 时按 pipeline 顺序推进(跳过 ui-design 条件阶段)', () => {
+test('AC-3 · full 未到 integration 时按 pipeline 顺序推进(design → task)', () => {
   const state = makeState({
     pipeline: 'full',
     currentStage: 'design',
     lastStageResult: null,
   });
-  // ui-design 是条件阶段,loop 自动派发时跳过 → design 直接接 task
+  // ui-design 已合入 design,design 直接接 task
   const next = computeNextStep(state);
   assert.equal(next, 'gantry-task', `期望 gantry-task, got ${next}`);
 });
@@ -124,6 +124,36 @@ test('AC-3 · 未知 pipeline 回退到 full 语义', () => {
     lastStageResult: { ok: true, blockedReason: null },
   });
   assert.equal(computeNextStep(state), 'done');
+});
+
+test('回归 · full integration 但 lastStageResult 缺失时返回 blocked(不能误判为 done)', () => {
+  // 场景:STATE.md 已推到 integration 但 fence 缺失 / verify 未跑。
+  // 早期实现 deriveNextFromStage 在 pipeline 末位无脑返回 'done',
+  // 绕过 CONVERGE_CONDITIONS 要求的 ok===true → driver 会跳过 AC 覆盖硬闸。
+  const state = makeState({
+    pipeline: 'full',
+    currentStage: 'integration',
+    lastStageResult: null,
+  });
+  assert.equal(computeNextStep(state), 'blocked');
+});
+
+test('回归 · light integration 但 lastStageResult 缺失时返回 blocked', () => {
+  const state = makeState({
+    pipeline: 'light',
+    currentStage: 'integration',
+    lastStageResult: null,
+  });
+  assert.equal(computeNextStep(state), 'blocked');
+});
+
+test('回归 · integration 且 lastStageResult.ok=false 时返回 blocked', () => {
+  const state = makeState({
+    pipeline: 'full',
+    currentStage: 'integration',
+    lastStageResult: { ok: false, blockedReason: null },
+  });
+  assert.equal(computeNextStep(state), 'blocked');
 });
 
 test('AC-3 · CONVERGE_CONDITIONS 冻结不可变', () => {

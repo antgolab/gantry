@@ -90,7 +90,7 @@ AI 扫本次 change 的 `EXECUTION.md`、例外 `*-SUMMARY.md` 与遗留 `*-PROG
 - [ ] 已 grep `CONTEXT.md`，若与已锁决策冲突，先同步修正 CONTEXT 或把本条放入 `## 待审`
 - [ ] 与现有 active LESSONS 不重复；若重复，旧条目标 `superseded-by:L-NNN`
 
-缺任一项时，不得直接放入 active 条目区；先写入 `## 待审`，等待 `/gantry-knowledge curate` 合入。
+缺任一项时，不得直接放入 active 条目区；先写入 `## 待审`，等待 `/gantry-context knowledge curate` 合入。
 
 ---
 

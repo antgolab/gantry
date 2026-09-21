@@ -23,10 +23,9 @@ import {
   readState, writeState, updateState, transitionStage,
   readFence, writeFence, writeFenceBlockedReason,
 } from './lib/state.mjs';
-import { STAGES, getNextStage, checkGate, PHASE_FILES } from './lib/phases.mjs';
-import { computeNextStep, WHITELIST, checkAcCoverage } from './lib/loop.mjs';
+import { STAGES, getNextStage, checkGate, PHASE_FILES, countOpenQuestions, requiresApproval } from './lib/phases.mjs';
+import { computeNextStep, WHITELIST } from './lib/loop.mjs';
 import { checkLoopGuard } from './lib/loop-guard.mjs';
-import { parseTestCommands } from './lib/test-commands.mjs';
 import {
   appendHealAttempt,
   readHealLog,
@@ -34,11 +33,11 @@ import {
 } from './lib/self-heal.mjs';
 import { PLANNING_DIR, SPECS_DIR, specsPath } from './lib/paths.mjs';
 import { parseTasks, getProgress } from './lib/tasks.mjs';
-import { runHook, listHooks } from './lib/hooks.mjs';
+import { runHook, listHooks, checkHook } from './lib/hooks.mjs';
 import { writeContextPack, readContextPack, PACK_PATH } from './lib/context-pack.mjs';
 import { getPreferredArtifactName, resolveArtifactPath } from './lib/artifacts.mjs';
 import { readConfig } from './lib/config.mjs';
-import { normalizePipeline, proposalHasUiImpact } from './lib/pipeline-policy.mjs';
+import { normalizePipeline } from './lib/pipeline-policy.mjs';
 import { decideTier } from './lib/tier-router.mjs';
 import { knowledge } from './commands/knowledge.mjs';
 import { getEvents as frictionGetEvents, getScore as frictionGetScore } from './lib/friction.mjs';
@@ -85,9 +84,7 @@ const commands = {
   status, change, pipeline, auto, advance, context, done, hook, install, uninstall, archive, unarchive, metrics, version,
   help, knowledge,
   'loop-next': loopNext,
-  'loop-guard': loopGuard,
   'heal': heal,
-  'ac-gate': acGate,
 };
 
 // IDE-only skills：AI 驱动的阶段 / 动作命令，只在 IDE 中以 /gantry-<name> 执行，
@@ -183,7 +180,6 @@ function status(args) {
     const nextSt = getNextStage(state.currentStage, {
       ...cfg,
       pipeline: state.pipeline,
-      _uiImpact: readProposalUiImpact(projectRoot, state.activeChange),
     });
     if (nextSt) {
       console.log(`\n下一步: /gantry-next  →  执行 ${state.currentStage} 并推进到 ${nextSt}`);
@@ -242,7 +238,7 @@ function formatContextSignal(contextUsage = {}) {
  *
  * opts.fsSnapshot 供测试注入，覆盖 git 探测。
  */
-function change(args, opts = {}) {
+async function change(args, opts = {}) {
   const projectRoot = process.cwd();
   const isDryRun = args.includes('--dry-run');
 
@@ -263,6 +259,14 @@ function change(args, opts = {}) {
       console.error(`已有活跃变更: ${state.activeChange}`);
       console.error('请先完成或归档当前变更 (gantry archive)');
       process.exit(1);
+    }
+
+    // before:change hook — 触发点在状态写入前,失败即拒绝新建变更(退出 2)
+    const cfg = readConfig(projectRoot);
+    const hookResult = await runHook(cfg, 'before:change', projectRoot);
+    if (!hookResult.ok) {
+      console.error('✗ before:change hook 阻断,变更未创建');
+      process.exit(2);
     }
   }
 
@@ -396,44 +400,40 @@ function loopNext() {
 }
 
 /**
- * gantry loop-guard — 只读:检查上下文/步数熔断状态。
+ * P4 命令折叠(2026-09-16):`loop-guard` 已合入 `advance` 入口;`ac-gate` 已完全删除,
+ * AC 覆盖硬闸继续由 integration 门禁末端 `checkAcGate` 承担(src/lib/phases.mjs)。
+ * 需要在 review 阶段自检 AC 覆盖 → 跑一次 `gantry advance` 直到 integration。
  *
- * 契约(SPEC AC-4):
- *   - 未熔断:stdout `ok`,exit 0
- *   - 已熔断:stdout `blocked`,stderr `[loop-guard warn] <reason>`,exit 2
- *
- * 熔断时会 writeFence 更新 fence.lastStageResult.blockedReason(ADR-002),
- * 但不覆盖已有非空 reason(单一职责:谁先熔断谁负责)。
+ * 保留 `checkLoopGuard` / `checkAcCoverage` 纯函数,供 advance 与 phases 内联使用。
  */
-function loopGuard() {
-  const projectRoot = process.cwd();
-  let state, config, fence;
+
+/**
+ * 在 advance 入口前置的上下文/步数熔断检查(原 gantry loop-guard 命令折叠而来)。
+ *
+ * 熔断契约(与旧命令一致):
+ *   - stderr `[advance warn] <reason>`,exit 2
+ *   - fence.lastStageResult.blockedReason 非覆盖式写入
+ *
+ * 未熔断 → 静默 return,advance 继续走门禁与阶段推进。
+ */
+function preAdvanceLoopGuard(projectRoot) {
+  let state, config;
   try {
     state = readState(projectRoot);
     config = readConfig(projectRoot);
-    fence = readFence(projectRoot);
   } catch (err) {
-    process.stderr.write(`[loop-guard warn] state 读取失败: ${err.message}\n`);
-    process.stdout.write('blocked\n');
+    process.stderr.write(`[advance warn] loop-guard state 读取失败: ${err.message}\n`);
     process.exit(2);
   }
-
   const verdict = checkLoopGuard(state, config);
-  if (!verdict.tripped) {
-    process.stdout.write('ok\n');
-    process.exit(0);
-  }
+  if (!verdict.tripped) return;
 
-  // 熔断:写 fence.blockedReason(非覆盖),用于下一次 loop-next 自然返回 blocked。
-  // T-FIX-03:走 writeFenceBlockedReason helper,与 heal --check 共用同一策略。
   const reason = `loop-guard: ${verdict.reason}`;
   const r = writeFenceBlockedReason(projectRoot, reason);
   if (r.error) {
-    process.stderr.write(`[loop-guard warn] writeFence 失败: ${r.error}\n`);
+    process.stderr.write(`[advance warn] writeFence 失败: ${r.error}\n`);
   }
-
-  process.stderr.write(`[loop-guard warn] ${verdict.reason}\n`);
-  process.stdout.write('blocked\n');
+  process.stderr.write(`[advance warn] ${verdict.reason}\n`);
   process.exit(2);
 }
 
@@ -535,45 +535,9 @@ function safeReadState(root) {
   try { return readState(root); } catch { return null; }
 }
 
-/**
- * gantry ac-gate — SPEC AC 覆盖强校验(SPEC AC-6)。
- *
- * 只读契约:
- *   全覆盖 → stdout `ok · ac=<n>`, exit 0
- *   有缺失 → stdout `blocked · missing=<list>`, stderr warn, exit 2
- *   SPEC 无 AC / test-commands.yml 缺失 → stdout `skip · no-ac|no-config`, exit 0
- * 不写 fence(交给 integration 门禁)。
- */
-function acGate() {
-  const projectRoot = process.cwd();
-  const state = safeReadState(projectRoot);
-  if (!state?.activeChange) {
-    process.stderr.write('[ac-gate] no active change\n');
-    process.exit(1);
-  }
-  const specsDir = join(projectRoot, SPECS_DIR, state.activeChange);
-  const tcPath = join(projectRoot, '.gantry/loop/test-commands.yml');
-  if (!existsSync(tcPath)) {
-    process.stderr.write('[ac-gate] test-commands.yml missing\n');
-    process.stdout.write('skip · no-config\n');
-    process.exit(0);
-  }
-  const testCommands = parseTestCommands(tcPath);
-  const cov = checkAcCoverage(specsDir, testCommands);
-  if (cov.skipped) {
-    process.stderr.write('[ac-gate] SPEC 无 AC 编号\n');
-    process.stdout.write('skip · no-ac\n');
-    process.exit(0);
-  }
-  if (cov.missing && cov.missing.length > 0) {
-    process.stderr.write(`[ac-gate] missing coverage: ${cov.missing.join(', ')}\n`);
-    process.stdout.write(`blocked · missing=${cov.missing.join(',')}\n`);
-    process.exit(2);
-  }
-  const acCount = cov.covered.filter(x => x !== '*').length;
-  process.stdout.write(`ok · ac=${acCount}\n`);
-  process.exit(0);
-}
+// ac-gate CLI 已删除(2026-09-16 P4 命令折叠):
+// AC 覆盖硬闸由 integration 门禁末端 checkAcGate 承担(src/lib/phases.mjs)。
+// 手动自检可直接 `gantry advance` 到 integration 观察门禁结果。
 
 /**
  * gantry pipeline full — 显式将当前 change 从 light 提升为 full。
@@ -637,13 +601,17 @@ function pipeline(args) {
  *   失败 → retries+=1，连续 > maxRetries 拒推
  *   --skip → 不阻塞
  */
-function advance(args) {
+async function advance(args) {
   const projectRoot = process.cwd();
   ensureInit(projectRoot);
 
+  // 命令折叠(2026-09-16):原 gantry loop-guard 内联到 advance 入口。
+  // 上下文 / 步数熔断时:exit 2 + 写 fence.blockedReason(非覆盖)。
+  preAdvanceLoopGuard(projectRoot);
+
   // advance 是「机械推进」入口：推进一步即停。多阶段自主推进用 gantry auto。
   const isSkip = args.includes('--skip');
-  const result = nextOnce(projectRoot, { isSkip });
+  const result = await nextOnce(projectRoot, { isSkip });
   if (result.stop && result.exitCode) process.exit(result.exitCode);
   if (result.reachedEnd) {
     console.log(`  管线已到达 ${result.reachedEnd}`);
@@ -655,7 +623,7 @@ function advance(args) {
  *   按 autonomous.maxStagesPerRun 自动推进,遇门禁阻塞或终态即停。
  *   单次推进步数由配置 autonomous.maxStagesPerRun 决定(不接受命令行覆盖)。
  */
-function auto(args) {
+async function auto(args) {
   const projectRoot = process.cwd();
   ensureInit(projectRoot);
 
@@ -679,7 +647,7 @@ function auto(args) {
   console.log(`自主模式: 最多推进 ${maxStages} 个阶段`);
 
   for (let step = 0; step < maxSteps; step++) {
-    const result = nextOnce(projectRoot);
+    const result = await nextOnce(projectRoot);
     if (result.stop) {
       console.log(`  自动推进在 ${step}/${maxSteps} 步停止`);
       if (result.exitCode) process.exit(result.exitCode);
@@ -702,7 +670,7 @@ function auto(args) {
 /**
  * 单步推进。返回 { stop, reachedEnd, exitCode }
  */
-function nextOnce(projectRoot, { isSkip = false } = {}) {
+async function nextOnce(projectRoot, { isSkip = false } = {}) {
   const state = readState(projectRoot);
 
   if (state.currentStage === 'idle') {
@@ -719,7 +687,6 @@ function nextOnce(projectRoot, { isSkip = false } = {}) {
   const effectiveConfig = {
     ...config,
     pipeline: state.pipeline || config.pipeline,
-    _uiImpact: readProposalUiImpact(projectRoot, state.activeChange),
   };
   const nextStage = getNextStage(state.currentStage, effectiveConfig);
   if (!nextStage) {
@@ -757,6 +724,16 @@ function nextOnce(projectRoot, { isSkip = false } = {}) {
     }
   }
 
+  // before:dev hook — 门禁已过、状态还未推进时触发。失败即拒绝进入 dev(退出 2)
+  if (nextStage === 'dev') {
+    const hookResult = await runHook(effectiveConfig, 'before:dev', projectRoot);
+    if (!hookResult.ok) {
+      updateState(projectRoot, { pauseReason: 'before:dev hook failed' });
+      console.error('✗ before:dev hook 阻断,未进入 dev 阶段');
+      return { stop: true, exitCode: 2 };
+    }
+  }
+
   transitionStage(projectRoot, state.currentStage, nextStage);
 
   // 推进成功后,刷新 context-pack.json 给 AI client 消费
@@ -782,21 +759,12 @@ function nextOnce(projectRoot, { isSkip = false } = {}) {
   // 进入 Change / Design / Integration 后，把控制权交还给人。
   // 人审阅后再执行 /gantry-next 继续。
   // 单步 gantry advance 不受影响——它推进这一步后本就停下等下一次调用。
-  if (requiresApproval(nextStage)) {
+  // specsDir 已在函数首部由 state.activeChange 派生;change 关卡的内容驱动
+  // hard-lock 通过 requiresApproval 读该目录下的 PROPOSAL。
+  if (requiresApproval(nextStage, specsDir)) {
     return { stop: false, pausedForApproval: nextStage };
   }
   return { stop: false };
-}
-
-function requiresApproval(stage) {
-  return ['change', 'design', 'integration'].includes(stage);
-}
-
-function readProposalUiImpact(projectRoot, changeId) {
-  if (!changeId) return false;
-  const proposal = resolveArtifactPath(join(projectRoot, SPECS_DIR, changeId), 'proposal');
-  if (!proposal || !existsSync(proposal.path)) return false;
-  return proposalHasUiImpact(readFileSync(proposal.path, 'utf-8'));
 }
 
 /**
@@ -952,13 +920,30 @@ async function hook(args) {
       console.log('未配置任何 hook');
       console.log(`  在 ${PLANNING_DIR}/config.json 的 hooks 字段添加，例如:`);
       console.log(`  "hooks": { "before:dev": "npm run lint" }`);
+      console.log(`  支持事件: before:change / after:change / before:dev / after:integration`);
       return;
     }
+    let hasError = false;
     for (const key of keys) {
       const def = hooks[key];
       const cmd = typeof def === 'string' ? def : def.cmd;
-      console.log(`  ${key.padEnd(22)} → ${cmd}`);
+      const check = checkHook(def, projectRoot);
+      // ✓ 校验通过 / ✗ 配置有问题(阻塞)/ ⚠ 无法离线校验,运行时才知(pending)
+      let mark = '✓';
+      let suffix = '';
+      if (!check.ok) {
+        mark = '✗';
+        suffix = ` (${check.reason})`;
+        hasError = true;
+      } else if (check.pending) {
+        mark = '⚠';
+        suffix = ` (${check.type},运行时校验)`;
+      } else {
+        suffix = ` (${check.type})`;
+      }
+      console.log(`  ${mark} ${key.padEnd(22)} → ${cmd}${suffix}`);
     }
+    if (hasError) process.exit(1);
     return;
   }
 
@@ -1053,7 +1038,6 @@ function initializeProject(projectRoot, { pipeline, tool, primaryAgent }) {
       change:       { enabled: true, requiresApproval: true },
       requirement:  { enabled: true },
       design:       { enabled: true, requiresApproval: true },
-      'ui-design':  { enabled: 'auto', condition: 'ui-impact' },
       task:         { enabled: true },
       dev:          { enabled: true },
       fast:         { enabled: true },
@@ -1492,8 +1476,33 @@ function version() {
   console.log(`gantry v${pkg.version}`);
 }
 
-function help() {
+function help(args = []) {
+  if (args.includes('--all')) return helpAll();
+
   console.log(`gantry — 阶段驱动编排器
+
+日常在 IDE 里用 skill 推进,CLI 只做机械操作:
+  /gantry-change  /gantry-next  /gantry-archive  /gantry-auto  /gantry-review
+
+人工敲的:
+  install              初始化项目 / 全局安装
+  status               查看当前状态       [--json]
+  archive              归档当前变更
+  hook <list|run>      查看 / 执行阶段 hook
+
+自动化 / 脚本用:
+  change "<描述>"      开新变更           [--pipeline light]
+  advance              单步推进           [--skip]
+  auto                 多阶段自动推进
+  loop-next            无监督 driver 消费的 token
+  heal                 dev 阶段 self-heal
+
+详细命令表: gantry help --all
+文档 / 版本: docs/  |  gantry --version`);
+}
+
+function helpAll() {
+  console.log(`gantry — 完整命令参考
 
 用法: gantry <command> [options]
 
@@ -1508,12 +1517,15 @@ function help() {
   pipeline full       将当前活跃 change 从 light 单向提升为 full
   /gantry-next        在客户端中执行当前阶段产物并推进（不是 CLI 命令）
 
+  advance             单步推进（供 loop driver / 手动调用）
+    --skip              跳过软门禁失败继续推进
+
   auto                自动多阶段推进（步数取 config.autonomous.maxStagesPerRun），遇门禁失败 / 人工确认关卡 / 终态即停
 
   loop-next           只读输出下一步 loop token（供无监督 driver 消费）
                       白名单单 token,stdout 单行;exit 0=推进/done,exit 2=blocked
-  loop-guard          只读检查上下文/步数熔断（context/stagesRun）
-                      未熔断=ok+exit 0;熔断=blocked+exit 2,并写 fence.blockedReason
+
+  heal                dev 阶段 verify 失败时的 self-heal 缓冲（R2.5 上限触发时写 fence.blockedReason）
 
   status              查看当前状态、待确认关卡
     --json              输出 JSON 格式
@@ -1540,8 +1552,10 @@ function help() {
 
   done <task-id>      标记任务完成 + 落 EXECUTION.md 执行日志
 
-  hook run <event>    执行已配置的阶段 hook（before:dev / after:test 等）
-  hook list           列出全部已配置的 hook
+  hook run <event>    执行已配置的阶段 hook（before:change / before:dev 等）
+  hook list           列出全部已配置的 hook 及状态标记
+
+  knowledge <sub>     non-change 知识库管理（研究、决策记录等）
 
   unarchive <id>      从归档恢复并重新激活 change
     --from <name>       指定归档版本名（默认同 change-id）
@@ -1552,7 +1566,8 @@ function help() {
     --out <dir>         报告输出目录（默认 .gantry/specs/metrics）
 
   version             显示版本号
-  help                显示本帮助`);
+  help                显示简版帮助
+  help --all          显示本完整表`);
 }
 
 // --- install/uninstall 辅助 ---

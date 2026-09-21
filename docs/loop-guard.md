@@ -1,13 +1,15 @@
 # gantry loop-guard · 上下文 / 步数熔断
 
-> P2 交付,承接 P1 `loop-next`。文档字段与代码一致来源于:
-> `src/lib/loop-guard.mjs` / `src/cli.mjs` loopGuard / `.gantry/loop/loop.sh`
+> P2 交付、P4(2026-09-16)命令折叠后内联到 `gantry advance` 入口。
+> 独立的 `gantry loop-guard` 子命令已删除,同名纯函数 `checkLoopGuard` 保留。
+> 文档字段与代码一致来源于:
+> `src/lib/loop-guard.mjs` / `src/cli.mjs` preAdvanceLoopGuard / `.gantry/loop/loop.sh`
 
 ---
 
 ## 何时熔断
 
-driver 每次 iteration 前先跑 `gantry loop-guard`,按优先级判定:
+每次 `gantry advance` 入口先跑 `preAdvanceLoopGuard`(内联),按优先级判定:
 
 | 优先级 | 触发条件 | reason |
 |---|---|---|
@@ -16,9 +18,9 @@ driver 每次 iteration 前先跑 `gantry loop-guard`,按优先级判定:
 | 3 | `state.stagesRun >= state.maxStages` | `max-stages-exceeded` |
 | — | driver 层:同 token 连续 ≥ `LOOP_STUCK_LIMIT` | shell 内 `exit 3` |
 
-前三档触发时 CLI 直接:
-- stdout `blocked` · exit 2
-- stderr `[loop-guard warn] <reason>`
+前三档触发时 `gantry advance` 直接:
+- exit 2(driver 透传:`[loop] advance failed rc=2`)
+- stderr `[advance warn] <reason>`
 - 写 `fence.lastStageResult.blockedReason = 'loop-guard: <reason>'`(**不覆盖**已有非空值)
 
 stuck 是 shell 侧检测,不写 fence(driver 短命,人工重启更合适)。
@@ -53,7 +55,7 @@ stuck 是 shell 侧检测,不写 fence(driver 短命,人工重启更合适)。
    - **stagesRun 熔断**:确认阶段进度符合预期,必要时 `updateState` 重置 `stagesRun`
    - **stuck**:检查为何 `advance` 未推进 stage(通常是门禁未过)
 3. 清 fence 的 blocked 状态:手动编辑 STATE.md 的 fence JSON,把 `lastStageResult.blockedReason` 置 `null`
-4. 重跑 `bash .gantry/loop/loop.sh`,或单跑 `gantry advance`
+4. 重跑 `bash .gantry/loop/loop.sh <client>`(client ∈ `claude` | `codex`),或单跑 `gantry advance`
 
 ---
 
@@ -65,26 +67,32 @@ stuck 是 shell 侧检测,不写 fence(driver 短命,人工重启更合适)。
 │  (bash driver, ADR-003:只调 gantry advance)             │
 └───────────────────┬─────────────────────────────────────┘
                     │
-      ┌─────────────┼─────────────┐
-      ▼             ▼             ▼
- gantry           gantry        gantry
- loop-guard       loop-next     advance
- (P2)             (P1)          (既有 CLI)
-      │             │             │
-      ▼             ▼             ▼
- checkLoopGuard  computeNextStep  transitionStage
- (纯函数)         (纯函数)         (state-must-advance)
-      │             │
-      └───┬─────────┘
-          ▼
-   fence.lastStageResult
-   (P1 定义,P2 只在熔断时写 blockedReason)
+             ┌──────┴──────┐
+             ▼             ▼
+          gantry        gantry
+          loop-next     advance
+          (P1)          (既有 CLI + P4 内联 guard)
+             │             │
+             │      ┌──────┴─────────────┐
+             │      ▼                    ▼
+             │   preAdvance         transitionStage
+             │   LoopGuard          (state-must-advance)
+             │   (P4 内联)
+             ▼      │
+     computeNextStep│
+     (纯函数)        │
+             │      ▼
+             │   checkLoopGuard
+             │   (纯函数)
+             ▼      │
+    fence.lastStageResult ◀───┘
+    (P1 定义,advance 内联熔断时写 blockedReason)
 ```
 
 **契约不变**:
 - `loop-next` 输出格式 / exit code 与 P1 一致
 - `computeNextStep` 判定序不变(P1 优先级:blockedReason → converge → nextStep → 兜底)
-- loop-guard 写 blockedReason 之后,下一次 loop-next 会自然返回 `blocked`(P1 判定序 step 1)
+- advance 内联熔断写 blockedReason 之后,下一次 loop-next 会自然返回 `blocked`(P1 判定序 step 1)
 
 ---
 

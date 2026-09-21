@@ -35,9 +35,8 @@ describe('getNextStage · PIPELINES 跳过', () => {
     assert.equal(getNextStage('fast', { pipeline: 'light' }), 'integration');
   });
 
-  it('full pipeline: UI 无影响时 design → task', () => {
-    assert.equal(getNextStage('design', { pipeline: 'full', _uiImpact: false,
-      stages: { 'ui-design': { enabled: 'auto', condition: 'ui-impact' } } }), 'task');
+  it('full pipeline: design → task(ui-design 已合入 design 阶段)', () => {
+    assert.equal(getNextStage('design', { pipeline: 'full' }), 'task');
   });
 
   it('未指定 pipeline: 退回默认 STAGES.next', () => {
@@ -105,9 +104,9 @@ describe('checkGate · pipeline-aware', () => {
   });
 
   it('禁用阶段被跳过', () => {
-    const r = checkGate('ui-design', TMP, {
+    const r = checkGate('review', TMP, {
       pipeline: 'full',
-      stages: { 'ui-design': { enabled: false } },
+      stages: { review: { enabled: false } },
     });
     assert.equal(r.passed, true);
   });

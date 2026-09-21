@@ -9,7 +9,6 @@ export const ARTIFACT_ALIASES = {
   proposal: ['PROPOSAL.md', 'CHANGE.md'],
   spec: ['SPEC.md', 'REQUIREMENT.md'],
   design: ['DESIGN.md'],
-  'ui-design': ['UI-DESIGN.md'],
   tasks: ['TASKS.md', 'TASK.md'],
   execution: ['EXECUTION.md', 'SUMMARY.md'],
   test: ['TEST.md'],

@@ -1,7 +1,8 @@
 # gantry loop · 无人值守收敛引擎
 
-> **P1 范围仅覆盖 `loop-next` 只读命令**。driver / self-heal / guard 由后续 change 交付。
-> 关联 change: `.gantry/specs/gantry-loop-pdlc-gantry-patch/`
+> P1(`loop-next`)/ P2(driver + guard 内联)/ P3(`heal` + integration AC 硬闸)/ P4(命令折叠)已全部交付。
+> P4(2026-09-16)将 `loop-guard` 折进 `advance` 入口、彻底删除 `ac-gate` CLI,AC 覆盖硬闸只由 integration 门禁触发。
+> 关联 change: `.gantry/specs/gantry-loop-pdlc-gantry-patch/`(P1)、`.gantry/specs/gantry-loop-p2-driver-guard/`(P2)、`.gantry/specs/gantry-loop-p3-heal-gate/`(P3)。
 
 ---
 
@@ -28,13 +29,13 @@ gantry loop-next
 # → stdout: "gantry-task" / "done" / "blocked" 之一
 # → exit 0(推进 / done)或 exit 2(blocked)
 
-# driver 消费示例(P2 交付)
+# driver 消费示例(P2 + P4)
 while true; do
   step=$(gantry loop-next)
   case "$step" in
     done) break ;;
     blocked) echo "需要人工介入"; exit 2 ;;
-    gantry-*) /"$step" ;;   # 客户端 skill
+    gantry-*) gantry advance ;;   # advance 入口内联 loop-guard 熔断
   esac
 done
 ```
@@ -111,12 +112,13 @@ done
 
 ---
 
-## P2 / P3 已交付
+## P2 / P3 / P4 已交付
 
-- ✅ **P2 · driver** — `.gantry/loop/loop.sh` 循环消费 `loop-next`,配合 `.gantry/loop/test-commands.yml` 定义 verify + covers
-- ✅ **P2 · loop-guard** — 上下文 token / step 上限熔断,见 [docs/loop-guard.md](./loop-guard.md)
+- ✅ **P2 · driver** — `.gantry/loop/loop.sh <client>` 循环消费 `loop-next` + 派发到 `dispatch-<client>.sh`(claude / codex headless),配合 `.gantry/loop/test-commands.yml` 定义 verify + covers
+- ✅ **P2 · loop-guard** — 上下文 token / step 上限熔断,见 [docs/loop-guard.md](./loop-guard.md)(P4 已折入 `advance`)
 - ✅ **P3 · EXECUTION.md self-heal 缓冲** — DEV 阶段 verify 失败,`gantry heal` 追加根因到 EXECUTION.md;`heal --check` 达 R2.5 上限时写 fence.blockedReason,见 [docs/self-heal.md](./self-heal.md)
-- ✅ **P3 · AC 强校验闸** — `gantry ac-gate` + integration 门禁末端 `checkAcCoverage` 硬闸,缺 AC 覆盖阻塞进 integration,见 [docs/self-heal.md](./self-heal.md)
+- ✅ **P3 · AC 强校验闸** — integration 门禁末端 `checkAcCoverage` 硬闸,缺 AC 覆盖阻塞进 integration,见 [docs/self-heal.md](./self-heal.md)
+- ✅ **P4 · 命令折叠**(2026-09-16)— `loop-guard` 折进 `advance` 入口、`ac-gate` CLI 删除,收敛为 `loop-next` / `advance` / `heal` 三条命令
 
 P2 / P3 change 收尾后归档到 `.gantry/specs/_archive/`。
 

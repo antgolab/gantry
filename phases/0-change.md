@@ -112,7 +112,7 @@ gantry hook run before:change
       python3 src/ui-ux-pro-max/scripts/search.py "<项目关键词>" --domain product
       ```
       从 67 styles 里选出 **9 个最匹配项目类型**的，按下面的标准卡片格式呈现。
-      优势：后期 2a-ui-design 能联动调调色板（161 palettes）/ 字体（57 pairings）/ 图表（25 charts）。
+      优势：后期 2-design § 8 前端 UI 设计能联动调调色板（161 palettes）/ 字体（57 pairings）/ 图表（25 charts）。
    2. **没装 uipro** → 回退到 Gantry 内置基线：加载 `@gantry/reference/ui-aesthetics.md` 的「调性」一节，按其末尾的「给 AI 在 0-change 阶段展示用的标准模板」呈现 9 张调性卡片。
 
    ### 呈现要求（两条路径都适用）
@@ -130,7 +130,7 @@ gantry hook run before:change
    ### 选定后
 
    - 写入 `PROPOSAL.md` 的 `视觉调性` 字段（`uiImpact: true` 时必填）
-   - 会**继承到 2a-ui-design**，2a 不再让用户重选调性
+   - 会**继承到 2-design § 8 前端 UI 设计**，该段不再让用户重选调性
    - **进入步骤 1**（反问）
 
 1. **反问（强制前置门 · 不可跳过）**：用户选定调性后（或 `uiImpact: false` 跳过 0.6 后），用结构化提问把"为什么 / 给谁 / 解决什么 / 何时算完"问清楚。每轮最多 3 个问题，等用户回答再继续。

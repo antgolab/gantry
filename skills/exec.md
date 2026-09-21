@@ -1,9 +1,15 @@
 ---
 name: gantry:exec
-description: 执行当前任务（wave 并行）
+description: 已内部化 · dev 阶段由 /gantry-next / /gantry-auto 自动触发
 agent: executor
 stage: dev
 ---
+
+# /gantry:exec（内部化 · 2026-09-21）
+
+> **状态**:此 skill 已从公开入口下沉为内部机制。日常场景下由 `/gantry-next` 或 `/gantry-auto` 到 dev 阶段自动触发,用户无需直接敲。
+>
+> 保留源文件是因为 dev 阶段的执行协议仍需通过此 skill 加载 Executor agent + pack driven 协议;老归档 change 与内部 phase 也可能引用此路径。renderer 不再产出 `.claude/skills/gantry-exec/`。
 
 # /gantry:exec
 

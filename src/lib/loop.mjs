@@ -88,10 +88,6 @@ export function computeNextStep(state) {
  * 根据 pipeline 顺序 + 当前 stage,推导下一个白名单 token。
  * pipeline 未涵盖当前 stage 时,回退到 STAGES 默认有向图第一后继。
  */
-// ui-design 是条件阶段(仅 uiImpact=true 时执行),loop 自动派发时跳过——
-// 由 gantry-next / advance 层根据 config._uiImpact 决定是否进入。
-const CONDITIONAL_STAGES = new Set(['ui-design']);
-
 function deriveNextFromStage(currentStage, pipelineKey) {
   if (!currentStage) return null;
   if (currentStage === 'idle') return 'gantry-change';
@@ -101,15 +97,16 @@ function deriveNextFromStage(currentStage, pipelineKey) {
   if (pipelineStages) {
     const idx = pipelineStages.indexOf(currentStage);
     if (idx >= 0) {
-      // 从 idx+1 起,跳过所有条件阶段,取第一个白名单可映射的后继
+      // 从 idx+1 起,取第一个白名单可映射的后继
       for (let i = idx + 1; i < pipelineStages.length; i++) {
         const next = pipelineStages[i];
-        if (CONDITIONAL_STAGES.has(next)) continue;
         if (next === 'done') return 'done';
         return `gantry-${next}`;
       }
-      // pipeline 走到末位:视为已收敛
-      return 'done';
+      // pipeline 走到末位:交回上层判定。真正的 'done' 只能由 CONVERGE_CONDITIONS 出——
+      // lastStageResult.ok !== true 时会 fall through 到 'blocked',阻止 driver
+      // 在未验证 / fence 缺失场景绕过 integration AC 覆盖硬闸。
+      return null;
     }
   }
 

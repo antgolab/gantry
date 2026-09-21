@@ -106,7 +106,7 @@ gantry hook run before:dev
 
 命中时，进入实现**之前**还必须：
 
-1. 加载 `@.gantry/specs/<id>/UI-DESIGN.md`（必须存在；不存在 → 停下来要求先跑 `phases/2a-ui-design.md`）
+1. 加载 `@.gantry/specs/<id>/UI-DESIGN.md`（必须存在；不存在 → 停下来要求先跑 `phases/2-design.md` 的 § 8 前端 UI 设计，仅 PROPOSAL uiImpact=true 时生成）
 2. 加载 `@gantry/reference/ui-anti-patterns.md`，按当前任务的关键词 grep 相关章节
 3. 加载 `@gantry/reference/frontend-engineer-rules.md`（**第 1 + 第 2 + 第 10 节必读**），其他节按输出类型按需读：
    - 任务是做交互原型 → 补读第 6.1

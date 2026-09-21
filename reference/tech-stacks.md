@@ -377,7 +377,7 @@
 2. 后续所有 ADR / 数据流 / 架构图都基于这个栈展开
 3. 任务的 verify 命令 / 依赖管理 / 目录结构都按栈来
 4. 测试工具链按栈选（JS → Vitest，Python → pytest，Java → JUnit + Mockito，Go → testing）
-5. 如果有装 [`ui-ux-pro-max`](https://uupm.cc)：用 `--stack <stack>` 拉栈级 UI 建议（在 2a-ui-design 阶段）
+5. 如果有装 [`ui-ux-pro-max`](https://uupm.cc)：用 `--stack <stack>` 拉栈级 UI 建议（在 2-design § 8 前端 UI 设计段）
 6. **变栈** = 改 DESIGN.md 的 0 段并全文复审 → 视为开新 CHANGE 处理（R7.1）
 
 ### `## 0. 技术栈选定` 段结构（写进 DESIGN.md）

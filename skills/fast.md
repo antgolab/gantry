@@ -1,10 +1,16 @@
 ---
 name: gantry:fast
-description: 启动显式低风险 light 管线
+description: 已内部化 · light 挡位由 /gantry-change 或 /gantry-auto 内部判定
 agent: planner
 stage: change
 requiresApproval: true
 ---
+
+# /gantry:fast(内部化 · 2026-09-21)
+
+> **状态**:此 skill 已从公开入口下沉为内部机制。用户想走 light 管线,直接 `/gantry-change --pipeline light "<描述>"` 或让 `/gantry-auto` 内部判定即可,不必手动敲 fast。
+>
+> 保留源文件是因为 CLI 的 `--pipeline light` 分支仍需加载 Planner agent + F-fast phase;老归档 change 与内部 phase 也可能引用此路径。renderer 不再产出 `.claude/skills/gantry-fast/`。
 
 # /gantry:fast
 

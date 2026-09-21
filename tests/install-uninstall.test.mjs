@@ -36,9 +36,12 @@ describe('install', () => {
     assert.ok(skillDirs.length > 0, 'should produce skill folders');
     assert.ok(skillDirs.includes('gantry-next'), 'should include public orchestration skills');
     assert.ok(skillDirs.includes('gantry-context'), 'should include context command group');
-    assert.ok(skillDirs.includes('gantry-knowledge'), 'should include knowledge command group');
     assert.ok(skillDirs.includes('gantry-debug'), 'should keep debug as a standalone public skill');
-    assert.ok(skillDirs.includes('gantry-fast'), 'should keep fast as a standalone public skill');
+    assert.ok(skillDirs.includes('gantry-auto'), 'should keep auto as autopilot entrypoint');
+    assert.ok(skillDirs.includes('gantry-review'), 'should keep review as a public entrypoint');
+    assert.ok(!skillDirs.includes('gantry-knowledge'), 'knowledge is internalized into /gantry-context');
+    assert.ok(!skillDirs.includes('gantry-fast'), 'fast is internalized (light pipeline auto-picked)');
+    assert.ok(!skillDirs.includes('gantry-exec'), 'exec is internalized (dev auto-triggered by /gantry-next)');
     assert.ok(!skillDirs.includes('gantry-design'), 'should not expose internal phase-only skills');
     assert.ok(!skillDirs.includes('gantry-task'), 'should not expose internal phase-only skills');
     assert.ok(!skillDirs.includes('gantry-check-req'), 'should not expose retired requirement gate skill');
@@ -52,7 +55,7 @@ describe('install', () => {
     assert.ok(existsSync(join(tmpDir, '.cursor', 'rules', '00-system.mdc')));
     const rules = readdirSync(join(tmpDir, '.cursor', 'rules'));
     assert.ok(rules.some(name => name.includes('gantry-context')), 'should include context command group rule');
-    assert.ok(rules.some(name => name.includes('gantry-knowledge')), 'should include knowledge command group rule');
+    assert.ok(!rules.some(name => name.includes('gantry-knowledge')), 'knowledge internalized into /gantry-context');
     assert.ok(!rules.some(name => name.includes('i-intel-scan')), 'should not expose internal scan phase rule');
     assert.ok(!rules.some(name => name.includes('c-curator')), 'should not expose internal curator phase rule');
   });
@@ -68,9 +71,12 @@ describe('install', () => {
     assert.ok(skills.some(s => s.startsWith('gantry-')), 'should include gantry-* skills');
     assert.ok(skills.includes('gantry-next'), 'should include public orchestration skills');
     assert.ok(skills.includes('gantry-context'), 'should include context command group');
-    assert.ok(skills.includes('gantry-knowledge'), 'should include knowledge command group');
     assert.ok(skills.includes('gantry-debug'), 'should keep debug as a standalone public skill');
-    assert.ok(skills.includes('gantry-fast'), 'should keep fast as a standalone public skill');
+    assert.ok(skills.includes('gantry-auto'), 'should keep auto as autopilot entrypoint');
+    assert.ok(skills.includes('gantry-review'), 'should keep review as a public entrypoint');
+    assert.ok(!skills.includes('gantry-knowledge'), 'knowledge is internalized into /gantry-context');
+    assert.ok(!skills.includes('gantry-fast'), 'fast is internalized (light pipeline auto-picked)');
+    assert.ok(!skills.includes('gantry-exec'), 'exec is internalized (dev auto-triggered by /gantry-next)');
     assert.ok(!skills.includes('gantry-design'), 'should not expose internal phase-only skills');
     assert.ok(!skills.includes('gantry-task'), 'should not expose internal phase-only skills');
     assert.ok(!skills.includes('gantry-check-req'), 'should not expose retired requirement gate skill');
@@ -94,7 +100,7 @@ describe('install', () => {
     assert.ok(existsSync(join(tmpDir, '.github', 'prompts')));
     const prompts = readdirSync(join(tmpDir, '.github', 'prompts'));
     assert.ok(prompts.includes('gantry-context.prompt.md'), 'should include context command group prompt');
-    assert.ok(prompts.includes('gantry-knowledge.prompt.md'), 'should include knowledge command group prompt');
+    assert.ok(!prompts.includes('gantry-knowledge.prompt.md'), 'knowledge internalized into /gantry-context');
     assert.ok(!prompts.includes('i-intel-scan.prompt.md'), 'should not expose internal scan phase prompt');
     assert.ok(!prompts.includes('c-curator.prompt.md'), 'should not expose internal curator phase prompt');
   });
@@ -147,7 +153,7 @@ describe('install', () => {
     assert.equal(config.stages.integration.requiresApproval, true);
     assert.equal(config.stages.requirement.requiresApproval, undefined);
     assert.equal(config.stages.review.requiresApproval, undefined);
-    assert.equal(config.stages['ui-design'].condition, 'ui-impact');
+    assert.equal(config.stages['ui-design'], undefined);
     assert.equal(('check' + 'point') in config.stages.change, false);
     assert.ok(existsSync(join(tmpDir, '.gantry/core/phases', '0-change.md')));
     assert.ok(existsSync(join(tmpDir, '.gantry/core/agents', 'planner.md')));

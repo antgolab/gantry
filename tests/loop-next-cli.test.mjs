@@ -61,7 +61,7 @@ function runLoopNext(cwd) {
   return spawnSync('node', [CLI, 'loop-next'], { cwd, encoding: 'utf-8', timeout: 10000 });
 }
 
-test('AC-5 · full pipeline · design 阶段 → gantry-task(跳过 ui-design)', () => {
+test('AC-5 · full pipeline · design 阶段 → gantry-task(ui-design 已合入 design)', () => {
   const root = makeProject(
     { pipeline: 'full', currentStage: 'design', activeChange: 'demo' },
     { nextStep: null, lastStageResult: null, currentWave: null, previousWave: null },

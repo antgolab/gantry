@@ -23,7 +23,7 @@ describe('micro pipeline 阶段图 (T10)', () => {
   it('light/full pipelines 原样未变', () => {
     assert.deepEqual(
       PIPELINES.full,
-      ['change', 'requirement', 'design', 'ui-design', 'task', 'dev', 'test', 'review', 'integration'],
+      ['change', 'requirement', 'design', 'task', 'dev', 'test', 'review', 'integration'],
     );
     assert.deepEqual(PIPELINES.light, ['change', 'fast', 'integration']);
   });

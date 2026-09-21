@@ -7,6 +7,9 @@
 
 ## 何时触发
 
+> P3 交付,承接 P1 `loop-next` / P2 `loop-guard`(P4 已折叠进 `gantry advance`)。
+> 字段与代码单一来源:`src/lib/self-heal.mjs` / `src/cli.mjs` heal / `src/lib/phases.mjs` checkAcGate
+
 DEV 阶段 verify 失败(R2.5 允许最多 3 次自愈)时,executor(自动化或人工)应显式调:
 
 ```bash
@@ -67,7 +70,7 @@ gantry heal --check <taskId>
 | K < 3 | `ok · attempts=K/3` | 0 | 无 |
 | K >= 3 | `blocked · attempts=K/3` | 2 | 写 `fence.lastStageResult.blockedReason = 'heal: limit exceeded task=<taskId>'` |
 
-**fence 熔断契约**(与 P2 loop-guard 一致):
+**fence 熔断契约**(与 loop-guard 内联熔断一致):
 - 只写 `blockedReason` 为空的 fence;已有非空 → 不覆盖(单一职责:谁先熔断谁负责)
 - 下一次 `loop-next` 自然返回 `blocked`(P1 判定序 step 1)
 
@@ -91,27 +94,23 @@ gantry heal --check <taskId>
 
 ---
 
-## ac-gate 使用姿势
+## AC 覆盖硬闸(integration 门禁)
 
-`ac-gate` 校验 SPEC 声明的 AC 编号是否全部被 `test-commands.yml` 的 `covers` 覆盖。
+> P4(2026-09-16)命令折叠:独立的 `gantry ac-gate` CLI 已删除。
+> AC 覆盖硬闸只由 integration 门禁末端触发,纯函数 `checkAcCoverage` 保留供门禁调用。
 
-**手动跑**(review 阶段自检):
-```bash
-gantry ac-gate
-```
+**触发时机**:
+`checkGate('integration', ...)` 末端会自动调 `checkAcCoverage`,校验 SPEC 声明的 AC 编号是否全部被 `test-commands.yml` 的 `covers` 覆盖。
 
-| 场景 | 输出 | exit |
-|---|---|---|
-| 全覆盖 | `ok · ac=<n>` | 0 |
-| 有缺失 | `blocked · missing=<AC-3,AC-5>` | 2 |
-| SPEC 无 AC | `skip · no-ac` | 0(warn) |
-| test-commands.yml 缺失 | `skip · no-config` | 0(warn) |
+| 场景 | 门禁行为 |
+|---|---|
+| 全覆盖 | 门禁通过 |
+| 有缺失 | 门禁 fail · reason: `ac-gate: missing AC-3, AC-5` |
+| SPEC 无 AC 或 test-commands.yml 缺失 | 门禁通过 + skipReason |
 
-**automatic**(integration 门禁):
-`checkGate('integration', ...)` 末端会自动调 `checkAcCoverage`——缺失 → 门禁 fail;skip → 通过 + skipReason。CLI 与门禁复用同一底层纯函数,输出一致。
+**手动自检**:review 阶段直接跑 `gantry advance` 直到 integration,门禁失败即可看到缺失 AC 列表。
 
-- CLI 是**只读**,不写 fence
-- 门禁 fail 时由 advance 已有失败路径写 fence.blockedReason(非覆盖)
+**fence 写入**:门禁 fail 时由 advance 已有失败路径写 `fence.blockedReason`(非覆盖)。
 
 ---
 
@@ -126,33 +125,35 @@ gantry ac-gate
    - **AC/需求问题** → 走 PATCH 流程(不是 self-heal 的职责)
    - **测试本身有 bug** → 修测试,不要弱化(R5.3 硬底线)
 4. 清 fence:手动编辑 `.gantry/planning/STATE.md` fence JSON,`lastStageResult.blockedReason` 置 `null`
-5. 继续 `gantry advance` 或 `bash .gantry/loop/loop.sh`
+5. 继续 `gantry advance` 或 `bash .gantry/loop/loop.sh <client>`(client ∈ `claude` | `codex`)
 
-### ac-gate 阻塞 integration
+### integration AC 覆盖门禁阻塞
 
-1. 检查 reason:`ac-gate: missing AC-X, AC-Y`
+1. 检查门禁 reason:`ac-gate: missing AC-X, AC-Y`
 2. 到 `.gantry/loop/test-commands.yml` 里给某条命令的 `covers` 加上缺失 AC
 3. 或者补齐一条 test 命令,例如 `integration: cmd: ...  covers: [AC-X, AC-Y]`
 4. 再跑 `gantry advance` 进 integration
 
 ---
 
-## 与 P1/P2 契约的关系
+## 与 P1/P2/P4 契约的关系
 
 ```
         ┌────────────────────────────────────┐
         │       .gantry/loop/loop.sh          │
         └────────────────┬───────────────────┘
                          │
-    ┌──────────┬─────────┼─────────┬─────────┐
-    ▼          ▼         ▼         ▼         ▼
- loop-guard loop-next advance   heal    ac-gate
-   (P2)       (P1)    (既有)    (P3)     (P3)
-    │          │         │        │         │
-    ▼          ▼         ▼        ▼         ▼
- checkLoop  computeNext  transition appendHeal checkAc
-  Guard     Step         Stage      Attempt   Coverage
-                                    (self-    (loop.mjs)
+             ┌───────────┼───────────┬─────────┐
+             ▼           ▼           ▼         ▼
+          loop-next   advance      heal    (integration
+          (P1)        (既有+P4      (P3)     门禁末端)
+                       内联 guard)             checkAcGate
+             │           │           │         (P3)
+             ▼           ▼           ▼         │
+       computeNext   preAdvance  appendHeal   checkAc
+       Step          LoopGuard   Attempt      Coverage
+                    +transition  (self-       (loop.mjs)
+                     Stage        heal.mjs)
                                      heal.mjs)
     │          │         │        │         │
     └────┬─────┘         │        │         │
@@ -163,6 +164,7 @@ gantry ac-gate
 
 **契约不变**:
 - P1 `computeNextStep` 判定序不变
-- P2 `checkLoopGuard` 契约不变
-- P3 只新增 self-heal 段 + heal/ac-gate CLI + integration 门禁末端 check
+- P2 `checkLoopGuard` 契约不变(P4 折叠只改调用位置)
+- P3 只新增 self-heal 段 + `heal` CLI + integration 门禁末端 check
+- P4 收敛 CLI:删掉独立的 `loop-guard` / `ac-gate` 命令,合入 `advance` 与门禁
 - fence.blockedReason 采取"先到先得,不覆盖"策略,三家共同遵守

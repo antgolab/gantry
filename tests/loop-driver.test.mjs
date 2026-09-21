@@ -16,25 +16,26 @@ const LOOP_SH = join(import.meta.dirname, '..', '.gantry', 'loop', 'loop.sh');
 
 /**
  * 造一个 mock CLI:按预设的 token 序列依次返回,每次调用消费一行。
- * 状态存 sequence.txt(每行一 token);advance / loop-guard 独立分支。
+ * 状态存 sequence.txt(每行一 token);loop-next / advance / status 三分支。
+ *
+ * loop-guard 已折叠进 advance(2026-09-16 P4),mock 不再单列该分支;
+ * 想模拟熔断,配置 advanceBlockAt 让 advance 在第 N 次调用时 exit 2。
  *
  * @param {string[]} nextTokens - loop-next 依次返回的 token
- * @param {object} opts - { guardBlockAt?: number, advanceFailAt?: number }
+ * @param {object} opts - { advanceBlockAt?: number, advanceFailAt?: number }
  */
 function makeMockCli(nextTokens, opts = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'loop-driver-'));
   const seqPath = join(dir, 'sequence.txt');
   const counterPath = join(dir, 'counter.txt');
-  const guardCounterPath = join(dir, 'guard-counter.txt');
   const advanceCounterPath = join(dir, 'advance-counter.txt');
   writeFileSync(seqPath, nextTokens.join('\n') + '\n', 'utf-8');
   writeFileSync(counterPath, '0', 'utf-8');
-  writeFileSync(guardCounterPath, '0', 'utf-8');
   writeFileSync(advanceCounterPath, '0', 'utf-8');
 
   const mockScript = join(dir, 'mock-cli.sh');
   writeFileSync(mockScript, `#!/usr/bin/env bash
-# 参数:$1 = 子命令(loop-next / loop-guard / advance / status)
+# 参数:$1 = 子命令(loop-next / advance / status)
 set -euo pipefail
 CMD="$1"
 DIR="${dir}"
@@ -54,18 +55,11 @@ case "$CMD" in
     if [ "$line" = "blocked" ]; then exit 2; fi
     exit 0
     ;;
-  loop-guard)
-    g=$(cat "$DIR/guard-counter.txt")
-    g=$((g + 1))
-    echo "$g" > "$DIR/guard-counter.txt"
-    ${opts.guardBlockAt != null ? `if [ "$g" -eq ${opts.guardBlockAt} ]; then echo "blocked: mock context-exceeded"; exit 2; fi` : ''}
-    echo "ok"
-    exit 0
-    ;;
   advance)
     a=$(cat "$DIR/advance-counter.txt")
     a=$((a + 1))
     echo "$a" > "$DIR/advance-counter.txt"
+    ${opts.advanceBlockAt != null ? `if [ "$a" -eq ${opts.advanceBlockAt} ]; then echo "[advance warn] mock context-exceeded" 1>&2; exit 2; fi` : ''}
     ${opts.advanceFailAt != null ? `if [ "$a" -eq ${opts.advanceFailAt} ]; then echo "advance mock failure"; exit 5; fi` : ''}
     echo "mock: advanced"
     exit 0
@@ -85,13 +79,32 @@ esac
   return { dir, mockScript };
 }
 
-function runDriver({ mockScript, extraEnv = {}, timeout = 10000 }) {
-  return spawnSync('bash', [LOOP_SH], {
+/**
+ * 造一个 no-op dispatcher(仅打印一行方便调试),供 loop.sh 在 dispatch 阶段调用。
+ * 单元测试只关心 driver 的循环 / 派发 / stuck / advance 透传,client 侧行为在
+ * dispatch-*.sh 层面单独测试。
+ */
+function makeMockDispatcher(dir) {
+  const p = join(dir, 'mock-dispatcher.sh');
+  writeFileSync(p, `#!/usr/bin/env bash
+echo "[mock-dispatcher] phase=$1"
+exit 0
+`, 'utf-8');
+  chmodSync(p, 0o755);
+  return p;
+}
+
+function runDriver({ mockScript, extraEnv = {}, timeout = 10000, client = 'claude' }) {
+  // dispatcher 与 mock CLI 同目录
+  const dir = join(mockScript, '..');
+  const dispatcher = makeMockDispatcher(dir);
+  return spawnSync('bash', [LOOP_SH, client], {
     encoding: 'utf-8',
     timeout,
     env: {
       ...process.env,
       GANTRY_BIN: mockScript,
+      GANTRY_LOOP_DISPATCHER: dispatcher,
       ...extraEnv,
     },
   });
@@ -138,24 +151,26 @@ test('AC-6 · 日志行格式严格 [loop] step=N stage=<s> token=<t>', () => {
   }
 });
 
-test('AC-5 · stuck 检测:同 token 连续 → exit 3', () => {
+test('AC-5 · stuck 检测:同 token 连续 → exit 5', () => {
   // 3 次同 token → 第一次记录,第二次 stuck_count=1,第三次 stuck_count=2 命中 STUCK_LIMIT
+  // exit code 5 = stuck-stop(退出码约定:0=done 2=blocked 3=max-steps 4=dispatch 5=stuck 64=用法错)
   const { dir, mockScript } = makeMockCli(['gantry-dev', 'gantry-dev', 'gantry-dev']);
   try {
     const r = runDriver({ mockScript, extraEnv: { LOOP_STUCK_LIMIT: '2' } });
-    assert.equal(r.status, 3, `stdout=${r.stdout}\nstderr=${r.stderr}`);
-    assert.match(r.stdout, /stuck/);
+    assert.equal(r.status, 5, `stdout=${r.stdout}\nstderr=${r.stderr}`);
+    assert.match(r.stderr, /stuck/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 });
 
-test('AC-5 · guard 熔断 → exit 2', () => {
-  const { dir, mockScript } = makeMockCli(['gantry-task', 'gantry-dev', 'done'], { guardBlockAt: 2 });
+test('AC-5 · advance 内联 guard 熔断 → exit 2', () => {
+  // guard 已内联进 advance:第 2 次 advance 调用返回 exit 2,driver 透传。
+  const { dir, mockScript } = makeMockCli(['gantry-task', 'gantry-dev', 'done'], { advanceBlockAt: 2 });
   try {
     const r = runDriver({ mockScript });
-    assert.equal(r.status, 2);
-    assert.match(r.stdout, /guard tripped/);
+    assert.equal(r.status, 2, `stdout=${r.stdout}\nstderr=${r.stderr}`);
+    assert.match(r.stderr, /advance 门禁未过 rc=2/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -165,9 +180,21 @@ test('AC-5 · advance 失败 → 透传 exit code', () => {
   const { dir, mockScript } = makeMockCli(['gantry-task', 'gantry-dev', 'done'], { advanceFailAt: 2 });
   try {
     const r = runDriver({ mockScript });
-    assert.equal(r.status, 5, `advance rc 应透传`);
-    assert.match(r.stdout, /advance failed rc=5/);
+    assert.equal(r.status, 5, `advance rc 应透传 stdout=${r.stdout} stderr=${r.stderr}`);
+    assert.match(r.stderr, /advance 门禁未过 rc=5/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('loop.sh · 缺 client 参数 → exit 64', () => {
+  const r = spawnSync('bash', [LOOP_SH], { encoding: 'utf-8', timeout: 5000 });
+  assert.equal(r.status, 64);
+  assert.match(r.stderr, /缺 client 参数/);
+});
+
+test('loop.sh · 未知 client → exit 64', () => {
+  const r = spawnSync('bash', [LOOP_SH, 'bogus'], { encoding: 'utf-8', timeout: 5000 });
+  assert.equal(r.status, 64);
+  assert.match(r.stderr, /未知 client/);
 });

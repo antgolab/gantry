@@ -95,7 +95,6 @@ test('loadOrder: 各阶段包含对应 agent prompt', () => {
     ['requirement', 'planner.md'],
     ['task', 'planner.md'],
     ['design', 'architect.md'],
-    ['ui-design', 'architect.md'],
     ['dev', 'executor.md'],
     ['fast', 'executor.md'],
     ['test', 'reviewer.md'],
