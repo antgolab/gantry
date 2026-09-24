@@ -150,6 +150,7 @@ gantry hook run before:change
 4. **生成 PROPOSAL.md**：使用 `@gantry/templates/PROPOSAL.md` 模板，填好后保存到 `.gantry/specs/<change-id>/PROPOSAL.md`（兼容期如需可保留旧名映射）。
    - **硬约束**：`## 待澄清问题` 段必须为 `无`。若仍有未决问题，说明步骤 1 没走完——**回到步骤 1 继续反问，不要先生成文件**。带未勾选项（`- [ ]`）的 PROPOSAL 会被 `/gantry-next` 阶段门禁阻断。
 5. **Pipeline 复核**：
+   - tier 档位由 `src/lib/tier-router.mjs` 的 `decideTier` 自动判定为 `micro` / `light` / `full` 三档，可用 `--tier` 显式覆写。
    - 默认 `full`：`REQUIREMENT → DESIGN → [UI-DESIGN] → TASK → DEV → TEST → REVIEW → INTEGRATION`
    - 显式 `light`：`FAST → INTEGRATION`，仅允许低风险局部变更。
    - light 在澄清后命中高风险边界 → 停止并提示 `gantry pipeline full`，不得自动升级或绕过。

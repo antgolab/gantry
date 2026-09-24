@@ -99,18 +99,12 @@ gantry hook run before:integration
 
 **R2.6**：自动重试 ≤ 3 轮。第 3 轮仍失败必须停下来要求人工决策。
 
-### 5. 提名 LESSONS（在 ARCHIVE 之前必跑，对应 R1.8）
+### 5. 沉淀失败教训（自动 · friction + Curator）
 
-扫本次 change 的 `EXECUTION.md`、所有例外 `*-SUMMARY.md` 的「决策与偏离」段，以及任何遗留的 `*-PROGRESS.md`「已排除方案」段。
-按 `@gantry/templates/LESSONS.md` 末尾的「提名条件」筛选：
+DEV/TEST 阶段的 friction 事件已由 `src/lib/friction.mjs` 自动记录（verifyFail / sameFileEdit3+ / rollback 等）。ARCHIVE 前：
 
-- 调试 / 试错耗时 > 30 分钟 → 提名
-- 错因不局限于本任务、其它任务也会撞 → 提名
-- 6 个月内有合理概率被再次尝试 → 提名
-- 否则不入库（避免污染）
-
-把入选的失败按 LESSONS.md 的条目格式追加到 `.gantry/specs/LESSONS.md`，编号续上 `L-NNN`，必须填齐：标签 / 关键词 / 适用栈 / 状态。
-**复核**：扫一眼现有 active 条目，看是否有本次 change 让它们 `superseded` 或 `deprecated`，标注上。
+- 由 Curator（`src/lib/curator.mjs` 的 `proposeLearning`）汇总 friction 事件，自动生成候选 learning。
+- 人工复核候选后合入 `.gantry/learnings/team/`，不再手动提名、不再手工追加条目。
 
 ### 6. 收尾（CLOSE）— 归档由 archive 命令执行
 

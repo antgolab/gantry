@@ -225,6 +225,7 @@ AI 自己逐个维度诊断 diff，输出上面同样的 4 要素格式，发现
 ## 约束（强制）
 
 - **R3.3**：禁止直接修改代码
+- **review-lane-guard**：review 阶段 context-pack 必须通过 `src/lib/review-lane-guard.mjs` 的隔离检查；命中 DEV 上下文泄漏（`review_context_leak`）时不得进入审查
 - **R2.5**：所有 Critical 必须修复或显式「已知接受」并经人工确认，否则禁止进 INTEGRATION
 - 不允许笼统结论（"代码写得不错"），每条结论必须有具体行号或文件引用
 

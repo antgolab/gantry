@@ -17,6 +17,8 @@
 
 ## 不可进入 FAST 的变更
 
+> 定义源: `src/lib/hard-rules.mjs#HARD_RULE_KEYWORDS`（红线单点收敛，禁止在此重复定义）
+
 - Schema 或数据库迁移
 - 公共接口、公共契约或导出签名变化
 - 跨模块或跨服务修改
