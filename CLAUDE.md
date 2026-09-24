@@ -8,6 +8,7 @@
 - 遇到问题 → 追根因，不打补丁
 - 只输出影响决策的内容？
 
+
 <!-- BEGIN gantry -->
 # gantry · Claude Code 注入
 
@@ -78,6 +79,9 @@
 
 ## R4 · 提交与产物
 
+- **R4.1** commit 单位 = stage。DEV 阶段末统一 1 个 commit（格式 `<type>(<change-id>): dev 阶段概要`），覆盖全部代码变更 + `EXECUTION.md`。wave 边界不产 commit。
+- **R4.2** 代码改动必须伴随测试改动
+
 ## R5 · 测试纪律
 
 - **R5.1** 测试用例必须从 AC 派生，禁止从实现派生
@@ -93,7 +97,7 @@
 ## R7 · 范围控制
 
 - **R7.1** 严禁悄悄扩大范围；超出 `TASKS.md`（兼容期接受 `TASK.md`）必须先停下
-- **R7.2** 同次提交不允许混入多个无关任务
+- **R7.2** 无关任务指跨 change 的任务；同 change 内多 task 允许打包进同一 stage commit
 
 ---
 
@@ -135,11 +139,11 @@ light: idle → change → fast → integration → idle
 
 日常骨架：`/gantry-change`、`/gantry-next`、`/gantry-archive`。
 自动驾驶：`/gantry-auto`(多步推进 · 保留人工确认关卡)。
-状态类:`/gantry-status`、`/gantry-resume`、`/gantry-adjust`。
-审查与排障:`/gantry-review`、`/gantry-debug`。
-维护:`/gantry-context`(scan / architect / evolve / knowledge)、`/gantry-health`、`/gantry-unarchive`。
+状态类：`/gantry-status`、`/gantry-resume`、`/gantry-adjust`。
+审查与排障：`/gantry-review`、`/gantry-debug`。
+维护：`/gantry-context`(scan / architect / evolve / knowledge)、`/gantry-health`、`/gantry-unarchive`。
 
-内部化(不再作为用户命令入口):
+内部化(不再作为用户命令入口)：
 - `exec`:`/gantry-next` 到 dev 阶段自动触发
 - `fast`:light 挡位由 `/gantry-change` / `/gantry-auto` 内部判定
 - `knowledge`:capture / curate 并入 `/gantry-context knowledge <sub>`

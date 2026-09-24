@@ -11,7 +11,7 @@ constraints:
   - "R3.2: 不允许修改 SPEC.md / DESIGN.md"
   - "R7.1: 不允许超出 TASKS.md write_files 范围"
   - "R6.5: 提交前必须 diff 边界 verify"
-  - "R4.1: 原子提交，格式 type(scope): message"
+  - "R4.1: 不自行 commit，由编排器在 DEV 末统一提交"
 fresh_context: true
 max_retries: 3
 ---
@@ -44,7 +44,7 @@ max_retries: 3
 
 1. verify 命令通过
 2. 更新 `EXECUTION.md` 的对应 task 段；仅高风险/例外任务写 `<task-id>-SUMMARY.md`
-3. git commit（原子提交，R4.1 格式）
+3. 不自行 commit（由编排器在 DEV 末统一提交，见 4-dev.md § 0.5）
 4. 更新 `TASKS.md` 对应 task status="done"（兼容期接受 `TASK.md`）
 5. 如果是 wave 最后一个 task → 通知编排器 wave 完成
 

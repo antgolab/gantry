@@ -1,4 +1,4 @@
-# 阶段 4 · DEV — 在 fresh context 中执行单个任务
+# 阶段 4 · DEV — 波次编排 + 在 fresh context 中执行单个任务
 
 ## Context Pack 优先
 
@@ -12,7 +12,11 @@
 
 ## 角色
 
-你是 Dev。**只执行 TASKS.md 中的一个任务**（兼容期接受 `TASK.md`）。多任务请分多次调用此 prompt。
+你是 Dev。本 prompt 有**两层职责**：
+- **编排器层**（主 session）：消费 `TASKS.md` 的「波次划分」段 + `depends_on`，把同 wave 的独立 task 并发 fan-out 到多个 executor subagent（见「波次编排」段）。
+- **单任务执行层**（executor subagent）：在 fresh context 中执行单个 task（见「单任务执行」段）。
+
+多任务请按波次并发 fan-out，不要逐个串行等待。
 
 ## Pre-hook（可选）
 
@@ -36,7 +40,35 @@ gantry hook run before:dev
 - `@.gantry/specs/LESSONS.md`（无 `.context/` 时的回退知识层）
 - 仅引用与本任务相关的文件，**不要加载整个项目**
 
-## 你的职责
+## 波次编排（编排器职责 · DEV 阶段主 session）
+
+> 消费 `TASKS.md` 的「波次划分」段 + 各 task 的 `depends_on`，把同 wave 的独立 task 并发 fan-out。单 task 内部执行见下方「单任务执行」。
+
+### 0.1 读波次划分
+
+从 `TASKS.md` 读「波次划分」段（task 阶段 3-task.md 已产出），得到 wave 分层：同 wave 的 task 两两无依赖可并行，跨 wave 按依赖顺序执行。
+
+### 0.2 同一 turn fan-out
+
+对当前 wave 的每个 pending task，在**同一条 assistant 消息里**并发 fan-out 多个 executor subagent（分层路由：haiku=查询/单点、sonnet=标准、opus=复杂）。独立 task 禁止串行等待。
+
+### 0.3 wave checkpoint
+
+wave 内全部 executor 返回后，跑 typecheck + 受影响测试：
+- 绿 → 标记本 wave 全部 done，进入下一 wave（回到 0.1）
+- 红 → 判定 `depends_on` 声明有漏（应串行的两个跑并发了），整波 revert 到 wave 前，把漏声明事件写入 LESSONS/learnings，重跑本 wave
+
+### 0.4 循环直到全部完成
+
+重复 0.1-0.3 直到所有 pending task done。
+
+### 0.5 DEV 末统一 commit
+
+所有 wave 完成后，由编排器产生 1 个 commit（格式 `type(change-id): dev 阶段概要`），覆盖全部代码变更 + `EXECUTION.md`。wave 边界不产 commit。
+
+---
+
+## 单任务执行（executor subagent 职责）
 
 ### 1. 读取任务
 
@@ -444,15 +476,17 @@ git status --short                  # 含 untracked
 
 **禁止**："顺手修了个 bug" / "看到这里很丑就改了"——必须开新 task 或新 PROPOSAL。
 
-### 5.5 原子提交（R4.1）
+### 5.5 提交（R4.1 · stage 级）
+
+DEV 阶段末由编排器统一 1 个 commit（见「波次编排」§ 0.5），executor subagent **不自行 commit**。
 
 提交格式：
 ```
-<type>(<change-id>): <task-id> <subject>
+<type>(<change-id>): dev 阶段概要
 ```
-例：`feat(add-dark-mode): T03 add ThemeContext provider`
+例：`feat(add-dark-mode): dev 主题切换能力`
 
-代码 + 测试同次提交（或紧邻的下次提交）。
+代码 + 测试同次提交（DEV 末统一提交，覆盖全部 task）。
 
 ### 6. 写执行记录
 

@@ -164,6 +164,18 @@ describe('install', () => {
     assert.ok(!existsSync(join(tmpDir, '.gantry/planning', 'context-pack.json')));
   });
 
+  it('dev 阶段波次编排契约（4-dev.md 波次并发 + executor 不自行 commit）', () => {
+    run('install --tool codex', { cwd: tmpDir });
+    const devPhase = readFileSync(join(tmpDir, '.gantry/core/phases', '4-dev.md'), 'utf8');
+    assert.ok(devPhase.includes('波次编排'), '4-dev.md 应含波次编排段');
+    assert.ok(devPhase.includes('同一 turn fan-out'), '4-dev.md 应同 wave 并发 fan-out');
+    assert.ok(devPhase.includes('wave checkpoint'), '4-dev.md 应有 wave 边界 checkpoint');
+    assert.ok(devPhase.includes('DEV 末统一'), '4-dev.md 应 stage 末统一 commit');
+    const executor = readFileSync(join(tmpDir, '.gantry/core/agents', 'executor.md'), 'utf8');
+    assert.ok(!executor.includes('git commit'), 'executor 不应自行 git commit');
+    assert.ok(executor.includes('编排器'), 'executor 应把 commit 交给编排器');
+  });
+
   it('generated change skill matches current bootstrap contract', () => {
     run('install --tool codex', { cwd: tmpDir });
     const changeSkill = readFileSync(join(tmpDir, '.agents/skills/gantry-change', 'SKILL.md'), 'utf8');
