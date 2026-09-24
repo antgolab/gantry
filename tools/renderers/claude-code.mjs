@@ -33,6 +33,11 @@ export function render(core, commands, agents) {
 
   const consumedPhases = new Set();
 
+  // Merge intent: install loop recognizes the __merge__/ prefix and merges
+  // (rather than overwrites) the target file. Renderer stays IO-free — it only
+  // declares what to merge.
+  files['__merge__/.claude/settings.json'] = { addToAllow: ['Bash(gantry *)'] };
+
   // Orchestration commands: reference matching phase file
   if (commands) {
     for (const [name, content] of Object.entries(commands)) {

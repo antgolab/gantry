@@ -304,3 +304,92 @@ describe('uninstall', () => {
     assert.ok(!existsSync(join(home, '.codex', 'skills')));
   });
 });
+
+describe('claude settings.json 合并（install-claude-code-claude-settings change）', () => {
+  const settingsPath = () => join(tmpDir, '.claude', 'settings.json');
+  const managedPath = () => join(tmpDir, '.gantry', 'planning', 'managed-permissions.json');
+  const readSettings = () => JSON.parse(readFileSync(settingsPath(), 'utf8'));
+
+  it('AC-1 无 settings.json 时 install 创建并合并 Bash(gantry *)', () => {
+    run('install --tool claude', { cwd: tmpDir });
+    const settings = readSettings();
+    assert.ok(Array.isArray(settings.permissions.allow), 'permissions.allow 应为数组');
+    assert.ok(settings.permissions.allow.includes('Bash(gantry *)'));
+  });
+
+  it('AC-2 已有 settings.json 无 allow 时保留其它字段并新增 allow', () => {
+    const preset = {
+      model: 'claude-sonnet-4-5',
+      hooks: { PostToolUse: [{ matcher: 'Read', hooks: [{ type: 'command', command: 'true' }] }] },
+    };
+    mkdirSync(join(tmpDir, '.claude'), { recursive: true });
+    writeFileSync(settingsPath(), JSON.stringify(preset, null, 2));
+    run('install --tool claude', { cwd: tmpDir });
+    const settings = readSettings();
+    assert.deepEqual(settings.model, preset.model);
+    assert.deepEqual(settings.hooks, preset.hooks);
+    assert.ok(settings.permissions.allow.includes('Bash(gantry *)'));
+  });
+
+  it('AC-3 已有 allow 时追加 gantry 顺序稳定，deny/ask 不变', () => {
+    const preset = {
+      permissions: {
+        allow: ['Bash(git *)', 'Bash(node *)'],
+        deny: ['Read(/etc/passwd)'],
+        ask: ['Bash(curl *)'],
+      },
+    };
+    mkdirSync(join(tmpDir, '.claude'), { recursive: true });
+    writeFileSync(settingsPath(), JSON.stringify(preset, null, 2));
+    run('install --tool claude', { cwd: tmpDir });
+    const settings = readSettings();
+    assert.deepEqual(settings.permissions.allow, ['Bash(git *)', 'Bash(node *)', 'Bash(gantry *)']);
+    assert.deepEqual(settings.permissions.deny, preset.permissions.deny);
+    assert.deepEqual(settings.permissions.ask, preset.permissions.ask);
+  });
+
+  it('AC-4 二次 install 幂等，Bash(gantry *) 只出现一次', () => {
+    run('install --tool claude', { cwd: tmpDir });
+    run('install --tool claude', { cwd: tmpDir });
+    const count = readSettings().permissions.allow.filter(x => x === 'Bash(gantry *)').length;
+    assert.equal(count, 1);
+  });
+
+  it('AC-5 install 后侧文件登记 gantry 条目', () => {
+    run('install --tool claude', { cwd: tmpDir });
+    assert.ok(existsSync(managedPath()), 'managed-permissions.json 应存在');
+    const managed = JSON.parse(readFileSync(managedPath(), 'utf8'));
+    assert.ok(managed['permissions.allow'].includes('Bash(gantry *)'));
+  });
+
+  it('AC-6 uninstall 反向删除 gantry 条目并删侧文件，保留用户手加', () => {
+    mkdirSync(join(tmpDir, '.claude'), { recursive: true });
+    mkdirSync(join(tmpDir, '.gantry', 'planning'), { recursive: true });
+    writeFileSync(settingsPath(),
+      JSON.stringify({ permissions: { allow: ['Bash(git *)', 'Bash(gantry *)'] } }, null, 2));
+    writeFileSync(managedPath(), JSON.stringify({ 'permissions.allow': ['Bash(gantry *)'] }, null, 2));
+    run('uninstall', { cwd: tmpDir });
+    assert.deepEqual(readSettings().permissions.allow, ['Bash(git *)']);
+    assert.ok(!existsSync(managedPath()), 'managed-permissions.json 应被删除');
+  });
+
+  it('AC-7 全局模式落 ~/.claude/settings.json 与侧文件', () => {
+    const home = join(tmpDir, 'home');
+    mkdirSync(home, { recursive: true });
+    runWithHome('install -g --tool claude', home, { cwd: tmpDir });
+    const settings = JSON.parse(readFileSync(join(home, '.claude', 'settings.json'), 'utf8'));
+    assert.ok(settings.permissions.allow.includes('Bash(gantry *)'));
+    assert.ok(existsSync(join(home, '.claude', 'gantry-managed-permissions.json')));
+  });
+
+  it('AC-8 uninstall 容忍 settings.json 已被手动清理，侧文件仍被删', () => {
+    mkdirSync(join(tmpDir, '.claude'), { recursive: true });
+    mkdirSync(join(tmpDir, '.gantry', 'planning'), { recursive: true });
+    writeFileSync(settingsPath(),
+      JSON.stringify({ permissions: { allow: ['Bash(git *)'] } }, null, 2));
+    writeFileSync(managedPath(), JSON.stringify({ 'permissions.allow': ['Bash(gantry *)'] }, null, 2));
+    assert.doesNotThrow(() => run('uninstall', { cwd: tmpDir }));
+    assert.ok(!existsSync(managedPath()), 'managed-permissions.json 应被删除');
+    assert.deepEqual(readSettings().permissions.allow, ['Bash(git *)']);
+  });
+});

@@ -32,6 +32,7 @@ import {
   shouldStopHealing,
 } from './lib/self-heal.mjs';
 import { PLANNING_DIR, SPECS_DIR, specsPath } from './lib/paths.mjs';
+import { mergeSettingsJson, unmergeSettingsJson, readManaged, writeManaged } from './lib/settings-merge.mjs';
 import { parseTasks, getProgress } from './lib/tasks.mjs';
 import { runHook, listHooks, checkHook } from './lib/hooks.mjs';
 import { writeContextPack, readContextPack, PACK_PATH } from './lib/context-pack.mjs';
@@ -1094,6 +1095,25 @@ async function installToolsToTarget({ projectRoot, installTools, globalMode }) {
 
     let count = 0;
     for (const [relPath, content] of Object.entries(files)) {
+      if (relPath.startsWith('__merge__/')) {
+        const realRel = relPath.slice('__merge__/'.length);
+        const settingsPath = globalMode
+          ? join(target, globalRelPath(installTool.name, realRel))
+          : join(target, realRel);
+        mkdirSync(dirname(settingsPath), { recursive: true });
+        const added = mergeSettingsJson(settingsPath, { 'permissions.allow': content.addToAllow });
+        const sideFile = globalMode
+          ? join(globalInstallRoot(installTool.name), 'gantry-managed-permissions.json')
+          : join(projectRoot, PLANNING_DIR, 'managed-permissions.json');
+        writeManaged(sideFile, added);
+        const mergedCount = (added['permissions.allow'] || []).length;
+        console.log(
+          `  已合并 ${mergedCount} 条 permission 到 ${settingsPath}` +
+          (globalMode ? '（影响所有 Claude Code 会话）' : ''),
+        );
+        count++;
+        continue;
+      }
       const outputPath = globalMode ? globalRelPath(installTool.name, relPath) : relPath;
       const full = join(target, outputPath);
       mkdirSync(dirname(full), { recursive: true });
@@ -1124,6 +1144,7 @@ function installCorePhases(projectRoot) {
   }
 
   for (const [relPath, content] of Object.entries(files)) {
+    if (relPath.startsWith('__merge__/')) continue;
     const full = join(projectRoot, relPath);
     mkdirSync(dirname(full), { recursive: true });
     writeFileSync(full, insertBanner(content, bannerFor('core', relPath, content)), 'utf-8');
@@ -1138,6 +1159,7 @@ function installCoreAgents(projectRoot) {
   }
 
   for (const [relPath, content] of Object.entries(files)) {
+    if (relPath.startsWith('__merge__/')) continue;
     const full = join(projectRoot, relPath);
     mkdirSync(dirname(full), { recursive: true });
     writeFileSync(full, insertBanner(content, bannerFor('core', relPath, content)), 'utf-8');
@@ -1186,6 +1208,19 @@ function uninstall(args) {
     for (const rel of SECTION_FILES) {
       const full = join(target.root, target.tool ? globalRelPath(target.tool, rel) : rel);
       if (removeSection(full)) sectionCount++;
+    }
+
+    // 合并回滚：仅 claude（或项目模式默认 claude）有 settings.json 合并
+    if (target.tool === null || target.tool === 'claude') {
+      const settingsPath = target.tool
+        ? join(target.root, globalRelPath(target.tool, '.claude/settings.json'))
+        : join(target.root, '.claude/settings.json');
+      const sideFile = target.tool
+        ? join(target.root, 'gantry-managed-permissions.json')
+        : join(target.root, PLANNING_DIR, 'managed-permissions.json');
+      const entries = readManaged(sideFile);
+      unmergeSettingsJson(settingsPath, entries);
+      if (existsSync(sideFile)) unlinkSync(sideFile);
     }
 
     if (generated.length > 0 || sectionCount > 0) foundAny = true;
