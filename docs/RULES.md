@@ -100,7 +100,7 @@
 
 ## R4 · 提交与产物
 
-- **R4.1** DEV 阶段每完成一个任务做一次原子提交。提交信息格式：`<type>(<change-id>): <subject>`。
+- **R4.1** commit 单位 = stage。DEV 阶段末统一 1 个 commit（格式 `<type>(<change-id>): dev 阶段概要`），覆盖全部代码变更 + `EXECUTION.md`。wave 边界不产 commit。
 - **R4.2** 每个任务的代码改动必须伴随测试改动（同次提交或紧邻的下一次提交）。
 - **R4.3** Bug 修复必须伴随回归测试用例。
 - **R4.4** AI 不能声称"完成"而没有跑过 `verify` 命令并贴出输出。
@@ -175,7 +175,7 @@
 ## R7 · 范围控制
 
 - **R7.1** 严禁在执行任务时悄悄扩大范围。发现需要超出 `TASKS.md` 的改动时，必须先停下来更新 TASKS 或开新 CHANGE。
-- **R7.2** 不允许同一次提交里混入多个无关任务。
+- **R7.2** 无关任务指跨 change 的任务；同 change 内多 task 允许打包进同一 stage commit。
 - **R7.3** `TASKS.md` 每个任务必须声明 `read_files`（参考边界）和 `write_files`（修改边界）两组路径。`read_files` 是 AI 在做这个任务时**允许读**的范围；`write_files` 是 AI **允许改**的范围。R6.5 的 diff 边界 verify 就是基于此字段。
 
 ## R8 · 中文/英文

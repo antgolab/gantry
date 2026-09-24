@@ -56,7 +56,7 @@ gantry hook run before:dev
 
 wave 内全部 executor 返回后，跑 typecheck + 受影响测试：
 - 绿 → 标记本 wave 全部 done，进入下一 wave（回到 0.1）
-- 红 → 判定 `depends_on` 声明有漏（应串行的两个跑并发了），整波 revert 到 wave 前，把漏声明事件写入 LESSONS/learnings，重跑本 wave
+- 红 → 判定 `depends_on` 声明有漏（应串行的两个跑并发了），整波 revert 到 wave 前，把漏声明事件写入 `.gantry/learnings/team/`（兼容期回退 `.gantry/specs/LESSONS.md`），重跑本 wave
 
 ### 0.4 循环直到全部完成
 
@@ -64,7 +64,7 @@ wave 内全部 executor 返回后，跑 typecheck + 受影响测试：
 
 ### 0.5 DEV 末统一 commit
 
-所有 wave 完成后，由编排器产生 1 个 commit（格式 `type(change-id): dev 阶段概要`），覆盖全部代码变更 + `EXECUTION.md`。wave 边界不产 commit。
+所有 wave 完成后，由编排器产生 1 个 commit（格式 `<type>(<change-id>): dev 阶段概要`），覆盖全部代码变更 + `EXECUTION.md`。wave 边界不产 commit。
 
 ---
 
@@ -117,7 +117,7 @@ wave 内全部 executor 返回后，跑 typecheck + 受影响测试：
 
 1. 任务 `action` 已写明正确路径（如「走 btsgen 生成缓存回源」）→ 按它执行，**不查 MANIFEST**。
 2. `read_files` 里若有黄金范例文件 → 打开它，**照结构改**（这是降阻力关键，优先于从零重写）。范例文件不存在 → 记一行「范例失效，按 action 原文实现」，不阻塞。
-3. `write_files` 边界已锁定正确路径产物；走错路会越界，提交前 R6.5 自动拦截。
+3. `write_files` 边界已锁定正确路径产物；走错路会越界，交接前 R6.5 自动拦截。
 
 **兜底路径(仅当任务未被锚定，即 `action` 无正确路径声明且项目有 `.context/`)**：
 
@@ -380,7 +380,7 @@ grep -rn "from.*old-helpers\|import.*old-helpers" src/ tests/
 
 `<verify>` 可以连接当前任务完成所必需的数据库或远程依赖；规则不是禁止真实依赖，而是不在 DEV 重复运行与当前 task 无关的全套测试。跨 AC 扩面留给 TEST，全量与端到端留给 INTEGRATION。
 
-### 4. 提交前 self-review（书本驱动 6 维 · 装了 brooks-lint 优先）
+### 4. 交接前 self-review（书本驱动 6 维 · 装了 brooks-lint 优先）
 
 > 这是把 6-review 阶段的代码质量轮**前置一部分**到 dev 自查，避免 review 阶段才发现明显问题。
 
@@ -388,14 +388,14 @@ grep -rn "from.*old-helpers\|import.*old-helpers" src/ tests/
 
 ##### 路径 A · 装了 brooks-lint（首选）
 
-提交前调用：
+交接前调用：
 
 ```
 /brooks-review            # 基于本次未提交 diff 跑诊断
 ```
 
 如果发现：
-- 🔴 Critical → **必须修后再提交**，不允许带病提交
+- 🔴 Critical → **必须修后再交付**，不允许带病交付
 - 🟡 Major → 修或在 `EXECUTION.md` 写明「已知接受 + 理由」
 - 🟢 Minor → 记入 `EXECUTION.md` 的「已知小问题」段，可不修
 
@@ -412,11 +412,11 @@ grep -rn "from.*old-helpers\|import.*old-helpers" src/ tests/
 - **R5 依赖混乱**：`from xxx import yyy` 反向（业务层 import 基础设施实现） → 倒置
 - **R6 领域扭曲**：变量名是技术词（data / info / item）而非领域词（order / driver） → 重命名
 
-发现问题先修，**不允许提交时心想"review 阶段再说"**。
+发现问题先修，**不允许交付时心想"review 阶段再说"**。
 
-### 5. 提交前 diff 边界 verify（强制 · 对应 R6.5 / B3 老项目护栏）
+### 5. 交接前 diff 边界 verify（强制 · 对应 R6.5 / B3 老项目护栏）
 
-> 防"AI 顺手改了别的"。提交前必须验证 diff 范围 ⊆ `TASKS.md`/`TASK.md` 的 `write_files`。
+> 防"AI 顺手改了别的"。交接前必须验证 diff 范围 ⊆ `TASKS.md`/`TASK.md` 的 `write_files`。
 
 #### 5.1 跑 diff 检查
 
@@ -542,7 +542,7 @@ PROGRESS 是临时文件，不归档。
 - **R4.5**：Schema 变更必伴随迁移文件。只改 model 不生迁移就提交 → 违规，AI 自己回滚
 - **R4.6**：破坏性变更（删 ≥ 5 行 / 改公共接口）必走 1.8 协议：grep 引用图 + 反问用户 + 回归测试覆盖
 - **R6.4**：写代码前必 grep 同类抽象（见 1.4），找到了用，不另起炉灶
-- **R6.5**：提交前必跑 diff 边界 verify（见 5），越界必需回滚或扩范围
+- **R6.5**：交接前必跑 diff 边界 verify（见 5），越界必需回滚或扩范围
 - **R5.2**：禁止用 mock 屏蔽真实失败
 - **R6.3**：禁止"应该可以工作"——必须实际跑过 verify
 - **R7.1**：发现需要扩大范围 → 停下来要求更新 `TASKS.md`
@@ -552,13 +552,13 @@ PROGRESS 是临时文件，不归档。
 ## 自检
 
 - [ ] verify 命令真的跑了，且输出已贴出
-- [ ] 测试与代码同次或紧邻提交
+- [ ] 本 task 改动已就绪（代码 + 测试），待编排器统一提交
 - [ ] **6 维 self-review 跑了**（生产代码改动必跑：`/brooks-review` 或内置 6 维快查），🔴 已修，🟡 已记，🟢 可省
 - [ ] **涉及 schema 变更的任务已生成迁移文件**（R4.5 / 1.7），且含 up + down；检测到凭据已反问用户、未检测到凭据已在 `EXECUTION.md` 里提醒手动跑
 - [ ] **前端任务走了 1.6**（命中时）：读了 UI-DESIGN.md + frontend-engineer-rules.md；交付前逐项过了 frontend-rules 第 10 节交付清单（console 无错 / 状态完备 / 无硬编码颜色 / 无 `const styles` / 无 `scrollIntoView`）
 - [ ] **沿用既有抽象 grep 跑了**（R6.4 / 1.4），结果贴入 `EXECUTION.md`；需要能力都已查过项目里有无
 - [ ] **破坏性变更走了 1.8 协议**（R4.6）：删代码 ≥ 5 行 / 改公共接口都 grep 了引用图、反问了用户、有回归测试覆盖。未命中跳则明示
-- [ ] **提交前 diff 边界 verify 跑了**（R6.5 / 5），结果贴入 `EXECUTION.md`；0 越界 ✅
+- [ ] **交接前 diff 边界 verify 跑了**（R6.5 / 5），结果贴入 `EXECUTION.md`；0 越界 ✅
 - [ ] `EXECUTION.md` 已更新，含「6 维自查」+「越界检查」段（有 schema 变更还要含「数据库迁移」、有破坏性变更还要含「破坏性变更」段）
 - [ ] 如属例外任务，`SUMMARY.md` 已补齐
 - [ ] `TASKS.md` 中的对应任务已勾选
