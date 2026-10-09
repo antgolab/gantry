@@ -103,8 +103,8 @@ function cleanupTmp() {
 
 // === A 组 · 信任侵蚀修复 ===
 
-test('AC-01 config 未知 key fail-closed (库层校验 + 进程非零退出)', () => {
-  // 路径 B (保底): 库层 fail-closed — errors 携带具体 key 路径, ConfigError 承载 errors
+test('AC-01 config 未知 key fail-closed (库层校验 + CLI 真跑非零退出)', () => {
+  // 路径 B (保留 · 库层): fail-closed — errors 携带具体 key 路径, ConfigError 承载 errors
   const r = validateLearningsConfig({ friction: { weights: { newfile: 10 } } });
   assert.equal(r.ok, false);
   assert.ok(r.errors.includes('learnings.friction.weights.newfile 不是已知配置项'));
@@ -113,18 +113,32 @@ test('AC-01 config 未知 key fail-closed (库层校验 + 进程非零退出)', 
   assert.equal(err.name, 'ConfigError');
   assert.ok(err.errors.includes('learnings.friction.weights.newfile 不是已知配置项'));
 
-  // 路径 A: 进程级黑盒 — 未捕获 ConfigError 的进程 exit code 非零 + stderr 含具体 key 路径
-  const script = [
-    `const { validateLearningsConfig, ConfigError } = await import(${JSON.stringify(SCHEMA_URL)});`,
-    'const r = validateLearningsConfig({ friction: { weights: { newfile: 10 } } });',
-    'if (!r.ok) throw new ConfigError(r.errors);',
-  ].join('\n');
-  const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf-8' });
-  assert.notEqual(child.status, 0, '进程应非零退出');
-  assert.ok(
-    child.stderr.includes('learnings.friction.weights.newfile 不是已知配置项'),
-    `stderr 应含具体 key 路径, 实际: ${child.stderr}`,
-  );
+  // 路径 A (真 CLI 层 · T-FIX-20): `node src/cli.mjs status` + 坏 config 真跑
+  // 应 exit !== 0 + stderr 含具体 key 路径 + 修正提示
+  const proj = mkdtempSync(join(tmpdir(), 'gantry-ac1-'));
+  try {
+    mkdirSync(join(proj, '.gantry', 'planning'), { recursive: true });
+    writeFileSync(
+      join(proj, '.gantry', 'planning', 'config.json'),
+      JSON.stringify({ learnings: { friction: { weights: { newfile: 10 } } } }),
+    );
+    const child = spawnSync(process.execPath, [CLI, 'status'], {
+      cwd: proj,
+      encoding: 'utf-8',
+      env: { ...process.env, HOME: proj }, // 隔离用户全局 config
+    });
+    assert.notEqual(child.status, 0, `CLI 应非零退出, stdout=${child.stdout} stderr=${child.stderr}`);
+    assert.ok(
+      child.stderr.includes('learnings.friction.weights.newfile 不是已知配置项'),
+      `stderr 应含具体 key 路径, 实际: ${child.stderr}`,
+    );
+    assert.ok(
+      child.stderr.includes('修正后重试或删除该键'),
+      `stderr 应含修正提示, 实际: ${child.stderr}`,
+    );
+  } finally {
+    rmSync(proj, { recursive: true, force: true });
+  }
 });
 
 test('AC-02 多层嵌套 unknown key 均被检出', () => {

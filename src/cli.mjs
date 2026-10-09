@@ -44,7 +44,7 @@ import { knowledge } from './commands/knowledge.mjs';
 import { getEvents as frictionGetEvents, getScore as frictionGetScore } from './lib/friction.mjs';
 import { proposeLearning } from './lib/curator.mjs';
 import { write as writeLearning } from './lib/learnings/index.mjs';
-import { validateLearningsConfig } from './lib/config-schema.mjs';
+import { validateLearningsConfig, ConfigError } from './lib/config-schema.mjs';
 import { buildManagedEntries } from './lib/install-helpers.mjs';
 import { extractProposalSummary, collectLessonsIds, appendChangelogLine } from './lib/archive-helpers.mjs';
 import { createInterface } from 'node:readline/promises';
@@ -97,13 +97,32 @@ const IDE_ONLY_SKILLS = new Set([
   'next', 'exec', 'adjust', 'resume', 'review', 'health', 'debug', 'fast',
 ]);
 
+function handleCliError(err) {
+  if (err instanceof ConfigError) {
+    for (const line of err.errors) console.error(line);
+    console.error('修正后重试或删除该键');
+    process.exit(1);
+  }
+  console.error(err.message || String(err));
+  process.exit(1);
+}
+
 if (!command || command === '--help' || command === '-h') {
   help();
 } else if (command === '--version' || command === '-v' || command === '-V') {
   version();
 } else if (commands[command]) {
-  const _r = commands[command](args);
-  if (_r && typeof _r.then === 'function') _r.catch(err => { console.error(err.message || String(err)); process.exit(1); });
+  try {
+    // AC-1 fail-closed: 任一命令运行前先校验 learnings 配置, 未知 key 立即退出非零
+    const _cfg = readConfig(process.cwd()).learnings;
+    const _vr = validateLearningsConfig(_cfg);
+    if (!_vr.ok) throw new ConfigError(_vr.errors);
+
+    const _r = commands[command](args);
+    if (_r && typeof _r.then === 'function') _r.catch(handleCliError);
+  } catch (err) {
+    handleCliError(err);
+  }
 } else if (IDE_ONLY_SKILLS.has(command)) {
   console.error(`\`${command}\` 是 IDE skill，不是 CLI 命令。`);
   console.error(`  请在 IDE(Claude Code 等)中运行: /gantry-${command}`);
@@ -1351,7 +1370,9 @@ async function archive(args, opts = {}) {
   // friction 汇总 hook (T15): 采集必须在 archiveChange 移动 change 目录之前完成,否则 getEvents 读不到事件。
   let frictionEvents = null;
   if (!skipLearning) {
-    const learningsCfg = validateLearningsConfig(readConfig(projectRoot).learnings).merged;
+    const _lv = validateLearningsConfig(readConfig(projectRoot).learnings);
+    if (!_lv.ok) throw new ConfigError(_lv.errors);
+    const learningsCfg = _lv.merged;
     const { threshold, weights } = learningsCfg.friction;
     if (frictionGetScore(finishedChange, weights) >= threshold) {
       frictionEvents = frictionGetEvents(finishedChange);
