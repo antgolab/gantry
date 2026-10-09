@@ -34,12 +34,8 @@
 
 ```
 gantry change "给订单列表加导出功能"
-/gantry-next         # → SPEC.md
-/gantry-next         # → DESIGN.md
-/gantry-next         # → TASKS.md
-/gantry-next         # → DEV(dev 阶段任务自动执行)
-/gantry-next         # → TEST
-/gantry-next         # → REVIEW
+/gantry-auto         # → SPEC.md → DESIGN.md（停在 design 关卡）
+/gantry-auto         # → TASKS.md → DEV → TEST → REVIEW（停在 integration 关卡）
 gantry archive       # → INTEGRATION + 归档
 ```
 

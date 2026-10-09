@@ -139,7 +139,7 @@ ${body.trim()}
   - \`trigger === false && confidence === "high"\`:确定不用跑,跳过。
   - \`trigger === false && confidence === "low"\`:关键词判定可能漏,**据完整上下文复核**,涉及就补跑。
   - 只能把 low 的 false 上调为"跑",不得把 true 下调为"跳过"。
-- 仅当当前 skill 的编排协议要求推进时，才执行 \`next.onSuccess\` (失败走 \`next.onFailure\`)；明确要求停在人工确认关卡时禁止执行，等待后续 \`/gantry-next\`。
+- 仅当当前 skill 的编排协议要求推进时，才执行 \`next.onSuccess\` (失败走 \`next.onFailure\`)；明确要求停在人工确认关卡时禁止执行，等待后续 \`/gantry-auto\` 或 \`/gantry-next\`。
 - 不允许在 v2 schema 上自行发明字段。
 
 ## 阶段执行指令

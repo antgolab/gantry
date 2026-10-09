@@ -198,12 +198,8 @@ Typical flow:
 
 ```bash
 gantry change "Describe the requirement"   # -> PROPOSAL.md
-/gantry-next                               # -> SPEC.md
-/gantry-next                               # -> DESIGN.md
-/gantry-next                               # -> TASKS.md
-/gantry-next                               # -> DEV (auto-executes tasks)
-/gantry-next                               # -> TEST
-/gantry-next                               # -> REVIEW
+/gantry-auto                               # -> SPEC.md -> DESIGN.md (pauses at design gate)
+/gantry-auto                               # -> TASKS.md -> DEV -> TEST -> REVIEW (pauses at integration gate)
 gantry archive                             # -> INTEGRATION + archive
 ```
 

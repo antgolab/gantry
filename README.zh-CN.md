@@ -263,12 +263,8 @@ PROPOSAL → SPEC → DESIGN → [UI-DESIGN] → TASKS → DEV → TEST → REVI
 
 ```bash
 gantry change "描述需求"   # → PROPOSAL.md
-/gantry-next               # → SPEC.md
-/gantry-next               # → DESIGN.md
-/gantry-next               # → TASKS.md
-/gantry-next               # → DEV（dev 阶段任务自动执行）
-/gantry-next               # → TEST
-/gantry-next               # → REVIEW
+/gantry-auto               # → SPEC.md → DESIGN.md（停在 design 关卡）
+/gantry-auto               # → TASKS.md → DEV → TEST → REVIEW（停在 integration 关卡）
 gantry archive             # → INTEGRATION + 归档
 ```
 
@@ -288,8 +284,7 @@ light 只走 `change → fast → integration`；Fast 内合并范围锁定、�
 
 ```bash
 gantry change --pipeline light "描述需求"
-/gantry-next
-/gantry-next
+/gantry-auto
 ```
 
 产物：`PROPOSAL.md` + `EXECUTION.md`。命中高风险边界会拒绝 light，需改走 full。

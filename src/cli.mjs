@@ -179,7 +179,7 @@ function status(args) {
   const cfg = readConfig(projectRoot);
   if (state.currentStage !== 'idle'
       && requiresApproval(state.currentStage)) {
-    console.log(`\n⏸  当前阶段 ${state.currentStage} 需人工确认：审阅本阶段产物后运行 /gantry-next 继续。`);
+    console.log(`\n⏸  当前阶段 ${state.currentStage} 需人工确认：审阅本阶段产物后运行 /gantry-auto 继续（或 /gantry-next 单步）。`);
   }
 
   // 任务进度（dev 阶段且有 TASKS.md/TASK.md 时显示）
@@ -681,7 +681,7 @@ async function auto(args) {
     }
     updateState(projectRoot, { stagesRun: step + 1, maxStages });
     if (result.pausedForApproval) {
-      console.log(`⏸  已进入 ${result.pausedForApproval}（需人工确认）。审阅后运行 /gantry-next 继续。`);
+      console.log(`⏸  已进入 ${result.pausedForApproval}（需人工确认）。审阅后运行 /gantry-auto 继续（或 /gantry-next 单步）。`);
       return;
     }
   }
