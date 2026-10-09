@@ -283,6 +283,17 @@ describe('uninstall', () => {
     assert.ok(!existsSync(join(tmpDir, '.gantry/planning')));
   });
 
+  it('--all 软删 planning 到 .gantry/.trash/ 以便恢复', () => {
+    run('install --tool codex', { cwd: tmpDir });
+    const out = run('uninstall --all', { cwd: tmpDir });
+    assert.ok(out.includes('软删'));
+    const trashDir = join(tmpDir, '.gantry', '.trash');
+    assert.ok(existsSync(trashDir));
+    const entries = readdirSync(trashDir).filter((n) => n.startsWith('planning-'));
+    assert.equal(entries.length, 1);
+    assert.ok(existsSync(join(trashDir, entries[0], 'STATE.md')));
+  });
+
   it('preserves .gantry/planning/ without --all', () => {
     run('install --tool codex', { cwd: tmpDir });
     run('uninstall', { cwd: tmpDir });
@@ -391,5 +402,49 @@ describe('claude settings.json 合并（install-claude-code-claude-settings chan
     assert.doesNotThrow(() => run('uninstall', { cwd: tmpDir }));
     assert.ok(!existsSync(managedPath()), 'managed-permissions.json 应被删除');
     assert.deepEqual(readSettings().permissions.allow, ['Bash(git *)']);
+  });
+
+  it('AC-9 install 前 settings.json 已含 Bash(gantry *)，uninstall 后应被清理', () => {
+    mkdirSync(join(tmpDir, '.claude'), { recursive: true });
+    writeFileSync(settingsPath(),
+      JSON.stringify({ permissions: { allow: ['Bash(git *)', 'Bash(gantry *)'] } }, null, 2));
+    run('install --tool claude', { cwd: tmpDir });
+    // 侧文件应登记 gantry 的意图全集，而非 merge 返回的"本次新增"子集
+    const managed = JSON.parse(readFileSync(managedPath(), 'utf8'));
+    assert.ok(managed['permissions.allow'].includes('Bash(gantry *)'));
+    run('uninstall', { cwd: tmpDir });
+    assert.deepEqual(readSettings().permissions.allow, ['Bash(git *)']);
+    assert.ok(!existsSync(managedPath()));
+  });
+
+  it('AC-10 legacy 别名登记到侧文件但不复活到 settings（历史产物认领）', () => {
+    // 用户之前被旧版 gantry install 写入了 Bash(gantry status *)，
+    // 现在 settings 里残留它。本次 install 不应把它合回 settings，
+    // 但侧文件要认领它，让下次 uninstall 能把它清掉。
+    mkdirSync(join(tmpDir, '.claude'), { recursive: true });
+    writeFileSync(settingsPath(),
+      JSON.stringify({ permissions: { allow: ['Bash(git *)'] } }, null, 2));
+    run('install --tool claude', { cwd: tmpDir });
+    const allow = readSettings().permissions.allow;
+    assert.ok(allow.includes('Bash(gantry *)'), '当前意图应合并');
+    assert.ok(!allow.includes('Bash(gantry status *)'), '历史别名不得复活到 settings');
+    const managed = JSON.parse(readFileSync(managedPath(), 'utf8'));
+    assert.ok(managed['permissions.allow'].includes('Bash(gantry *)'));
+    assert.ok(managed['permissions.allow'].includes('Bash(gantry status *)'),
+      '侧文件应认领历史别名');
+  });
+
+  it('AC-11 老项目残留 Bash(gantry status *)，install + uninstall 能清掉', () => {
+    // 完整场景：模拟一个老项目同时留有历史残留 Bash(gantry status *)
+    // 和用户自己加的 Bash(git *)。新 install 认领残留 → uninstall 清掉残留。
+    mkdirSync(join(tmpDir, '.claude'), { recursive: true });
+    writeFileSync(settingsPath(), JSON.stringify({
+      permissions: { allow: ['Bash(git *)', 'Bash(gantry status *)'] },
+    }, null, 2));
+    run('install --tool claude', { cwd: tmpDir });
+    run('uninstall', { cwd: tmpDir });
+    assert.deepEqual(readSettings().permissions.allow, ['Bash(git *)'],
+      '只保留用户手加的条目，gantry 当前/历史条目全部清掉');
+    assert.ok(!existsSync(managedPath()));
   });
 });

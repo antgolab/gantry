@@ -1105,7 +1105,19 @@ async function installToolsToTarget({ projectRoot, installTools, globalMode }) {
         const sideFile = globalMode
           ? join(globalInstallRoot(installTool.name), 'gantry-managed-permissions.json')
           : join(projectRoot, PLANNING_DIR, 'managed-permissions.json');
-        writeManaged(sideFile, added);
+        // 侧文件登记 gantry 的意图全集（当前 addToAllow + 历史 legacyAliases），
+        // 而非 merge 返回的本次新增子集：
+        // - addToAllow:    install 前用户已手加过的同名条目也要被 uninstall 认领，
+        //                  否则会残留在 settings 里。
+        // - legacyAliases: gantry 过去的 install 版本写入过、现在已被更宽规则覆盖
+        //                  的条目（如 Bash(gantry status *) 被 Bash(gantry *) 覆盖）。
+        //                  install **不**把它们合回 settings（避免复活历史产物），
+        //                  只在侧文件登记，让 uninstall 清掉老项目的残留。
+        const managedEntries = [
+          ...content.addToAllow,
+          ...(content.legacyAliases || []),
+        ];
+        writeManaged(sideFile, { 'permissions.allow': managedEntries });
         const mergedCount = (added['permissions.allow'] || []).length;
         console.log(
           `  已合并 ${mergedCount} 条 permission 到 ${settingsPath}` +
@@ -1791,10 +1803,16 @@ function cleanSkillDirs(base) {
 
 function removePlanning(target) {
   const planningDir = join(target, PLANNING_DIR);
-  if (existsSync(planningDir)) {
-    rmSync(planningDir, { recursive: true, force: true });
-    console.log(`  删除: ${PLANNING_DIR}/`);
-  }
+  if (!existsSync(planningDir)) return;
+  // 软删：rename 到 .gantry/.trash/planning-<ts>/，避免 unlink 不可逆
+  // 用户若反悔可直接 mv 回来；需要彻底清理再手动 rm .gantry/.trash
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  const trashDir = join(target, '.gantry', '.trash');
+  if (!existsSync(trashDir)) mkdirSync(trashDir, { recursive: true });
+  const dest = join(trashDir, `planning-${ts}`);
+  renameSync(planningDir, dest);
+  console.log(`  软删: ${PLANNING_DIR}/ → .gantry/.trash/planning-${ts}/`);
+  console.log(`  恢复: mv "${dest}" "${planningDir}"`);
 }
 
 function injectSection(filePath, content) {

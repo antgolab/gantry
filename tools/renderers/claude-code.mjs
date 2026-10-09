@@ -36,7 +36,15 @@ export function render(core, commands, agents) {
   // Merge intent: install loop recognizes the __merge__/ prefix and merges
   // (rather than overwrites) the target file. Renderer stays IO-free — it only
   // declares what to merge.
-  files['__merge__/.claude/settings.json'] = { addToAllow: ['Bash(gantry *)'] };
+  //
+  // - addToAllow:    gantry 当前意图，install 合并进 settings。
+  // - legacyAliases: gantry 历史 install 曾写过的条目，现在已被更宽的 addToAllow
+  //                  覆盖。install **不**把它们写回 settings（避免复活历史产物），
+  //                  但要登记到侧文件，让 uninstall 认领并清掉老项目里的残留。
+  files['__merge__/.claude/settings.json'] = {
+    addToAllow: ['Bash(gantry *)'],
+    legacyAliases: ['Bash(gantry status *)'],
+  };
 
   // Orchestration commands: reference matching phase file
   if (commands) {

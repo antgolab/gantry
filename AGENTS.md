@@ -9,6 +9,7 @@
 - 遇到问题 → 追根因，不打补丁
 - 只输出影响决策的内容
 
+
 <!-- BEGIN gantry -->
 # AGENTS · gantry（Codex 注入）
 
