@@ -45,6 +45,8 @@ import { getEvents as frictionGetEvents, getScore as frictionGetScore } from './
 import { proposeLearning } from './lib/curator.mjs';
 import { write as writeLearning } from './lib/learnings/index.mjs';
 import { validateLearningsConfig } from './lib/config-schema.mjs';
+import { buildManagedEntries } from './lib/install-helpers.mjs';
+import { extractProposalSummary, collectLessonsIds, appendChangelogLine } from './lib/archive-helpers.mjs';
 import { createInterface } from 'node:readline/promises';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -83,7 +85,7 @@ const [,, command, ...args] = process.argv;
 
 const commands = {
   status, change, pipeline, auto, advance, context, done, hook, install, uninstall, archive, unarchive, metrics, version,
-  help, knowledge,
+  help, knowledge, loop,
   'loop-next': loopNext,
   'heal': heal,
 };
@@ -1087,56 +1089,26 @@ async function installToolsToTarget({ projectRoot, installTools, globalMode }) {
     const renderer = await import(`../tools/renderers/${installTool.renderer}.mjs`);
     const files = renderer.render(core, cmds, agents);
     const target = globalMode ? globalInstallRoot(installTool.name) : projectRoot;
-
-    if (!globalMode) {
-      addCorePhaseFiles(files, core.phases);
-      addCoreAgentFiles(files, agents);
-    }
-
+    if (!globalMode) { addCorePhaseFiles(files, core.phases); addCoreAgentFiles(files, agents); }
     let count = 0;
     for (const [relPath, content] of Object.entries(files)) {
       if (relPath.startsWith('__merge__/')) {
         const realRel = relPath.slice('__merge__/'.length);
-        const settingsPath = globalMode
-          ? join(target, globalRelPath(installTool.name, realRel))
-          : join(target, realRel);
+        const settingsPath = join(target, globalMode ? globalRelPath(installTool.name, realRel) : realRel);
         mkdirSync(dirname(settingsPath), { recursive: true });
         const added = mergeSettingsJson(settingsPath, { 'permissions.allow': content.addToAllow });
-        const sideFile = globalMode
-          ? join(globalInstallRoot(installTool.name), 'gantry-managed-permissions.json')
-          : join(projectRoot, PLANNING_DIR, 'managed-permissions.json');
-        // 侧文件登记 gantry 的意图全集（当前 addToAllow + 历史 legacyAliases），
-        // 而非 merge 返回的本次新增子集：
-        // - addToAllow:    install 前用户已手加过的同名条目也要被 uninstall 认领，
-        //                  否则会残留在 settings 里。
-        // - legacyAliases: gantry 过去的 install 版本写入过、现在已被更宽规则覆盖
-        //                  的条目（如 Bash(gantry status *) 被 Bash(gantry *) 覆盖）。
-        //                  install **不**把它们合回 settings（避免复活历史产物），
-        //                  只在侧文件登记，让 uninstall 清掉老项目的残留。
-        const managedEntries = [
-          ...content.addToAllow,
-          ...(content.legacyAliases || []),
-        ];
-        writeManaged(sideFile, { 'permissions.allow': managedEntries });
-        const mergedCount = (added['permissions.allow'] || []).length;
-        console.log(
-          `  已合并 ${mergedCount} 条 permission 到 ${settingsPath}` +
-          (globalMode ? '（影响所有 Claude Code 会话）' : ''),
-        );
+        const sideFile = globalMode ? join(globalInstallRoot(installTool.name), 'gantry-managed-permissions.json') : join(projectRoot, PLANNING_DIR, 'managed-permissions.json');
+        writeManaged(sideFile, buildManagedEntries(content));
+        console.log(`  已合并 ${(added['permissions.allow'] || []).length} 条 permission 到 ${settingsPath}${globalMode ? '（影响所有 Claude Code 会话）' : ''}`);
         count++;
         continue;
       }
-      const outputPath = globalMode ? globalRelPath(installTool.name, relPath) : relPath;
-      const full = join(target, outputPath);
+      const full = join(target, globalMode ? globalRelPath(installTool.name, relPath) : relPath);
       mkdirSync(dirname(full), { recursive: true });
       if (SECTION_FILES.includes(relPath)) {
         injectSection(full, content);
       } else {
-        const skipBanner = isPromptEntry(relPath);
-        const finalContent = skipBanner
-          ? content
-          : insertBanner(content, bannerFor(installTool.name, relPath, content));
-        writeFileSync(full, finalContent);
+        writeFileSync(full, isPromptEntry(relPath) ? content : insertBanner(content, bannerFor(installTool.name, relPath, content)));
       }
       count++;
     }
@@ -1284,11 +1256,34 @@ function uninstall(args) {
 
 
 
-function archiveChange(projectRoot, changeId, { keepHistory = false, quiet = false } = {}) {
+async function archiveChange(projectRoot, changeId, { keepHistory = false, quiet = false, summary: summaryOverride = '' } = {}) {
   const sourceDir = join(projectRoot, SPECS_DIR, changeId);
   if (!existsSync(sourceDir)) {
     throw new Error(`未找到 change 目录: ${sourceDir}`);
   }
+
+  // CHANGELOG 写入 (T09): 必须在移动 change 目录之前完成, appendChangelogLine 抛错则整次归档中止。
+  const proposalPath = join(sourceDir, getPreferredArtifactName('proposal'));
+  const proposalContent = existsSync(proposalPath) ? readFileSync(proposalPath, 'utf8') : '';
+  let summary = summaryOverride || extractProposalSummary(proposalContent);
+  if (!summary) {
+    summary = changeId;
+    console.error('⚠ 摘要提取失败, 建议下次用 --summary 覆写');
+  }
+  const lessonsIds = await collectLessonsIds(join(projectRoot, '.gantry', 'learnings', 'team'), changeId);
+  const changelogPath = join(projectRoot, SPECS_DIR, 'CHANGELOG.md');
+  // 若尚未初始化 CHANGELOG,先写入标准表头骨架;父目录只读等真实故障会在此或 appendChangelogLine 抛错 (AC-7)。
+  if (!existsSync(changelogPath)) {
+    writeFileSync(changelogPath, '# CHANGELOG\n\n| 日期 | Change ID | 摘要 | PR | LESSONS |\n|---|---|---|---|---|\n');
+  }
+  await appendChangelogLine(changelogPath, {
+    date: new Date().toISOString().slice(0, 10),
+    id: changeId,
+    summary,
+    pr: '—',
+    lessons: lessonsIds.length ? lessonsIds.join(', ') : '无',
+  });
+  console.log('已写入 CHANGELOG.md');
 
   const archiveBase = join(projectRoot, SPECS_DIR, '_archive');
   if (!existsSync(archiveBase)) mkdirSync(archiveBase, { recursive: true });
@@ -1327,9 +1322,9 @@ function archiveChange(projectRoot, changeId, { keepHistory = false, quiet = fal
  * gantry archive — 收尾并归档当前 change
  */
 async function archive(args, opts = {}) {
-  const positional = args.filter(a => !a.startsWith('--'));
+  const positional = stripFlags(args, ['--summary']);
   if (positional.length > 0) {
-    console.error('用法: gantry archive [--force] [--keep-history] [--skip-learning]');
+    console.error('用法: gantry archive [--force] [--keep-history] [--skip-learning] [--summary <摘要>]');
     process.exit(1);
   }
 
@@ -1353,8 +1348,7 @@ async function archive(args, opts = {}) {
   const finishedChange = state.activeChange;
   const skipLearning = args.includes('--skip-learning');
 
-  // === friction 汇总 hook (T15) ===
-  // 采集必须在 archiveChange 移动 change 目录之前完成,否则 getEvents 读不到事件。
+  // friction 汇总 hook (T15): 采集必须在 archiveChange 移动 change 目录之前完成,否则 getEvents 读不到事件。
   let frictionEvents = null;
   if (!skipLearning) {
     const learningsCfg = validateLearningsConfig(readConfig(projectRoot).learnings).merged;
@@ -1366,8 +1360,9 @@ async function archive(args, opts = {}) {
 
   let archiveResult;
   try {
-    archiveResult = archiveChange(projectRoot, finishedChange, {
+    archiveResult = await archiveChange(projectRoot, finishedChange, {
       keepHistory: args.includes('--keep-history'),
+      summary: getFlag(args, '--summary'),
       quiet: true,
     });
   } catch (error) {
@@ -1516,6 +1511,53 @@ function metrics(args) {
 }
 
 /**
+ * gantry loop [claude|codex] — 无监督收敛 driver 的终端入口。
+ *
+ * 把 .gantry/loop/loop.sh 包成 subcommand:
+ *   - 脚本从 gantry 包根(GANTRY_ROOT)读,不依赖用户项目有没有 loop.sh
+ *   - 用户项目 cwd 由 spawn 的 cwd 透传;dispatcher 用环境变量 PROJECT_ROOT 读
+ *   - 退出码原样透传(0=done / 2=blocked / 3=max-steps / 4=dispatch-fail / 5=stuck / 64=usage)
+ *
+ * 环境变量透传:GANTRY_BIN(默认 "gantry") / GANTRY_LOOP_MAX_STEPS / LOOP_STUCK_LIMIT /
+ *              GANTRY_LOOP_DISPATCHER。
+ */
+function loop(args) {
+  const client = args[0];
+  if (!client || ['-h', '--help'].includes(client)) {
+    console.log(`gantry loop <client> — 无监督收敛 driver
+
+用法: gantry loop <client>
+  client       claude | codex(明确指定,不做自动探测)
+
+环境变量:
+  GANTRY_BIN              CLI 入口,默认 "gantry"(全局可执行)
+  GANTRY_LOOP_MAX_STEPS   步数上限,默认 40
+  LOOP_STUCK_LIMIT        同 token 连续次数上限,默认 2
+
+退出码: 0=done  2=blocked  3=达步数上限  4=dispatch 失败  5=stuck  64=用法错`);
+    if (!client) process.exit(64);
+    return;
+  }
+
+  const loopScript = join(GANTRY_ROOT, '.gantry', 'loop', 'loop.sh');
+  if (!existsSync(loopScript)) {
+    console.error(`未找到 loop 脚本: ${loopScript}`);
+    console.error(`gantry 包安装不完整——请重装(npm i -g gantry)。`);
+    process.exit(1);
+  }
+
+  const r = spawnSync('bash', [loopScript, client], {
+    stdio: 'inherit',
+    cwd: process.cwd(),
+  });
+  if (r.error) {
+    console.error(`启动 loop 失败: ${r.error.message}`);
+    process.exit(1);
+  }
+  process.exit(r.status ?? 1);
+}
+
+/**
  * gantry version — 显示版本号
  */
 function version() {
@@ -1541,6 +1583,7 @@ function help(args = []) {
   change "<描述>"      开新变更           [--pipeline light]
   advance              单步推进           [--skip]
   auto                 多阶段自动推进
+  loop <claude|codex>  无监督收敛 driver(headless)
   loop-next            无监督 driver 消费的 token
   heal                 dev 阶段 self-heal
 
@@ -1568,6 +1611,10 @@ function helpAll() {
     --skip              跳过软门禁失败继续推进
 
   auto                自动多阶段推进（步数取 config.autonomous.maxStagesPerRun），遇门禁失败 / 人工确认关卡 / 终态即停
+
+  loop <claude|codex> 无监督收敛 driver(headless)——包装 .gantry/loop/loop.sh
+                      退出码: 0=done  2=blocked  3=max-steps  4=dispatch 失败  5=stuck  64=用法错
+                      环境变量: GANTRY_BIN(默认 gantry) / GANTRY_LOOP_MAX_STEPS / LOOP_STUCK_LIMIT
 
   loop-next           只读输出下一步 loop token（供无监督 driver 消费）
                       白名单单 token,stdout 单行;exit 0=推进/done,exit 2=blocked

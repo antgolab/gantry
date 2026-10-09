@@ -24,12 +24,12 @@ export const HARD_RULE_KEYWORDS = [
 
 /**
  * 硬红线路径 glob: 变更文件路径命中任一 glob 即判定命中。
- * `*` 通配任意字符 (含路径分隔符)。
+ * glob 语义对齐 minimatch 子集: `*` 不跨 `/`, `**` 跨 `/`, 其余元字符按字面转义。
  */
 export const HARD_RULE_PATH_GLOBS = [
   { ruleId: 'schema-change', glob: 'schema/*' },
   { ruleId: 'migration-change', glob: 'migrations/*' },
-  { ruleId: 'sql-change', glob: '*.sql' },
+  { ruleId: 'sql-change', glob: '**/*.sql' },
   { ruleId: 'schema-change', glob: 'prisma/*' },
   { ruleId: 'contract-change', glob: 'api/*.ts' },
   { ruleId: 'contract-change', glob: 'openapi.yaml' },
@@ -86,9 +86,30 @@ function normalizeSnapshot(fsSnapshot) {
   };
 }
 
-function globToRegExp(glob) {
-  const escaped = glob.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
-  return new RegExp(`^${escaped}$`);
+/**
+ * 把 hard-rules 路径 glob 转成正则, 对齐 minimatch 子集:
+ * - `*` 不跨 `/` → `[^/]*`
+ * - `**` 跨 `/` → `.*`
+ * - 夹在两个 `/` 之间的 `**` 允许 0 层目录, 译为可选跨路径段,
+ *   因此 `src/**` 加 `*.mjs` 这类 glob 同时匹配 `src/foo.mjs` 与 `src/lib/nested/deep/foo.mjs`
+ * - 其余正则元字符 (`.` / `+` / `?` / `^` / `$` / `{}` / `()` / `|` / `[]` / `\`) 全部按字面转义
+ */
+export function globToRegExp(glob) {
+  // 先占位 `/**/`, 稍后译成"0 层或 ≥1 层目录"(minimatch: `a/**/b` 可匹配 `a/b`)
+  let result = glob.replace(/\/\*\*\//g, '__SLASH_DBLSTAR__');
+
+  // 转义除 `*` 之外的所有正则元字符
+  result = result.replace(/[.+?^${}()|[\]\\]/g, '\\$&');
+
+  // `**` → 占位 → `.*` (跨 `/`); 剩余 `*` → `[^/]*` (不跨 `/`)
+  result = result.replace(/\*\*/g, '__GLOB_DBLSTAR__');
+  result = result.replace(/\*/g, '[^/]*');
+  result = result.replace(/__GLOB_DBLSTAR__/g, '.*');
+
+  // `/**/` → `(?:/.*/|/)`, 同时允许 0 层与 ≥1 层目录
+  result = result.replace(/__SLASH_DBLSTAR__/g, '(?:/.*/|/)');
+
+  return new RegExp(`^${result}$`);
 }
 
 function distinctTopLevelDirs(files) {

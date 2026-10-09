@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import {
   validateLearningsConfig,
   DEFAULT_LEARNINGS_CONFIG,
+  ConfigError,
 } from '../src/lib/config-schema.mjs';
 
 test('合法完整 config → ok=true, errors=[]', () => {
@@ -67,4 +68,57 @@ test('部分覆盖仍补齐默认并保留用户值', () => {
   assert.equal(r.merged.friction.threshold, 9);
   assert.deepEqual(r.merged.friction.weights, DEFAULT_LEARNINGS_CONFIG.friction.weights);
   assert.deepEqual(r.merged.recall, DEFAULT_LEARNINGS_CONFIG.recall);
+});
+
+// === T-FIX-13 config 未知 key fail-closed (AC-1 / AC-2) ===
+
+test('AC-1 错拼 newFile 为 newfile 被检出', () => {
+  const r = validateLearningsConfig({
+    friction: { weights: { newfile: 10 } },
+  });
+  assert.equal(r.ok, false);
+  assert.ok(r.errors.includes('learnings.friction.weights.newfile 不是已知配置项'));
+});
+
+test('顶层 unknownTop 被检出', () => {
+  const r = validateLearningsConfig({ unknownTop: 'x' });
+  assert.equal(r.ok, false);
+  assert.ok(r.errors.includes('learnings.unknownTop 不是已知配置项'));
+});
+
+test('AC-2 多层嵌套 unknown key 均被检出', () => {
+  const r = validateLearningsConfig({
+    unknownTop: 'x',
+    friction: { weights: { wrongKey: 1 } },
+  });
+  assert.equal(r.ok, false);
+  assert.ok(r.errors.includes('learnings.unknownTop 不是已知配置项'));
+  assert.ok(r.errors.includes('learnings.friction.weights.wrongKey 不是已知配置项'));
+});
+
+test('已知合法 key (newFile / refactor) 仍通过', () => {
+  const r = validateLearningsConfig({
+    friction: { weights: { newFile: 1, refactor: 2 } },
+  });
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.errors, []);
+});
+
+test('多个错拼 key 同时被累加到 errors', () => {
+  const r = validateLearningsConfig({
+    friction: { weights: { newfile: 1, wrongKey: 2, verifyfail: 3 } },
+    unknonTop: 'x',
+  });
+  assert.equal(r.ok, false);
+  assert.ok(r.errors.includes('learnings.friction.weights.newfile 不是已知配置项'));
+  assert.ok(r.errors.includes('learnings.friction.weights.wrongKey 不是已知配置项'));
+  assert.ok(r.errors.includes('learnings.friction.weights.verifyfail 不是已知配置项'));
+  assert.ok(r.errors.includes('learnings.unknonTop 不是已知配置项'));
+});
+
+test('ConfigError 携带具体 key 路径 errors', () => {
+  const err = new ConfigError(['learnings.unknownTop 不是已知配置项']);
+  assert.ok(err instanceof Error);
+  assert.equal(err.name, 'ConfigError');
+  assert.deepEqual(err.errors, ['learnings.unknownTop 不是已知配置项']);
 });

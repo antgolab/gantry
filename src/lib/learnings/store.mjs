@@ -1,7 +1,7 @@
 // learnings 双作用域存储 facade：team / private / _archive。
 // 路径规则：.gantry/learnings/{scope}/{id}.md。
-// write 原子落盘（临时文件 + rename），并 optional lazy 同步 bm25 索引（T06 就绪前静默跳过）。
-import { mkdir, writeFile, readFile, rename, unlink, readdir } from 'node:fs/promises';
+// write 原子落盘（临时文件 + rename），并 optional lazy 同步 bm25 索引（失败则显式告警 + 落 friction drift event，不回滚 md）。
+import { mkdir, writeFile, readFile, rename, unlink, readdir, appendFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { parse, stringify } from './frontmatter.mjs';
@@ -9,6 +9,14 @@ import { parse, stringify } from './frontmatter.mjs';
 const VALID_SCOPES = new Set(['team', 'private', '_archive']);
 
 const tmpName = () => `.tmp-${process.pid}-${randomBytes(6).toString('hex')}`;
+
+// learnings 索引漂移事件：追加一条 JSON 到 .gantry/learnings/{scope}/.friction/events.jsonl。
+// 只做 best-effort 落盘（弱原子，不回滚 md），写失败由调用方 catch 吞掉。
+async function appendDriftEvent(root, scope, event) {
+  const dir = join(root, scope, '.friction');
+  await mkdir(dir, { recursive: true });
+  await appendFile(join(dir, 'events.jsonl'), JSON.stringify(event) + '\n', 'utf8');
+}
 
 export function createStore(root) {
   const dirFor = (scope) => join(root, scope);
@@ -43,12 +51,23 @@ export function createStore(root) {
       throw err;
     }
 
-    // T06 bm25 索引：optional lazy import，未就绪则静默跳过。
+    // T06 bm25 索引：optional lazy import；失败则显式告警 + 落 friction drift event（弱原子，不回滚 md）。
     try {
       const bm25 = await import('./bm25.mjs');
       if (bm25?.addDoc) await bm25.addDoc({ scope, id, frontmatter, body });
-    } catch {
-      /* bm25 未就绪则静默跳过 */
+    } catch (err) {
+      console.error(`[learnings] bm25 index update failed for ${scope}/${id}: ${err.message}`);
+      try {
+        await appendDriftEvent(root, scope, {
+          kind: 'learnings-index-drift',
+          scope,
+          id,
+          message: err.message,
+          timestamp: new Date().toISOString(),
+        });
+      } catch {
+        /* friction drift event 写失败不阻断 store.write */
+      }
     }
 
     return { id, frontmatter, body };

@@ -16,6 +16,7 @@ import { specsPath } from './paths.mjs';
 import { DEFAULT_LEARNINGS_CONFIG } from './config-schema.mjs';
 
 const SECTION_HEADER = '## friction-events';
+export const SECTION_HEADER_RE = new RegExp(`^${SECTION_HEADER}[ \t]*$`, 'm');
 const EXECUTION_HEADER = '# EXECUTION';
 const NEXT_SECTION_RE = /^##[ \t]/m;
 
@@ -109,8 +110,7 @@ function normalizeEvent(event) {
  * 段边界: 段头之后到下一个 `## ` (或文件末)。
  */
 function appendToContent(content, line) {
-  const headerRe = /^## friction-events[ \t]*$/m;
-  const hm = headerRe.exec(content);
+  const hm = SECTION_HEADER_RE.exec(content);
 
   if (!hm) {
     // 无段头 → 在文件末追加段头 + 事件行 (与既有多段之间留空行隔离)

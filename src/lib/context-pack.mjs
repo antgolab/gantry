@@ -141,9 +141,11 @@ export function buildPack(projectRoot, overrides = {}) {
   // 命中则附加 warnings 字段,CLI 据此设 exit code 'review_context_leak' +
   // state.pauseReason='R2.4/review-context-leak'。
   if (stage === 'review' && config.reviewLaneStrict !== false) {
-    const { violations } = checkPack(pack, { strict: true });
-    if (violations.length > 0) {
-      pack.warnings = violations;
+    // T05 补丁:checkPack 签名由 { ok, violations } 变为 { allowed, blocked },
+    // 并按 context-pack schema v2 的 kind 字段白名单隔离 (ADR-REVBL-004)。
+    const { blocked } = checkPack(pack, { lane: 'review' });
+    if (blocked.length > 0) {
+      pack.warnings = blocked;
     }
   }
 
