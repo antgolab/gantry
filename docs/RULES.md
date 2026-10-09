@@ -88,8 +88,10 @@
 - **R2.2** 没有 `SPEC.md` 不能进 `DESIGN`（兼容期接受 `REQUIREMENT.md`）。
 - **R2.3** 没有 `TASKS.md` 不能写代码（兼容期接受 `TASK.md`）。每个任务必须含可执行的 `verify` 命令。
 - **R2.4** 任何任务在 `verify` 通过前不能勾选完成。
-- **R2.5** `REVIEW.md` 标为「严重」的项目，必须修复或显式标注「已知接受」并经人工确认，否则不能进 `INTEGRATION`。
-- **R2.6** `INTEGRATION` 阶段的 UAT 失败时，自动生成 fix-plan 回到 `DEV`，**最多重试 3 轮**，超限必须暂停。
+- **R2.5** DEV task verify 失败：每次自愈都要有新诊断（越界 / 依赖 / 断言 / import / 环境），最多自愈 3 次；第 4 次仍失败才停下汇报。禁盲重试。落地见 `phases/4-dev.md` § 8。
+- **R2.6** `autonomous: true` 时，phase prompt 里所有反问 / 多选 / 停下场景一律取推荐项（无推荐项则取列表第一项），选择与理由写进产物，闭环推进。**仅两类不覆盖**：① `requiresApproval` 硬锁的 change / design / integration 三关（`src/cli.mjs:475`）；② R5 / R6 / R7 硬规则触发（R2.5 到 3 次上限、mock 屏蔽真实失败、越界不可撤、悄悄扩大范围等安全护栏）。
+- **R2.7** `REVIEW.md` 标为「严重」的项目，必须修复或显式标注「已知接受」并经人工确认，否则不能进 `INTEGRATION`。
+- **R2.8** `INTEGRATION` 阶段的 UAT 失败时，自动生成 fix-plan 回到 `DEV`，**最多重试 3 轮**，超限必须暂停。
 
 ## R3 · 角色红线
 

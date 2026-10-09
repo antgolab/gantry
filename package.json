@@ -16,6 +16,7 @@
     "reference/",
     "docs/",
     "dist/",
+    ".gantry/loop/",
     "README.md",
     "README.zh-CN.md",
     "LICENSE"
