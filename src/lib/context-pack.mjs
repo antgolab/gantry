@@ -23,7 +23,7 @@ import { PIPELINES, PHASE_FILES, countOpenQuestions } from './phases.mjs';
 import { getPreferredArtifactName, resolveArtifactPath } from './artifacts.mjs';
 import { readConfig } from './config.mjs';
 import { getAgentFile, getAgentForStage } from './agents.mjs';
-import { assessLightEligibility } from './pipeline-policy.mjs';
+import { validateIntentScope } from './light-guard.mjs';
 import { checkPack } from './review-lane-guard.mjs';
 
 const SCHEMA_VERSION = 2;
@@ -253,6 +253,15 @@ function buildLoadOrder({ projectRoot, stage, changeId, taskId, pipeline, config
           });
         }
       }
+
+      // light 没有 PROPOSAL：fast 阶段的意图唯一来源是 CLI 固化的 light.json，
+      // 必须进 loadOrder，执行者才拿得到范围 / 验收线 / verify 命令（DESIGN §2）。
+      if (stage === 'fast') {
+        const lightJson = `${SPECS_DIR}/${changeId}/light.json`;
+        if (existsSync(join(projectRoot, lightJson))) {
+          items.push({ path: lightJson, kind: 'artifact', required: true });
+        }
+      }
     }
   }
 
@@ -340,7 +349,10 @@ function readChangeDescription(projectRoot, changeId) {
 }
 
 /**
- * 根据当前阶段和 pipeline,返回应该已存在的所有上游工件
+ * 根据当前阶段和 pipeline,返回应该已存在的所有上游工件。
+ *
+ * light 的 PIPELINES 只有 ['fast']（ADR-006）：indexOf('fast') === 0，
+ * 直接返回空数组 —— light 无 PROPOSAL / SPEC 等上游工件，意图来自 light.json。
  */
 function getUpstreamArtifacts(stage, pipeline) {
   const stageArtifact = {
@@ -414,27 +426,44 @@ function buildChecklistsRaw({ projectRoot, stage, changeId, taskId }) {
   return [];
 }
 
+/**
+ * light(旧 fast 档)的清单。
+ *
+ * light 没有 PROPOSAL：意图唯一来源是 CLI 写死的 `<change>/light.json`（D4）。
+ * 意图缺失 / 解析失败 / 范围非法 → 触发升档提示（AC-5、AC-8）。
+ */
 function buildFastChecklists({ projectRoot, changeId }) {
-  const proposal = changeId
-    ? resolveArtifactPath(join(projectRoot, SPECS_DIR, changeId), 'proposal')
+  const lightJsonPath = changeId
+    ? join(projectRoot, SPECS_DIR, changeId, 'light.json')
     : null;
-  const content = proposal && existsSync(proposal.path)
-    ? readFileSync(proposal.path, 'utf-8')
-    : '';
-  const eligibility = assessLightEligibility(content);
+
+  let scope = null;
+  let loadError = null;
+  if (!lightJsonPath || !existsSync(lightJsonPath)) {
+    loadError = 'light.json 不存在';
+  } else {
+    try {
+      scope = JSON.parse(readFileSync(lightJsonPath, 'utf-8'))?.intent?.scope;
+    } catch {
+      loadError = 'light.json 解析失败';
+    }
+  }
+
+  const check = loadError ? { ok: false, reason: loadError } : validateIntentScope(scope);
+
   return [
     {
-      id: 'fast-light-eligibility',
-      trigger: !eligibility.eligible,
-      reason: eligibility.eligible
-        ? 'PROPOSAL 未命中 light 高风险边界'
-        : `PROPOSAL 命中高风险边界: ${eligibility.risks.join(', ')}`,
+      id: 'fast-light-intent',
+      trigger: !check.ok,
+      reason: check.ok
+        ? 'light.json 意图范围合法，按声明的范围改动'
+        : `light 意图不可用 (${check.reason})：请运行 gantry pipeline full 升档`,
     },
     {
       id: 'fast-verify-evidence',
       trigger: true,
       ref: '.gantry/core/phases/F-fast.md',
-      reason: 'fast 必须执行 verify 并把通过证据写入 EXECUTION.md',
+      reason: 'verify 由 gantry advance(CLI) 执行，证据写入 EXECUTION.md 的 verify-log 段',
     },
   ];
 }

@@ -38,22 +38,25 @@ test('AC-3 · full pipeline 在 integration + ok 时 done', () => {
   assert.equal(computeNextStep(state), 'done');
 });
 
-test('AC-3 · light pipeline 在 integration + ok 时 done', () => {
+test('AC-1/AC-3 · light pipeline 在 fast + ok 时 done', () => {
   const state = makeState({
     pipeline: 'light',
-    currentStage: 'integration',
+    currentStage: 'fast',
     lastStageResult: { ok: true, blockedReason: null },
   });
   assert.equal(computeNextStep(state), 'done');
 });
 
-test('AC-3 · micro pipeline 在 dev + ok 时 done', () => {
-  const state = makeState({
-    pipeline: 'micro',
-    currentStage: 'dev',
-    lastStageResult: { ok: true, blockedReason: null },
-  });
-  assert.equal(computeNextStep(state), 'done');
+test('AC-1/AC-3 · light pipeline 在 fast 但 ok 非 true 时不 done', () => {
+  for (const lastStageResult of [null, { ok: false, blockedReason: null }]) {
+    const state = makeState({
+      pipeline: 'light',
+      currentStage: 'fast',
+      lastStageResult,
+    });
+    assert.notEqual(computeNextStep(state), 'done', `lastStageResult=${JSON.stringify(lastStageResult)} 不应收敛`);
+    assert.equal(computeNextStep(state), 'blocked');
+  }
 });
 
 test('AC-3 · full 未到 integration 时按 pipeline 顺序推进(design → task)', () => {
@@ -138,13 +141,17 @@ test('回归 · full integration 但 lastStageResult 缺失时返回 blocked(不
   assert.equal(computeNextStep(state), 'blocked');
 });
 
-test('回归 · light integration 但 lastStageResult 缺失时返回 blocked', () => {
-  const state = makeState({
-    pipeline: 'light',
-    currentStage: 'integration',
-    lastStageResult: null,
-  });
-  assert.equal(computeNextStep(state), 'blocked');
+test('回归 · 旧 light@integration(存量形态)不得被判为 done', () => {
+  // light 收敛点已从 integration 移到 fast（AC-1）。存量的 light@integration
+  // 即使 ok=true 也不能收敛，否则 driver 会跳过 light 出口门直接收尾。
+  for (const lastStageResult of [null, { ok: true, blockedReason: null }]) {
+    const state = makeState({
+      pipeline: 'light',
+      currentStage: 'integration',
+      lastStageResult,
+    });
+    assert.equal(computeNextStep(state), 'blocked');
+  }
 });
 
 test('回归 · integration 且 lastStageResult.ok=false 时返回 blocked', () => {

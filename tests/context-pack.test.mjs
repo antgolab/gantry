@@ -185,34 +185,72 @@ test('loadOrder: dev 任务缺少 verify 或 done 时回退加载 SPEC，但仍�
   } finally { cleanup(root); }
 });
 
-test('loadOrder: fast 阶段加载 executor、F-fast 和 PROPOSAL', () => {
+function writeLightJson(root, changeId, scope) {
+  mkdirSync(join(root, '.gantry/specs', changeId), { recursive: true });
+  writeFileSync(join(root, '.gantry/specs', changeId, 'light.json'), JSON.stringify({
+    intent: { goal: '修复 README 拼写', accept: [], scope },
+    baseline: {},
+    createdAt: new Date().toISOString(),
+  }));
+}
+
+test('loadOrder: fast 阶段加载 executor、F-fast 和 light.json 意图', () => {
   const root = createFixture('fast-stage');
   try {
     const changeId = 'tiny-fix';
-    mkdirSync(join(root, '.gantry/specs', changeId), { recursive: true });
-    writeFileSync(join(root, '.gantry/specs', changeId, 'PROPOSAL.md'),
-      '# PROPOSAL\n\n修复 README 拼写\n\n## 待澄清问题\n\n无\n');
+    writeLightJson(root, changeId, ['README.md']);
     writeState(root, { currentStage: 'fast', activeChange: changeId, pipeline: 'light' });
     const pack = buildPack(root);
+    assert.equal(pack.pipeline, 'light', 'light.json 存在时保持 light@fast');
     assert.equal(pack.loadOrder[0].path, '.gantry/core/agents/executor.md');
     assert.ok(pack.loadOrder.some(item => item.path.endsWith('/F-fast.md')));
-    assert.ok(pack.loadOrder.some(item => item.path.endsWith('/PROPOSAL.md')));
+    assert.ok(pack.loadOrder.some(item => item.path.endsWith('/light.json')), 'light 意图应进 loadOrder');
+    assert.ok(!pack.loadOrder.some(item => item.path.endsWith('/PROPOSAL.md')), 'light 不生成也不加载 PROPOSAL');
+    const intent = pack.checklists.find(item => item.id === 'fast-light-intent');
+    assert.ok(intent, '缺 fast-light-intent 清单');
+    assert.equal(intent.trigger, false, `合法范围不应触发: ${intent.reason}`);
     assert.ok(pack.checklists.some(item => item.id === 'fast-verify-evidence' && item.trigger));
   } finally { cleanup(root); }
 });
 
-test('loadOrder: light integration 加载 PROPOSAL 和 EXECUTION', () => {
+test('checklists: fast 缺 light.json 或范围非法时 light 意图清单触发', () => {
+  const missing = createFixture('fast-missing-intent');
+  try {
+    const changeId = 'tiny-fix';
+    mkdirSync(join(missing, '.gantry/specs', changeId), { recursive: true });
+    writeState(missing, { currentStage: 'fast', activeChange: changeId, pipeline: 'light' });
+    const intent = buildPack(missing).checklists.find(item => item.id === 'fast-light-intent');
+    assert.equal(intent.trigger, true);
+    assert.match(intent.reason, /light\.json/);
+  } finally { cleanup(missing); }
+
+  const invalid = createFixture('fast-invalid-scope');
+  try {
+    const changeId = 'tiny-fix';
+    writeLightJson(invalid, changeId, ['src/**']);
+    writeState(invalid, { currentStage: 'fast', activeChange: changeId, pipeline: 'light' });
+    const intent = buildPack(invalid).checklists.find(item => item.id === 'fast-light-intent');
+    assert.equal(intent.trigger, true);
+    assert.match(intent.reason, /intent-scope-invalid/);
+  } finally { cleanup(invalid); }
+});
+
+test('loadOrder: 存量 light@integration 归一化为 full 并按 full 加载(AC-14)', () => {
   const root = createFixture('light-integration');
   try {
     const changeId = 'tiny-fix';
     mkdirSync(join(root, '.gantry/specs', changeId), { recursive: true });
     writeFileSync(join(root, '.gantry/specs', changeId, 'PROPOSAL.md'), '# PROPOSAL\n');
+    writeFileSync(join(root, '.gantry/specs', changeId, 'SPEC.md'), '# SPEC\n');
     writeFileSync(join(root, '.gantry/specs', changeId, 'EXECUTION.md'), '# EXECUTION\nverify: PASS\n');
     writeState(root, { currentStage: 'integration', activeChange: changeId, pipeline: 'light' });
-    const paths = buildPack(root).loadOrder.map(item => item.path);
+    const pack = buildPack(root);
+    assert.equal(pack.pipeline, 'full', '旧 light@integration 应归一化为 full');
+    assert.equal(pack.stage, 'integration');
+    const paths = pack.loadOrder.map(item => item.path);
     assert.ok(paths.some(path => path.endsWith('/PROPOSAL.md')));
-    assert.ok(paths.some(path => path.endsWith('/EXECUTION.md')));
-    assert.ok(!paths.some(path => path.endsWith('/SPEC.md')));
+    assert.ok(paths.some(path => path.endsWith('/SPEC.md')));
+    assert.ok(!paths.some(path => path.endsWith('/EXECUTION.md')), 'full@integration 上游不含 EXECUTION');
   } finally { cleanup(root); }
 });
 

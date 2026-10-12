@@ -58,7 +58,7 @@ PROPOSAL → SPEC → DESIGN → [2a UI-DESIGN]* → TASKS → DEV → TEST → 
 ```
 
 **full（默认）**：`PROPOSAL → SPEC → DESIGN → [UI-DESIGN] → TASKS → DEV → TEST → REVIEW → INTEGRATION`
-**light（仅显式低风险）**：`PROPOSAL → FAST → INTEGRATION`，Fast 内完成实现、验证和自审，只产 `PROPOSAL.md` + `EXECUTION.md`
+**light（仅显式低风险 · 无人工关卡）**：`FAST`（单阶段闭环，由 `gantry change --tier light --scope …` 直接进入，不经 CHANGE / INTEGRATION），Fast 内完成范围锁定、实现、验证和自审；产物为 `light.json`（意图单一真源）+ `EXECUTION.md`，命中出口门守卫会自动升档 `full@change`
 
 ---
 
@@ -74,7 +74,7 @@ PROPOSAL → SPEC → DESIGN → [2a UI-DESIGN]* → TASKS → DEV → TEST → 
 | DEV | TASKS 中一项 | fresh subagent + TDD + 原子提交 | 代码 + `EXECUTION.md` | 否 | 否 |
 | TEST | 代码 + AC + 非功能需求 | **5 轮金字塔**：功能 / 性能 / 安全 / 兼容 / 可观测（按项目类型裁剪）| `TEST.md` | 否 | 否 |
 | REVIEW | diff + SPEC | 双轮审查（spec 合规 + 代码质量）| `REVIEW.md` | 否 | 否 |
-| FAST | PROPOSAL | 低风险实现 + 测试 + 自审 | 代码 + `EXECUTION.md` | 否 | 仅 light |
+| FAST | `light.json`（意图：目标 / 验收 / 范围 / verify） | 低风险实现 + 测试 + 自审（无人工关卡，`gantry advance` 出口门收尾）| 代码 + `EXECUTION.md` | 否 | 仅 light |
 | INTEGRATION | 全部已通过 | UAT + 集成 smoke + 失败诊断 | `UAT.md` / fix-plan | 是 | 否 |
 | ARCHIVE | 已收尾 | 保存 change 归档工件 | `_archive/<change-id>/` | 否 | — |
 

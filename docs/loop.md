@@ -16,8 +16,8 @@
 | STATE 是唯一真源 | `.gantry/planning/STATE.md`(散文区 + fence JSON) |
 | 客观 check | `verify` 命令 + AC 编号覆盖校验 |
 | 只前进 | `transitionStage` state-must-advance 断言 |
-| 白名单单 token | `loop-next` 命令的 10 词表 |
-| 三种 pipeline | full(8 阶段)/ light(fast)/ micro(3 阶段) |
+| 白名单单 token | `loop-next` 命令的 11 词表 |
+| 两种 pipeline | full(8 阶段)/ light(fast 单阶段 · 无人工关卡闭环) |
 
 ---
 
@@ -44,7 +44,7 @@ done
 
 ## 白名单
 
-`loop-next` 输出严格取自这 10 个 token:
+`loop-next` 输出严格取自这 11 个 token:
 
 - `gantry-change`
 - `gantry-requirement`
@@ -54,6 +54,7 @@ done
 - `gantry-test`
 - `gantry-review`
 - `gantry-integration`
+- `gantry-fast` — light 管线的唯一阶段(fast)内部 token,不对应公开 skill
 - `done` — 已达 pipeline 收敛条件
 - `blocked` — 需要人工介入
 

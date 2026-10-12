@@ -7,25 +7,36 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 
 const ROOT = join(import.meta.dirname, '..');
 const read = (rel) => readFileSync(join(ROOT, rel), 'utf8');
 
+/**
+ * 词边界匹配 micro 管线残留：允许 `microservice` 这类含 micro 的完整词，
+ * 只拦截独立的 `micro`（如 `micro 档` / `micro(3 阶段)`）。
+ */
+const MICRO_RE = /(^|[^A-Za-z0-9_])micro([^A-Za-z0-9_]|$)/;
+
+/**
+ * 2-design.md § 8.5 字体层级里的 `micro` 是排版术语，不是管线档位；扫描前剔除这一固定短语，
+ * 其余任何独立 `micro` 仍判为残留。
+ */
+const TYPOGRAPHY_MICRO = 'label / micro / mono';
+
 describe('T17 · prompt 文本落位检查', () => {
-  it('0-change.md 含 tier / tier-router / --tier 决策段引用', () => {
+  it('0-change.md 含 --tier + light，且不再含 tier-router', () => {
     const c = read('.gantry/core/phases/0-change.md');
-    assert.ok(c.includes('tier'), '应含 tier');
-    assert.ok(c.includes('tier-router'), '应含 tier-router');
     assert.ok(c.includes('--tier'), '应含 --tier');
+    assert.ok(c.includes('light'), '应含 light');
+    assert.ok(!c.includes('tier-router'), '不应再含已删除的 tier-router');
   });
 
-  it('4-dev.md 含 micro 档 verify 失败 2 次升档保护', () => {
+  it('4-dev.md 已去 micro 档，且保留 R2.5 自愈上限', () => {
     const c = read('.gantry/core/phases/4-dev.md');
-    assert.ok(c.includes('micro'), '应含 micro');
-    assert.ok(c.includes('verify 失败'), '应含 verify 失败');
-    assert.ok(c.includes('升档'), '应含 升档');
+    assert.ok(!MICRO_RE.test(c), '不应含 micro 管线档位');
+    assert.ok(c.includes('R2.5'), '应含 R2.5');
   });
 
   it('6-review.md 含 review_context_leak + review-lane-guard', () => {
@@ -111,5 +122,47 @@ describe('T17 · prompt 文本落位检查', () => {
 
   it('LESSONS 老文件仍存在（兼容读 6 个月）', () => {
     assert.equal(existsSync(join(ROOT, '.gantry/specs/LESSONS.md')), true, '老 LESSONS.md 应保留');
+  });
+});
+
+describe('AC-16 · micro 管线残留清零 + F-fast 描述新 light', () => {
+  const phaseDir = join(ROOT, '.gantry/core/phases');
+  const phaseFiles = readdirSync(phaseDir)
+    .filter((f) => f.endsWith('.md'))
+    .map((f) => join(phaseDir, f));
+
+  // microservice 等含 micro 的完整词不算命中，独立 micro 才算
+  it('phase 产物 / 两个公开 skill / docs/loop.md 均无 micro 管线描述', () => {
+    const targets = [
+      ...phaseFiles,
+      join(ROOT, '.claude/skills/gantry-change/SKILL.md'),
+      join(ROOT, '.claude/skills/gantry-auto/SKILL.md'),
+      join(ROOT, 'docs/loop.md'),
+    ];
+    for (const target of targets) {
+      const content = readFileSync(target, 'utf8').replaceAll(TYPOGRAPHY_MICRO, '');
+      assert.ok(!MICRO_RE.test(content), `${target} 不应残留 micro 管线描述`);
+    }
+  });
+
+  it('CLAUDE.md / AGENTS.md 不再描述旧 light 流程（change → fast → integration / 内部判定）', () => {
+    for (const rel of ['CLAUDE.md', 'AGENTS.md']) {
+      const content = read(rel);
+      assert.ok(!content.includes('change → fast → integration'), `${rel} 不应含旧 light 状态机`);
+      assert.ok(!content.includes('light 挡位由'), `${rel} 不应含「light 挡位由 change/auto 内部判定」`);
+    }
+  });
+
+  it('F-fast.md 描述 light：含 light.json + gantry advance，且不要求 PROPOSAL', () => {
+    const fFast = read('.gantry/core/phases/F-fast.md');
+    assert.ok(fFast.includes('light.json'), '应含 light.json');
+    assert.ok(fFast.includes('gantry advance'), '应含 gantry advance');
+
+    // 输入段不得把 PROPOSAL 当作必需工件（light 只读 light.json 意图）
+    const inputStart = fFast.indexOf('## 输入');
+    const inputEnd = fFast.indexOf('\n## ', inputStart + 1);
+    assert.ok(inputStart >= 0, 'F-fast.md 应含「## 输入」节');
+    const inputSection = fFast.slice(inputStart, inputEnd === -1 ? undefined : inputEnd);
+    assert.ok(!inputSection.includes('PROPOSAL'), '「输入」节不应要求 PROPOSAL');
   });
 });

@@ -150,10 +150,9 @@ gantry hook run before:change
 4. **生成 PROPOSAL.md**：使用 `@gantry/templates/PROPOSAL.md` 模板，填好后保存到 `.gantry/specs/<change-id>/PROPOSAL.md`（兼容期如需可保留旧名映射）。
    - **硬约束**：`## 待澄清问题` 段必须为 `无`。若仍有未决问题，说明步骤 1 没走完——**回到步骤 1 继续反问，不要先生成文件**。带未勾选项（`- [ ]`）的 PROPOSAL 会被 `/gantry-next` 阶段门禁阻断。
 5. **Pipeline 复核**：
-   - tier 档位由 `src/lib/tier-router.mjs` 的 `decideTier` 自动判定为 `micro` / `light` / `full` 三档，可用 `--tier` 显式覆写。
-   - 默认 `full`：`REQUIREMENT → DESIGN → [UI-DESIGN] → TASK → DEV → TEST → REVIEW → INTEGRATION`
-   - 显式 `light`：`FAST → INTEGRATION`，仅允许低风险局部变更。
-   - light 在澄清后命中高风险边界 → 停止并提示 `gantry pipeline full`，不得自动升级或绕过。
+   - 默认 `full`：`REQUIREMENT → DESIGN → [UI-DESIGN] → TASK → DEV → TEST → REVIEW → INTEGRATION`。`gantry change` 在创建期不再判档，一律走 full。
+   - `light` **不经过本阶段**：它由 `gantry change --tier light --scope <p,...>` 直接进入 `fast` 闭环（无 PROPOSAL、无 change / integration 关卡）。若用户要 light，请改用该入口重开，不要在本阶段的 PROPOSAL 里"降档"。
+   - 若你认为当前变更风险低、适合走 light：仍然先按 full 澄清并产出 PROPOSAL，由用户在创建期用 `--tier light` 决定；本阶段不做降档。
 
 ## 输出
 
@@ -194,6 +193,6 @@ gantry hook run after:change
 
 ## 触发下一步
 
-`PROPOSAL.md` 经用户确认后：
-- full → `phases/1-requirement.md`
-- light → `phases/F-fast.md`
+`PROPOSAL.md` 经用户确认后 → `phases/1-requirement.md`（本阶段只产出 full 变更）。
+
+light 不经本阶段，也不从 `PROPOSAL` 触发：它由 `gantry change --tier light --scope …` 直接进入 `.gantry/core/phases/F-fast.md`。

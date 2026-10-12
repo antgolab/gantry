@@ -8,7 +8,7 @@
 //
 // Deprecated (2026-09-21 · 内部化)：exec / fast 已从公开入口下沉为内部机制
 //   - exec：dev 阶段由 /gantry-next 或 /gantry-auto 自动触发，无需用户手动敲
-//   - fast：light 挡位由 /gantry-change / /gantry-auto 内部判定
+//   - fast：light 管线由 CLI `gantry change --tier light --scope` 直接进入（ADR-006）
 //   - knowledge：capture / curate 已并入 /gantry-context 的 subcommand
 // 源文件仍保留在 skills/ 目录下供内部调用与向后兼容；renderer 不再产出为用户 skill。
 export const PUBLIC_SKILLS = new Set([

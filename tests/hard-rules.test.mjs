@@ -11,6 +11,20 @@ function snap({ modifiedFiles = ['src/foo.mjs'], newFiles = [], pkgJsonDepsDelta
   return { modifiedFiles, newFiles, pkgJsonDepsDelta };
 }
 
+/** 断言命中,且 ruleId 与 ruleIds 一致 (ruleId 为首个命中)。 */
+function assertHit(r, ruleId) {
+  assert.equal(r.hit, true);
+  assert.equal(r.ruleId, ruleId);
+  assert.ok(r.ruleIds.includes(ruleId), `ruleIds 应包含 ${ruleId},实际 ${JSON.stringify(r.ruleIds)}`);
+}
+
+/** 断言未命中。 */
+function assertNoHit(r) {
+  assert.equal(r.hit, false);
+  assert.equal(r.ruleId, null);
+  assert.deepEqual(r.ruleIds, []);
+}
+
 describe('hard-rules 常量', () => {
   it('导出硬红线关键词列表且覆盖 7 个钦定英文关键词', () => {
     const all = HARD_RULE_KEYWORDS.flatMap((r) => r.keywords.map((k) => k.toLowerCase()));
@@ -44,60 +58,61 @@ describe('detectHardRuleHit · 关键词红线', () => {
   for (const [kw, ruleId] of cases) {
     it(`描述含 "${kw}" → ${ruleId}`, () => {
       const r = detectHardRuleHit(snap(), `add ${kw} logic`);
-      assert.deepEqual(r, { hit: true, ruleId });
+      assertHit(r, ruleId);
     });
   }
 
   it('中文描述「修改鉴权逻辑」→ auth-keyword', () => {
     const r = detectHardRuleHit(snap(), '修改鉴权逻辑');
-    assert.deepEqual(r, { hit: true, ruleId: 'auth-keyword' });
+    assertHit(r, 'auth-keyword');
   });
 });
 
 describe('detectHardRuleHit · 路径 glob 红线', () => {
   it('schema/*.ts 命中 → schema-change', () => {
     const r = detectHardRuleHit(snap({ modifiedFiles: ['schema/user.ts'] }), 'update types');
-    assert.deepEqual(r, { hit: true, ruleId: 'schema-change' });
+    assertHit(r, 'schema-change');
   });
 
   it('migrations/init.sql 命中 → migration-change', () => {
     const r = detectHardRuleHit(snap({ modifiedFiles: ['migrations/init.sql'] }), 'update db');
-    assert.deepEqual(r, { hit: true, ruleId: 'migration-change' });
+    assertHit(r, 'migration-change');
   });
 
   it('prisma/schema.prisma 命中 → schema-change', () => {
     const r = detectHardRuleHit(snap({ modifiedFiles: ['prisma/schema.prisma'] }), 'update orm');
-    assert.deepEqual(r, { hit: true, ruleId: 'schema-change' });
+    assertHit(r, 'schema-change');
   });
 
   it('*.sql 命中 → sql-change', () => {
     const r = detectHardRuleHit(snap({ modifiedFiles: ['db/seed.sql'] }), 'update seeds');
-    assert.deepEqual(r, { hit: true, ruleId: 'sql-change' });
+    assertHit(r, 'sql-change');
   });
 
   it('api/*.ts 命中 → contract-change', () => {
     const r = detectHardRuleHit(snap({ modifiedFiles: ['api/users.ts'] }), 'update handler');
-    assert.deepEqual(r, { hit: true, ruleId: 'contract-change' });
+    assertHit(r, 'contract-change');
   });
 
   it('openapi.yaml 命中 → contract-change', () => {
     const r = detectHardRuleHit(snap({ modifiedFiles: ['openapi.yaml'] }), 'update spec');
-    assert.deepEqual(r, { hit: true, ruleId: 'contract-change' });
+    assertHit(r, 'contract-change');
   });
 
   it('proto/* 命中 → contract-change', () => {
     const r = detectHardRuleHit(snap({ modifiedFiles: ['proto/order.proto'] }), 'update proto');
-    assert.deepEqual(r, { hit: true, ruleId: 'contract-change' });
+    assertHit(r, 'contract-change');
   });
 });
 
 describe('detectHardRuleHit · 跨模块 / 依赖', () => {
   it('modifiedFiles 分布在 ≥3 个顶层目录 → cross-module-change', () => {
+    // D11: 跨模块只统计非测试、非文档路径;此处用三个代码目录以仍能证明该规则。
     const r = detectHardRuleHit(
-      snap({ modifiedFiles: ['src/lib/a.mjs', 'tests/a.test.mjs', 'docs/readme.md'] }),
+      snap({ modifiedFiles: ['src/a.mjs', 'lib/b.mjs', 'bin/c.mjs'] }),
       'fix something',
     );
-    assert.deepEqual(r, { hit: true, ruleId: 'cross-module-change' });
+    assertHit(r, 'cross-module-change');
   });
 
   it('modifiedFiles 分布在 2 个顶层目录不触发跨模块', () => {
@@ -105,7 +120,7 @@ describe('detectHardRuleHit · 跨模块 / 依赖', () => {
       snap({ modifiedFiles: ['src/a.mjs', 'tests/a.test.mjs'] }),
       'fix something',
     );
-    assert.deepEqual(r, { hit: false, ruleId: null });
+    assertNoHit(r);
   });
 
   it('pkgJsonDepsDelta 非空 → dep-change', () => {
@@ -113,18 +128,18 @@ describe('detectHardRuleHit · 跨模块 / 依赖', () => {
       snap({ modifiedFiles: ['src/foo.mjs'], pkgJsonDepsDelta: ['wink-bm25-text-search'] }),
       'add dependency',
     );
-    assert.deepEqual(r, { hit: true, ruleId: 'dep-change' });
+    assertHit(r, 'dep-change');
   });
 });
 
 describe('detectHardRuleHit · 非红线', () => {
   it('纯文档改动 → hit=false', () => {
     const r = detectHardRuleHit(snap({ modifiedFiles: ['README.md'] }), 'fix typo in README');
-    assert.deepEqual(r, { hit: false, ruleId: null });
+    assertNoHit(r);
   });
 
   it('空 snapshot + 空描述 → hit=false (不抛异常)', () => {
     const r = detectHardRuleHit({}, '');
-    assert.deepEqual(r, { hit: false, ruleId: null });
+    assertNoHit(r);
   });
 });

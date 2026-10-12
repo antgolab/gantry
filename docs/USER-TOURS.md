@@ -75,7 +75,7 @@ gantry change "加功能"     # 之后正常走 Tour 1 / 2
 | 系统化调试 | `/gantry-debug` |
 | 只理顺一个想法 | `phases/0-change.md` |
 | 只沉淀失败教训 | 往 `.gantry/specs/LESSONS.md` 加一条 |
-| <50 行快速闭环 | `gantry change --pipeline light` |
+| <50 行快速闭环 | `gantry change --tier light --scope <p,...>` |
 
 ### Tour 5 · 长期维护节奏(月度 / 季度)
 

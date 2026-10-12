@@ -104,7 +104,7 @@ ${agentList}
 
 \`\`\`
 full:  idle → change → requirement → design → [ui-design] → task → dev → test → review → integration → idle
-light: idle → change → fast → integration → idle
+light: idle → fast → idle（--tier light 直入；gantry advance 出口门：全过自动归档，命中自动升 full@change）
 \`\`\`
 
 ---
@@ -121,7 +121,7 @@ light: idle → change → fast → integration → idle
 
 内部化(不再作为用户命令入口)：
 - \`exec\`:\`/gantry-next\` 到 dev 阶段自动触发
-- \`fast\`:light 挡位由 \`/gantry-change\` / \`/gantry-auto\` 内部判定
+- \`fast\`:light 管线由 \`gantry change --tier light --scope\` 直接进入,无人工关卡
 - \`knowledge\`:capture / curate 并入 \`/gantry-context knowledge <sub>\`
 `;
 }

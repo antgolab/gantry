@@ -96,7 +96,7 @@ function codexRoot(core, commands) {
 
 已内部化（不再作为用户命令入口）：
 - \`exec\`：\`$gantry-next\` 到 dev 阶段自动触发
-- \`fast\`：light 挡位由 \`$gantry-change\` / \`$gantry-auto\` 内部判定
+- \`fast\`：light 管线由 \`gantry change --tier light --scope\` 直接进入，无人工关卡
 - \`knowledge\`：capture / curate 并入 \`$gantry-context knowledge <sub>\`
 
 公开 skills 位于 \`.agents/skills/\`；内部阶段协议由 \`gantry-next\` 按需读取。

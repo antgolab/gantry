@@ -14,7 +14,7 @@ requiresApproval: true
 
 1. 读取 `.gantry/planning/STATE.md`，确认无活跃 change
 2. 接收用户描述（一句话需求）
-3. 先从业务主题提炼英文小写 kebab-case change-id（2~5 个词，剥离输入来源 / 操作指令），再运行 `gantry change --id <id> "<描述>"`。默认 full；只有用户显式要求快速路径时才加 `--pipeline light`。
+3. 先从业务主题提炼英文小写 kebab-case change-id（2~5 个词，剥离输入来源 / 操作指令），再运行 `gantry change --id <id> "<描述>"`。默认 full；light 是**另一条入口**，不在本 skill 的流程里——只有用户显式要求快速路径时，改用 `gantry change --tier light --scope <p,...> [--accept "<a;b>"] [--verify "<cmd>"] "<描述>"`，它会直接进 `fast` 闭环（不经本阶段）。
 4. 读取 `.gantry/planning/context-pack.json`，按 `loadOrder` 加载 `.gantry/core/phases/0-change.md`
 5. 执行 `.gantry/core/phases/0-change.md` 完整流程
 6. **反问澄清（强制前置门）**：把"为什么/给谁/解决什么/何时算完"问到清楚，每轮最多 3 个问题，等用户回答。按 `@gantry/reference/grilling-discipline.md` 执行——每问**带推荐答案 + 理由**、能查代码的**先查代码库**再确认、按依赖顺序深度优先。**只要还有未澄清的点就继续问，不准提前产出 PROPOSAL。**
@@ -34,4 +34,4 @@ requiresApproval: true
 
 ## 推进行为
 
-`PROPOSAL.md` 完成后始终停在 Change 人工确认关卡，不执行 `next.onSuccess`。用户确认后由 `/gantry-next` 推进；full 进入 Requirement，light 进入 Fast。
+`PROPOSAL.md` 完成后始终停在 Change 人工确认关卡，不执行 `next.onSuccess`。用户确认后由 `/gantry-next` 推进进入 Requirement。light 不经 `change` 阶段，也就不会停在这个关卡：它由 `gantry change --tier light` 直接进入 `fast`（见 `phases/F-fast.md`），全程无人工关卡。

@@ -82,7 +82,7 @@ Gantry 的文件分两类，**加载策略不同**：
 | 你的诉求 | 选 |
 |---|---|
 | 想要全套产物（CHANGE / REQUIREMENT / DESIGN / TASK / SUMMARY × N / TEST / REVIEW） | 完整 |
-| 明确的低风险局部修复 | light（`change → fast → integration`）|
+| 明确的低风险局部修复 | light（`fast` 单阶段闭环，`gantry change --tier light --scope …`）|
 | 只想跑某一阶段（如只 review / 只 design / 只 体检）| 单点 · 见 README 决策表 |
 | 代码 < 50 行 · 一次性修补 · hackathon | 不走 Gantry，走 7 个原生 skill 更划算 |
 

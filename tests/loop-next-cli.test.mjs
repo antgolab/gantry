@@ -5,7 +5,7 @@
  *   - stdout 恰好一行,严格匹配白名单正则
  *   - stderr 空,或仅出现 [loop-next warn] 前缀
  *   - exit 0(推进 / done)或 exit 2(blocked)
- *   - fence 与散文区合并逻辑正确(full/light/micro 三档)
+ *   - fence 与散文区合并逻辑正确(full / light 两档)
  */
 
 import { test } from 'node:test';
@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const CLI = join(import.meta.dirname, '..', 'src', 'cli.mjs');
-const WHITELIST_REGEX = /^(gantry-(change|requirement|design|task|dev|test|review|integration)|done|blocked)$/;
+const WHITELIST_REGEX = /^(gantry-(change|requirement|design|task|dev|test|review|integration|fast)|done|blocked)$/;
 
 function makeProject(prose, fence) {
   const root = mkdtempSync(join(tmpdir(), 'loop-cli-'));
@@ -61,6 +61,20 @@ function runLoopNext(cwd) {
   return spawnSync('node', [CLI, 'loop-next'], { cwd, encoding: 'utf-8', timeout: 10000 });
 }
 
+/**
+ * 新 light 形态：STATE=light@fast 只有在 `<change>/light.json` 存在时才会被
+ * readState 保留为 light（DESIGN D9 / AC-14），否则归一化为 full。
+ */
+function writeLightJson(root, changeId, scope = ['src/lib/foo.mjs']) {
+  const dir = join(root, '.gantry/specs', changeId);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'light.json'), JSON.stringify({
+    intent: { goal: '一句话目标', accept: [], scope },
+    baseline: {},
+    createdAt: new Date().toISOString(),
+  }), 'utf-8');
+}
+
 test('AC-5 · full pipeline · design 阶段 → gantry-task(ui-design 已合入 design)', () => {
   const root = makeProject(
     { pipeline: 'full', currentStage: 'design', activeChange: 'demo' },
@@ -91,29 +105,32 @@ test('AC-5 · full pipeline · integration + ok → done, exit 0', () => {
   }
 });
 
-test('AC-5 · light pipeline · integration + ok → done', () => {
+test('AC-1/AC-5 · light pipeline · fast + ok → done', () => {
   const root = makeProject(
-    { pipeline: 'light', currentStage: 'integration', activeChange: 'demo' },
+    { pipeline: 'light', currentStage: 'fast', activeChange: 'demo' },
     { nextStep: null, lastStageResult: { ok: true }, currentWave: null, previousWave: null },
   );
   try {
+    writeLightJson(root, 'demo');
     const r = runLoopNext(root);
-    assert.equal(r.status, 0);
+    assert.equal(r.status, 0, `exit non-zero: stderr=${r.stderr}`);
     assert.equal(r.stdout.trim(), 'done');
+    assert.ok(WHITELIST_REGEX.test(r.stdout.trim()));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });
 
-test('AC-5 · micro pipeline · dev + ok → done', () => {
+test('AC-1/AC-5 · light pipeline · fast 未 ok → blocked, exit 2', () => {
   const root = makeProject(
-    { pipeline: 'micro', currentStage: 'dev', activeChange: 'demo' },
-    { nextStep: null, lastStageResult: { ok: true }, currentWave: null, previousWave: null },
+    { pipeline: 'light', currentStage: 'fast', activeChange: 'demo' },
+    { nextStep: null, lastStageResult: null, currentWave: null, previousWave: null },
   );
   try {
+    writeLightJson(root, 'demo');
     const r = runLoopNext(root);
-    assert.equal(r.status, 0);
-    assert.equal(r.stdout.trim(), 'done');
+    assert.equal(r.status, 2, `期望 blocked, stderr=${r.stderr}`);
+    assert.equal(r.stdout.trim(), 'blocked');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

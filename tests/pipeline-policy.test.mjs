@@ -1,7 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  assessLightEligibility,
   normalizePipeline,
   proposalHasUiImpact,
 } from '../src/lib/pipeline-policy.mjs';
@@ -15,23 +14,9 @@ describe('pipeline policy', () => {
     assert.throws(() => normalizePipeline('unknown'), /未知 pipeline/);
   });
 
-  it('light 接受局部低风险修复', () => {
-    const result = assessLightEligibility('修复 README 中的拼写错误');
-    assert.equal(result.eligible, true);
-    assert.deepEqual(result.risks, []);
-  });
-
-  it('light 拒绝高风险变更并返回具体类别', () => {
-    const result = assessLightEligibility(
-      '跨模块修改 public API，并新增数据库 migration、鉴权逻辑和第三方依赖',
-    );
-    assert.equal(result.eligible, false);
-    assert.ok(result.risks.includes('public-contract'));
-    assert.ok(result.risks.includes('schema-or-migration'));
-    assert.ok(result.risks.includes('cross-module'));
-    assert.ok(result.risks.includes('dependency'));
-    assert.ok(result.risks.includes('security'));
-  });
+  // assessLightEligibility 的 2 个用例已删除：该函数连同 LIGHT_RISK_RULES 一起
+  // 被移除（AC-12 红线定义唯一）：红线判定唯一源 = hard-rules.mjs，
+  // replacement 覆盖在 tests/red-lines.test.mjs（同一个描述 → 同一 rule id 集合）。
 
   it('UI Design 只由 PROPOSAL 的结构化 uiImpact 决定', () => {
     assert.equal(proposalHasUiImpact('uiImpact: true\n'), true);

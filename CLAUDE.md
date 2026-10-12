@@ -71,10 +71,10 @@
 
 - **R2.1** 没 `PROPOSAL.md` 不能进 `REQUIREMENT`（兼容期接受 `CHANGE.md`）
 - **R2.2** 没 `SPEC.md` 不能进 `DESIGN`（兼容期接受 `REQUIREMENT.md`）
-- **R2.3** 没 `TASKS.md` 不能写代码（兼容期接受 `TASK.md`）；每任务必含可执行 `verify`
+- **R2.3** 没 `TASKS.md` 不能写代码（兼容期接受 `TASK.md`）；每任务必含可执行 `verify`。**例外 · light 管线**：light 不要求 `TASKS.md`，意图由 `light.json` 固化，越界 / 红线由 `gantry advance` 出口门的 diff 守卫兜底
 - **R2.4** verify 未通过禁止标记完成
 - **R2.5** DEV task verify 失败：每次自愈都要有新诊断（越界 / 依赖 / 断言 / import / 环境），最多自愈 3 次；第 4 次仍失败才停下汇报。禁盲重试。落地见 `phases/4-dev.md` § 8。
-- **R2.6** `autonomous: true` 时，phase prompt 里所有反问 / 多选 / 停下场景一律取推荐项（无推荐项则取列表第一项），选择与理由写进产物，闭环推进。**仅两类不覆盖**：① `requiresApproval` 硬锁的 change / design / integration 三关（`src/cli.mjs:475`）；② R5 / R6 / R7 硬规则触发（R2.5 到 3 次上限、mock 屏蔽真实失败、越界不可撤、悄悄扩大范围等安全护栏）。
+- **R2.6** `autonomous: true` 时，phase prompt 里所有反问 / 多选 / 停下场景一律取推荐项（无推荐项则取列表第一项），选择与理由写进产物，闭环推进。**仅两类不覆盖**：① `requiresApproval` 硬锁的 change / design / integration 三关（`src/lib/phases.mjs#requiresApproval`）——这三关**只适用于 full 管线**，light 无任何人工关卡；② R5 / R6 / R7 硬规则触发（R2.5 到 3 次上限、mock 屏蔽真实失败、越界不可撤、悄悄扩大范围等安全护栏）。
 
 ## R4 · 提交与产物
 
@@ -127,7 +127,7 @@
 
 ```
 full:  idle → change → requirement → design → [ui-design] → task → dev → test → review → integration → idle
-light: idle → change → fast → integration → idle
+light: idle → fast → idle（--tier light 直入；gantry advance 出口门：全过自动归档，命中自动升 full@change）
 ```
 
 ---
@@ -144,6 +144,6 @@ light: idle → change → fast → integration → idle
 
 内部化(不再作为用户命令入口)：
 - `exec`:`/gantry-next` 到 dev 阶段自动触发
-- `fast`:light 挡位由 `/gantry-change` / `/gantry-auto` 内部判定
+- `fast`:light 管线由 `gantry change --tier light --scope` 直接进入,无人工关卡
 - `knowledge`:capture / curate 并入 `/gantry-context knowledge <sub>`
 <!-- END gantry -->

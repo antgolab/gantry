@@ -13,7 +13,7 @@ if (nodeMajor < 18) {
  * Usage: gantry <command> [options]
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, cpSync, readdirSync, rmSync, unlinkSync, renameSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, cpSync, readdirSync, rmSync, unlinkSync, renameSync, statSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
@@ -21,7 +21,7 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import {
   readState, writeState, updateState, transitionStage,
-  readFence, writeFence, writeFenceBlockedReason,
+  readFence, writeFence, writeFenceBlockedReason, recordLightVerify,
 } from './lib/state.mjs';
 import { STAGES, getNextStage, checkGate, PHASE_FILES, countOpenQuestions, requiresApproval } from './lib/phases.mjs';
 import { computeNextStep, WHITELIST } from './lib/loop.mjs';
@@ -39,7 +39,10 @@ import { writeContextPack, readContextPack, PACK_PATH } from './lib/context-pack
 import { getPreferredArtifactName, resolveArtifactPath } from './lib/artifacts.mjs';
 import { readConfig } from './lib/config.mjs';
 import { normalizePipeline } from './lib/pipeline-policy.mjs';
-import { decideTier } from './lib/tier-router.mjs';
+import { detectHardRuleHit, detectRedLines, isTestPath } from './lib/hard-rules.mjs';
+import { validateIntentScope, runLightGuard, filterByBaseline } from './lib/light-guard.mjs';
+import { upgradeToFull } from './lib/light-upgrade.mjs';
+import { parseTestCommands } from './lib/test-commands.mjs';
 import { knowledge } from './commands/knowledge.mjs';
 import { getEvents as frictionGetEvents, getScore as frictionGetScore } from './lib/friction.mjs';
 import { proposeLearning } from './lib/curator.mjs';
@@ -253,29 +256,52 @@ function formatContextSignal(contextUsage = {}) {
 /**
  * gantry change — 启动新变更
  *
- * pipeline 决策由 tier-router.decideTier 自动判定 (micro|light|full)。
- * --tier <micro|light|full> 覆写自动判定 (tierOverride 优先)；
- * --pipeline 作为 deprecated alias，与 --tier 同时给出时 --tier 优先。
- * --dry-run 只打印决策 JSON (含 tier/hits/score)，不落 STATE、不建目录。
- *
- * opts.fsSnapshot 供测试注入，覆盖 git 探测。
+ * 管线默认 full（ADR-006：创建期不再软打分，tier-router 已删除）。
+ * --tier light 显式进入 light 无人工关卡入口（需 --scope）；
+ * --tier <light|full> 覆写默认值，--pipeline 作为 deprecated alias（同取值），
+ * --tier 与 --pipeline 同时给出时 --tier 优先。
+ * light 入口预检（顺序）：非 git 项目 → 描述命中红线 → 意图范围非法。
+ * 任一命中即回落 full@change，原因写入 EXECUTION 的 tier-decision 段。
+ * --dry-run 只打印决策 JSON (tier/pipeline/code，回落时附加 reason)，不落 STATE、不建目录。
  */
 async function change(args, opts = {}) {
   const projectRoot = process.cwd();
   const isDryRun = args.includes('--dry-run');
 
-  if (!isDryRun) {
-    ensureInit(projectRoot);
-  }
-
-  // 提取描述：跳过 --flag 及其值
-  const description = stripFlags(args, ['--pipeline', '--tool', '--id', '--tier']).join(' ');
+  // 提取描述：跳过 --flag 及其值（含 light 入口参数）
+  const description = stripFlags(
+    args,
+    ['--pipeline', '--tool', '--id', '--tier', '--scope', '--accept', '--verify'],
+  ).join(' ');
   if (!description) {
     console.error('用法: gantry change "<变更描述>"');
     process.exit(1);
   }
 
+  // tier 覆写解析（纯参数校验，先于项目初始化）：--tier 优先于 deprecated --pipeline
+  const rawTier = getFlag(args, '--tier');
+  const rawPipeline = getFlag(args, '--pipeline');
+  let tierOverride = null;
+  if (rawTier != null) {
+    tierOverride = normalizeTierValue(rawTier);
+    if (!tierOverride) {
+      console.error('无效的 --tier（可选 light|full）');
+      process.exit(1);
+    }
+    if (rawPipeline != null) {
+      console.error(`⚠ --tier 与 --pipeline 同时给出，--tier 优先，忽略 --pipeline ${rawPipeline}`);
+    }
+  } else if (rawPipeline != null) {
+    tierOverride = normalizeTierValue(rawPipeline);
+    if (!tierOverride) {
+      console.error('无效的 --pipeline（可选 light|full，建议改用 --tier）');
+      process.exit(1);
+    }
+  }
+
   if (!isDryRun) {
+    ensureInit(projectRoot);
+
     const state = readState(projectRoot);
     if (state.activeChange) {
       console.error(`已有活跃变更: ${state.activeChange}`);
@@ -292,54 +318,40 @@ async function change(args, opts = {}) {
     }
   }
 
-  // tier 覆写解析：--tier 优先于 deprecated --pipeline
-  const rawTier = getFlag(args, '--tier');
-  const rawPipeline = getFlag(args, '--pipeline');
-  let tierOverride = null;
-  if (rawTier != null) {
-    tierOverride = normalizeTierValue(rawTier);
-    if (!tierOverride) {
-      console.error(`无效的 --tier: ${rawTier}（可选 micro|light|full）`);
-      process.exit(1);
-    }
-    if (rawPipeline != null) {
-      console.error(`⚠ --tier 与 --pipeline 同时给出，--tier 优先，忽略 --pipeline ${rawPipeline}`);
-    }
-  } else if (rawPipeline != null) {
-    tierOverride = normalizeTierValue(rawPipeline);
-    if (!tierOverride) {
-      console.error(`无效的 --pipeline: ${rawPipeline}（可选 light|full，建议改用 --tier）`);
-      process.exit(1);
+  // 默认 full；--tier light 显式进入 light 入口（CREATION 期只做描述/范围预检，不做软打分）
+  const requestedTier = tierOverride ?? 'full';
+
+  let lightFallbackReason = null;
+  let scope = [];
+  let accept = [];
+  let verify = null;
+  if (requestedTier === 'light') {
+    scope = parseScopeArg(getFlag(args, '--scope'));
+    accept = parseAcceptArg(getFlag(args, '--accept'), description);
+    verify = getFlag(args, '--verify');
+
+    // 预检顺序：非 git → 描述红线 → 意图范围（第一个失败即回落）
+    if (!isGitRepo(projectRoot)) {
+      lightFallbackReason = 'non-git';
+    } else {
+      const hit = detectHardRuleHit({ modifiedFiles: [], newFiles: [], pkgJsonDepsDelta: [] }, description);
+      if (hit.hit) {
+        lightFallbackReason = hit.ruleIds.join(', ');
+      } else if (!validateIntentScope(scope).ok) {
+        lightFallbackReason = 'intent-scope-invalid';
+      }
     }
   }
 
-  // 自动判定 (纯函数) + 覆写
-  const fsSnapshot = opts.fsSnapshot ?? detectFsSnapshot(projectRoot);
-  const decision = decideTier(description, fsSnapshot, {});
-  const effectiveTier = tierOverride ?? decision.tier;
-
-  const tierDecisionLines = [
-    '## tier-decision',
-    `auto: ${decision.tier}`,
-    `hits: ${JSON.stringify(decision.hits)}`,
-    `score: ${decision.score}`,
-  ];
-  if (tierOverride) {
-    tierDecisionLines.push(`tier-override: user requested ${tierOverride} (auto-detected: ${decision.tier})`);
-  }
+  const isLight = requestedTier === 'light' && !lightFallbackReason;
+  const effectiveTier = isLight ? 'light' : 'full';
+  const tierSource = isLight
+    ? 'override'
+    : (lightFallbackReason ? 'light-fallback' : (tierOverride ? 'override' : 'default'));
 
   if (isDryRun) {
-    const result = {
-      tier: effectiveTier,
-      pipeline: effectiveTier,
-      hits: decision.hits,
-      score: decision.score,
-      code: 'tier_dry_run',
-    };
-    if (tierOverride) {
-      result.tierOverride = true;
-      result['tier-override'] = `user requested ${tierOverride} (auto-detected: ${decision.tier})`;
-    }
+    const result = { tier: effectiveTier, pipeline: effectiveTier, code: 'tier_dry_run' };
+    if (lightFallbackReason) result.reason = lightFallbackReason;
     console.log(JSON.stringify(result));
     return;
   }
@@ -348,31 +360,71 @@ async function change(args, opts = {}) {
   const changeId = generateChangeId(description, projectRoot, getFlag(args, '--id'));
   const specsDir = join(projectRoot, SPECS_DIR, changeId);
   mkdirSync(specsDir, { recursive: true });
+  const executionPath = join(specsDir, getPreferredArtifactName('execution'));
 
-  // 写 tier-decision 段到 EXECUTION.md
+  // ── light 入口：固化意图 + 工作区基线，STATE 直接进 fast ──
+  if (isLight) {
+    const lightJson = {
+      intent: { goal: description, accept, scope, ...(verify ? { verify } : {}) },
+      baseline: collectBaseline(projectRoot),
+      createdAt: new Date().toISOString(),
+    };
+    writeFileSync(join(specsDir, 'light.json'), `${JSON.stringify(lightJson, null, 2)}\n`, 'utf-8');
+    writeFileSync(
+      executionPath,
+      `# EXECUTION: ${changeId}\n\n${renderLightIntent(lightJson)}\n\n${renderTierDecision({ tier: 'light', source: 'override' })}\n`,
+      'utf-8',
+    );
+
+    updateState(projectRoot, {
+      pipeline: 'light',
+      activeChange: changeId,
+      currentStage: 'fast',
+      activeAgent: 'executor',
+    });
+
+    // 写一次 pack,让 skill 立刻有可消费的上下文
+    try { writeContextPack(projectRoot); } catch { /* non-blocking */ }
+
+    console.log(`✓ 变更已创建: ${changeId}`);
+    console.log('  管线: light');
+    console.log('  code: light_entered');
+    console.log(`  意图: ${specsPath(changeId, 'light.json')}`);
+    console.log(`  工件目录: ${specsPath(changeId)}/`);
+    console.log('  当前阶段: fast (快速闭环)');
+    console.log(`  上下文: ${PACK_PATH}`);
+    console.log('\n请在声明的「允许改动范围」内实施改动，完成后运行:');
+    console.log('  gantry advance');
+    return;
+  }
+
+  // ── full（默认 / 显式覆写 / light 回落）──
   writeFileSync(
-    join(specsDir, getPreferredArtifactName('execution')),
-    `# EXECUTION: ${changeId}\n\n${tierDecisionLines.join('\n')}\n`,
+    executionPath,
+    `# EXECUTION: ${changeId}\n\n${renderTierDecision({ tier: 'full', source: tierSource, reason: lightFallbackReason })}\n`,
     'utf-8',
   );
 
-  // 更新状态
   updateState(projectRoot, {
-    pipeline: effectiveTier,
+    pipeline: 'full',
     activeChange: changeId,
     currentStage: 'change',
     activeAgent: 'planner',
   });
 
-  // 写一次 pack,让 skill 立刻有可消费的上下文
   try { writeContextPack(projectRoot); } catch { /* non-blocking */ }
 
-  const code = tierOverride ? 'tier_override_recorded' : 'tier_decided';
+  const code = lightFallbackReason
+    ? 'light_fallback'
+    : (tierOverride ? 'tier_override_recorded' : 'tier_decided');
   console.log(`✓ 变更已创建: ${changeId}`);
-  console.log(`  管线: ${effectiveTier}`);
+  if (lightFallbackReason) {
+    console.log(`  ⚠ light 入口被拒绝（${lightFallbackReason}），已回落 full`);
+  }
+  console.log('  管线: full');
   console.log(`  code: ${code}`);
   console.log(`  工件目录: ${specsPath(changeId)}/`);
-  console.log(`  当前阶段: change (变更提案)`);
+  console.log('  当前阶段: change (变更提案)');
   console.log(`  上下文: ${PACK_PATH}`);
   console.log(`\n请执行阶段 0 (CHANGE):`);
   console.log(`  加载 .gantry/core/phases/0-change.md 并产出 ${specsPath(changeId, getPreferredArtifactName('proposal'))}`);
@@ -562,38 +614,49 @@ function safeReadState(root) {
 // 手动自检可直接 `gantry advance` 到 integration 观察门禁结果。
 
 /**
- * gantry pipeline full — 显式将当前 change 从 light 提升为 full。
+ * gantry pipeline full — 显式将当前 light change 提升为 full（AC-13）。
+ *
+ * light 单向升档：任意 light 阶段都可升到 full@change，工作区代码原样保留，
+ * 落一份 PROPOSAL 初稿交 full 的 change 硬锁接管。已是 full 或没有活跃 change
+ * 时非零退出；`pipeline light` 是禁止的降档方向。
  */
 function pipeline(args) {
   const projectRoot = process.cwd();
   ensureInit(projectRoot);
   const target = args[0];
-  if (target !== 'full') {
-    console.error('用法: gantry pipeline full（只允许 light → full）');
+
+  if (target === 'light') {
+    console.error('不支持降档 (full → light)');
     process.exit(1);
   }
+  if (target !== 'full') {
+    console.error('用法: gantry pipeline full（light → full 单向升档）');
+    process.exit(1);
+  }
+
   const state = readState(projectRoot);
   if (!state.activeChange) {
     console.error('当前没有活跃 change');
     process.exit(1);
   }
-  if (state.pipeline !== 'light') {
-    console.error(`当前 pipeline 已是 ${state.pipeline}，无需提升`);
+  if (state.pipeline === 'full') {
+    console.error(`当前 pipeline 已是 full，无需提升`);
     process.exit(1);
   }
-  if (!['change', 'fast'].includes(state.currentStage)) {
-    console.error(`当前阶段 ${state.currentStage} 不允许切换 pipeline`);
+
+  let result;
+  try {
+    result = upgradeToFull(projectRoot, { source: 'manual', hits: [] });
+  } catch (err) {
+    console.error(`升档失败: ${err.message}`);
     process.exit(1);
   }
-  updateState(projectRoot, {
-    pipeline: 'full',
-    currentStage: state.currentStage === 'fast' ? 'change' : state.currentStage,
-    activeAgent: state.currentStage === 'fast' ? 'planner' : state.activeAgent,
-    pauseReason: null,
-    retries: 0,
-  });
-  writeContextPack(projectRoot);
+
+  try { writeContextPack(projectRoot); } catch { /* non-blocking */ }
+
   console.log('✓ pipeline: light → full');
+  console.log(`  PROPOSAL 初稿: ${result.proposalPath}`);
+  console.log(`  当前状态: full@change`);
 }
 
 
@@ -704,6 +767,14 @@ async function nextOnce(projectRoot, { isSkip = false } = {}) {
     return { reachedEnd: 'integration' };
   }
 
+  // light@fast 走独立的出口门（DESIGN D7/D8/D14；SPEC AC-6/7/8/11）：
+  // 不经过 full 的阶段图与 change/design/integration 硬锁，由 CLI 执行 verify
+  // + diff 守卫，全通过自动收尾，命中自动升档。readState 已保证 light@fast
+  // 必然持有 light.json（否则归一化为 full）。
+  if (state.pipeline === 'light' && state.currentStage === 'fast') {
+    return await runLightExitGate(projectRoot, state, { isSkip });
+  }
+
   const config = readConfig(projectRoot);
   const specsDir = join(projectRoot, SPECS_DIR, state.activeChange);
   const effectiveConfig = {
@@ -805,6 +876,404 @@ function gateRecoveryHint(reason) {
   return null;
 }
 
+
+// --- light 出口门（DESIGN D7/D8/D14；SPEC AC-6/7/8/11）---
+
+/**
+ * 在 light@fast 上执行出口门。返回 { stop, exitCode? }，与 nextOnce 契约一致。
+ *
+ * 步骤：
+ *   ① 拒绝 --skip（light 无人工关卡，门禁不可绕过）
+ *   ② 解析 verify 命令（intent.verify → test-commands.yml → 无 ⇒ guard-error 升档）
+ *   ③ startedAt 先于执行记录，执行 verify，写 EXECUTION `## verify-log`
+ *   ④ FAIL → recordLightVerify 计数/暂停，exit 1，不归档不写 CHANGELOG
+ *   ⑤ PASS → 采 diff 快照 + runLightGuard，写 `## guard-decision`
+ *   ⑥ 命中 → upgradeToFull（仅 stale-verify 时回到 verify）
+ *   ⑦ 全通过 → archiveChange + STATE 复位 idle
+ */
+async function runLightExitGate(projectRoot, state, { isSkip = false } = {}) {
+  const changeId = state.activeChange;
+  const changeDir = join(projectRoot, SPECS_DIR, changeId);
+
+  // ① --skip 对 light 无效
+  if (isSkip) {
+    console.error('✗ light 出口门不可跳过（--skip 对 light 无效）');
+    return { stop: true, exitCode: 1 };
+  }
+
+  const lightJson = readLightJson(changeDir);
+  const intent = (lightJson && lightJson.intent) || {};
+  const baseline = (lightJson && lightJson.baseline) || {};
+
+  // ② verify 命令
+  const verifyCmd = resolveLightVerifyCommand(projectRoot, intent);
+  if (!verifyCmd) {
+    // D7/D14：没有可执行的 verify 证据，不能放行 → guard-error 升档
+    return upgradeFromHits(projectRoot, [
+      { ruleId: 'guard-error', files: [], detail: 'no-verify-command' },
+    ]);
+  }
+
+  // ③ 执行 verify（startedAt 先于执行记录：verify 若改写代码会让证据失效，AC-11）
+  const startedAt = Date.now();
+  const run = spawnSync(verifyCmd, {
+    shell: true, cwd: projectRoot, encoding: 'utf-8', timeout: 600000,
+  });
+  const exitCode = run.status === null ? 1 : run.status; // 超时 / 启动失败 → 视为失败
+  const pass = exitCode === 0;
+  printVerifyTail(run.stdout, run.stderr);
+
+  // ④ FAIL：R2.5 自愈计数 / 暂停，永不归档
+  if (!pass) {
+    const executionText = readExecutionText(changeDir);
+    const { failDiagnoses } = parseVerifyLog(executionText);
+    const hasPreviousFail = failDiagnoses.length > 0;
+    const diagnosis = hasPreviousFail ? latestDiagnosis(executionText) : 'first-failure';
+    const lastDiagnosis = hasPreviousFail ? failDiagnoses[failDiagnoses.length - 1] : null;
+
+    const { state: nextState, paused } = recordLightVerify(state, {
+      pass: false, diagnosis, lastDiagnosis,
+    });
+    updateState(projectRoot, { retries: nextState.retries, pauseReason: nextState.pauseReason });
+
+    appendExecutionBlock(changeDir, 'verify-log',
+      `- ${new Date(startedAt).toISOString()} FAIL \`${verifyCmd}\` (exit ${exitCode}) diagnosis: ${diagnosis || '—'}`);
+
+    const maxRetries = state.maxRetries ?? 3;
+    if (paused) {
+      console.error(`✗ light verify 持续失败，已暂停: ${nextState.pauseReason}`);
+      console.error('  change 未归档、CHANGELOG 未写入。修复后运行 gantry pipeline full 升档，');
+      console.error('  或在 EXECUTION.md 追加一条新的 `## diagnosis` 条目后重新运行 gantry advance。');
+      return { stop: true, exitCode: 1 };
+    }
+    console.error(`✗ light verify 失败 [${nextState.retries}/${maxRetries}]: exit ${exitCode}`);
+    console.error('  请在 EXECUTION.md 追加一条新的 `## diagnosis` 条目（文本须与上一条不同），');
+    console.error('  修复后重新运行 gantry advance。');
+    return { stop: true, exitCode: 1 };
+  }
+
+  // ⑤ PASS：清暂停/重试（recordLightVerify 在 pass 时不清 pauseReason，CLI 层显式清理）
+  updateState(projectRoot, { retries: 0, pauseReason: null });
+  appendExecutionBlock(changeDir, 'verify-log',
+    `- ${new Date(startedAt).toISOString()} PASS \`${verifyCmd}\` (exit ${exitCode}) diagnosis: —`);
+
+  // ⑥ 采快照 + 守卫（任一 git 失败 ⇒ guard-error，fail-closed）
+  let guardInput;
+  try {
+    guardInput = collectLightGuardInput(projectRoot, { intent, baseline, startedAt });
+  } catch (err) {
+    return upgradeFromHits(projectRoot, [
+      { ruleId: 'guard-error', files: [], detail: `snapshot: ${err.message}` },
+    ]);
+  }
+
+  const guardResult = runLightGuard(guardInput);
+  appendExecutionBlock(changeDir, 'guard-decision', renderGuardDecision(guardResult));
+
+  // ⑦ 命中处理
+  if (!guardResult.passed) {
+    // SPEC AC-11：缺 fresh verify 证据时门禁失败，循环回到 verify（不升档）
+    const onlyStale = guardResult.hits.every((h) => h.ruleId === 'stale-verify');
+    if (onlyStale) {
+      console.error('✗ 出口门失败：verify 证据不新鲜（代码在 verify 之后又被改写）');
+      console.error('  请重新运行 gantry advance —— verify 必须晚于最后一次代码改动。');
+      return { stop: true, exitCode: 1 };
+    }
+    return upgradeFromHits(projectRoot, guardResult.hits);
+  }
+
+  // ⑧ 全通过 → 自动收尾（全程无人工确认，AC-7）
+  const files = filterByBaseline(guardInput.changedFiles, baseline, guardInput.hashOf);
+  const goal = typeof intent.goal === 'string' && intent.goal.trim() ? intent.goal.trim() : changeId;
+  const shown = files.slice(0, 3).join(', ');
+  const suffix = files.length > 3 ? ` (+${files.length - 3})` : '';
+  const summary = files.length > 0 ? `${goal} · files: ${shown}${suffix}` : goal;
+
+  await archiveChange(projectRoot, changeId, { summary });
+  resetStateToIdle(projectRoot, { loopDone: true });
+
+  console.log(`✓ light 出口门通过，已自动收尾: ${changeId}`);
+  console.log(`  已归档到 ${specsPath('_archive', changeId)}/`);
+  console.log('  code: light_archived');
+  return { stop: true };
+}
+
+/**
+ * 守卫命中 → 自动升档 full@change（D13），工作区不动。
+ * 打印命中项、PROPOSAL 初稿路径与 code，返回 { stop: true }（exit 0）。
+ */
+function upgradeFromHits(projectRoot, hits) {
+  let result;
+  try {
+    result = upgradeToFull(projectRoot, { source: 'auto', hits });
+  } catch (err) {
+    console.error(`✗ light 升档失败: ${err.message}`);
+    return { stop: true, exitCode: 1 };
+  }
+  try { writeContextPack(projectRoot); } catch { /* non-blocking */ }
+
+  console.log('↑ 守卫命中，light → full 自动升档');
+  for (const h of hits) {
+    const files = Array.isArray(h.files) && h.files.length ? `: ${h.files.join(', ')}` : '';
+    const detail = h.detail ? ` (${h.detail})` : '';
+    console.log(`  - ${h.ruleId}${files}${detail}`);
+  }
+  console.log(`  PROPOSAL 初稿: ${result.proposalPath}`);
+  console.log('  当前状态: full@change（change 门禁等待人工确认）');
+  console.log('  code: light_upgraded');
+  return { stop: true };
+}
+
+/**
+ * 采集 runLightGuard 的输入快照（IO 汇聚点）。
+ *
+ * - changedFiles = 全部脏/未跟踪文件（排除 .gantry/）
+ * - hashOf = 当前文件内容 sha1（不可读时抛错，由调用方转为 guard-error）
+ * - maxMtime = 基线过滤后仍存在的改动文件的最大 mtimeMs
+ * - testEntries = 基线过滤后测试路径的 {path, status, before(=HEAD), after(=工作区)}
+ * - pkgJsonDepsDelta = package.json 变更触及 dependencies/devDependencies 时为 ['dependencies']
+ */
+function collectLightGuardInput(projectRoot, { intent, baseline, startedAt }) {
+  const statusMap = new Map();
+  for (const e of gitNameStatus(projectRoot)) statusMap.set(e.path, e.status);
+  for (const p of gitLsUntracked(projectRoot)) {
+    if (!statusMap.has(p)) statusMap.set(p, 'A');
+  }
+
+  const all = [...statusMap.keys()].filter((p) => !(p === '.gantry' || p.startsWith('.gantry/')));
+  const hashOf = (rel) => sha1File(join(projectRoot, rel));
+
+  const filtered = filterByBaseline(all, baseline, hashOf);
+
+  let maxMtime = 0;
+  for (const rel of filtered) {
+    try {
+      const st = statSync(join(projectRoot, rel));
+      maxMtime = Math.max(maxMtime, st.mtimeMs);
+    } catch {
+      // 已删除 / 不可读 → 不参与 mtime（仍作为改动文件由守卫判定）
+    }
+  }
+
+  const testEntries = filtered.filter((rel) => isTestPath(rel)).map((rel) => ({
+    path: rel,
+    status: statusMap.get(rel) || 'M',
+    before: gitShowHead(projectRoot, rel),
+    after: readFileOrNull(join(projectRoot, rel)),
+  }));
+
+  return {
+    scope: Array.isArray(intent.scope) ? intent.scope : [],
+    changedFiles: all,
+    baseline,
+    hashOf,
+    testEntries,
+    verifyRecord: { pass: true, at: startedAt },
+    maxMtime,
+    description: typeof intent.goal === 'string' ? intent.goal : '',
+    isTestPath,
+    detectRedLines,
+    pkgJsonDepsDelta: detectPkgJsonDepsDelta(projectRoot, filtered),
+  };
+}
+
+/** 读 light.json；缺失 / 非法 → null（不是错误）。 */
+function readLightJson(changeDir) {
+  const p = join(changeDir, 'light.json');
+  if (!existsSync(p)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(p, 'utf-8'));
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 解析 light 出口门的 verify 命令：
+ *   intent.verify → `.gantry/loop/test-commands.yml` 的全部 cmd（按定义顺序 && 串联）→ null
+ */
+function resolveLightVerifyCommand(projectRoot, intent) {
+  if (intent && typeof intent.verify === 'string' && intent.verify.trim()) {
+    return intent.verify.trim();
+  }
+  const tcPath = join(projectRoot, '.gantry', 'loop', 'test-commands.yml');
+  let parsed = null;
+  try { parsed = parseTestCommands(tcPath); } catch { parsed = null; }
+  if (parsed && typeof parsed === 'object') {
+    const cmds = Object.values(parsed)
+      .map((e) => (e && typeof e.cmd === 'string' ? e.cmd.trim() : ''))
+      .filter(Boolean);
+    if (cmds.length > 0) return cmds.join(' && ');
+  }
+  return null;
+}
+
+/** 打印 verify 输出的末尾若干行。 */
+function printVerifyTail(stdout, stderr) {
+  const text = `${stdout || ''}${stderr || ''}`.trimEnd();
+  if (!text) return;
+  const tail = text.split('\n').slice(-15);
+  console.log('  ── verify 输出 ──');
+  for (const line of tail) console.log(`  ${line}`);
+}
+
+/** 渲染 `## guard-decision` 段内容。 */
+function renderGuardDecision(guardResult) {
+  const lines = [
+    `- at: ${new Date().toISOString()}`,
+    '- checks: intent-scope-invalid, out-of-scope, red-lines, test-weakened, stale-verify',
+  ];
+  if (guardResult.passed) {
+    lines.push('- result: passed');
+  } else {
+    lines.push('- result: hits');
+    for (const h of guardResult.hits) {
+      const files = Array.isArray(h.files) && h.files.length ? h.files.join(', ') : '—';
+      const detail = h.detail ? ` (${h.detail})` : '';
+      lines.push(`- hit: ${h.ruleId}: ${files}${detail}`);
+    }
+  }
+  return lines.join('\n');
+}
+
+/** 向 change 的 EXECUTION.md 追加一段 `## <heading>` 块（文件缺失则创建）。 */
+function appendExecutionBlock(changeDir, heading, text) {
+  const resolved = resolveArtifactPath(changeDir, 'execution');
+  const path = resolved.path;
+  const existing = existsSync(path) ? readFileSync(path, 'utf-8') : '';
+  const block = `## ${heading}\n\n${text}\n`;
+  const prefix = existing.trim() ? `${existing.replace(/\s*$/, '')}\n\n` : '';
+  writeFileSync(path, `${prefix}${block}`, 'utf-8');
+}
+
+/** 读 EXECUTION.md 全文；缺失 → 空串。 */
+function readExecutionText(changeDir) {
+  const resolved = resolveArtifactPath(changeDir, 'execution');
+  if (!resolved || !existsSync(resolved.path)) return '';
+  return readFileSync(resolved.path, 'utf-8');
+}
+
+/** 解析 verify-log：返回按出现顺序排列的 FAIL 行 diagnosis 文本。 */
+function parseVerifyLog(text) {
+  const re = /^-\s+\S+\s+(PASS|FAIL)\s+`[^`]*`\s+\(exit\s+-?\d+\)\s+diagnosis:\s*(.*)$/;
+  const failDiagnoses = [];
+  for (const line of text.split('\n')) {
+    const m = line.match(re);
+    if (m && m[1] === 'FAIL') failDiagnoses.push(m[2].trim());
+  }
+  return { failDiagnoses };
+}
+
+/**
+ * 取 EXECUTION `## diagnosis` 段内最新一条 `- <text>`。
+ * 兼容两种写法：`## diagnosis` 后跟 `- text`，或 `## diagnosis: text` 行内承载。
+ * 无视文本 → 返回空串（recordLightVerify 会判为无效自愈并暂停）。
+ */
+function latestDiagnosis(text) {
+  let inSection = false;
+  let latest = '';
+  for (const raw of text.split('\n')) {
+    const line = raw.trimEnd();
+    const inline = line.match(/^##\s+diagnosis\s*[::]\s*(.+)$/);
+    if (inline) { latest = inline[1].trim(); inSection = true; continue; }
+    if (/^##\s/.test(line)) { inSection = /^##\s+diagnosis\s*$/.test(line); continue; }
+    if (/^---\s*$/.test(line)) { inSection = false; continue; }
+    if (!inSection) continue;
+    const item = line.match(/^\s*-\s+(.+)$/);
+    if (item) latest = item[1].trim();
+  }
+  return latest;
+}
+
+/** `git diff --name-status HEAD` → [{ status: 'A'|'M'|'D', path }]；git 失败抛错。 */
+function gitNameStatus(projectRoot) {
+  const r = spawnSync('git', ['diff', '--name-status', 'HEAD'], { cwd: projectRoot, encoding: 'utf-8' });
+  if (r.status !== 0) throw new Error(`git diff 失败 (exit ${r.status})`);
+  const out = [];
+  for (const line of String(r.stdout || '').split('\n')) {
+    if (!line.trim()) continue;
+    const parts = line.split('\t');
+    if (parts.length < 2) continue;
+    const code = parts[0].charAt(0);
+    const path = parts[parts.length - 1];
+    out.push({ status: normalizeGitStatus(code), path });
+  }
+  return out;
+}
+
+function normalizeGitStatus(code) {
+  if (code === 'A' || code === 'C' || code === '?') return 'A';
+  if (code === 'D') return 'D';
+  return 'M';
+}
+
+/** `git ls-files --others --exclude-standard` → 未跟踪文件列表；git 失败抛错。 */
+function gitLsUntracked(projectRoot) {
+  const r = spawnSync('git', ['ls-files', '--others', '--exclude-standard'], { cwd: projectRoot, encoding: 'utf-8' });
+  if (r.status !== 0) throw new Error(`git ls-files 失败 (exit ${r.status})`);
+  return String(r.stdout || '').split('\n').map((s) => s.trim()).filter(Boolean);
+}
+
+/** `git show HEAD:<path>` → 内容；文件在 HEAD 中不存在 → null。 */
+function gitShowHead(projectRoot, rel) {
+  const r = spawnSync('git', ['show', `HEAD:${rel}`], { cwd: projectRoot, encoding: 'utf-8' });
+  return r.status === 0 ? String(r.stdout) : null;
+}
+
+/** 读文件内容；不可读 → null。 */
+function readFileOrNull(abs) {
+  try { return readFileSync(abs, 'utf-8'); } catch { return null; }
+}
+
+/** 文件内容 sha1；不可读抛错（由调用方处理）。 */
+function sha1File(abs) {
+  return createHash('sha1').update(readFileSync(abs)).digest('hex');
+}
+
+/**
+ * package.json 被改动且 diff 触及 dependencies / devDependencies 时返回 ['dependencies']。
+ * git 失败抛错（fail-closed）。
+ */
+function detectPkgJsonDepsDelta(projectRoot, files) {
+  if (!files.includes('package.json')) return [];
+  const r = spawnSync('git', ['diff', 'HEAD', '--', 'package.json'], { cwd: projectRoot, encoding: 'utf-8' });
+  if (r.status !== 0) throw new Error('git diff package.json 失败');
+  const diff = String(r.stdout || '');
+  return /"devDependencies"|"dependencies"/.test(diff) ? ['dependencies'] : [];
+}
+
+/**
+ * 复位 STATE 到 idle（archive 与 light 自动收尾共用）。
+ * loopDone=true 时额外写 fence 让 loop-next 返回 'done'（D16 收敛信号）。
+ */
+function resetStateToIdle(projectRoot, { loopDone = false } = {}) {
+  updateState(projectRoot, {
+    activeChange: null,
+    currentStage: 'idle',
+    currentWave: null,
+    currentTask: null,
+    activeAgent: null,
+    stagesRun: 0,
+    retries: 0,
+    pauseReason: null,
+    pipeline: 'full',
+    contextUsage: { tokens: null, windowPercent: null },
+  });
+
+  if (loopDone) {
+    // D16 期望 light@fast 收敛时 loop-next 返回 'done'，但 auto-archive 会把 STATE
+    // 复位为 idle，收敛条件再也无法命中。这里显式写 fence（updateState 只写散文区，
+    // 不保留 fence），让 driver 立刻看到 'done' 停下；下一次 gantry change 的
+    // updateState 会重置 fence。
+    const fence = readFence(projectRoot);
+    writeFence(projectRoot, {
+      ...fence,
+      nextStep: 'done',
+      lastStageResult: { ok: true, blockedReason: null },
+    });
+  }
+}
 
 function getConfiguredMaxStages(config = {}, fallback = 3) {
   const configured = Number(config?.autonomous?.maxStagesPerRun);
@@ -1391,18 +1860,7 @@ async function archive(args, opts = {}) {
     process.exit(1);
   }
 
-  updateState(projectRoot, {
-    activeChange: null,
-    currentStage: 'idle',
-    currentWave: null,
-    currentTask: null,
-    activeAgent: null,
-    stagesRun: 0,
-    retries: 0,
-    pauseReason: null,
-    pipeline: 'full',
-    contextUsage: { tokens: null, windowPercent: null },
-  });
+  resetStateToIdle(projectRoot);
 
   if (frictionEvents) {
     await summarizeFrictionLearning(projectRoot, finishedChange, frictionEvents, opts);
@@ -1601,7 +2059,8 @@ function help(args = []) {
   hook <list|run>      查看 / 执行阶段 hook
 
 自动化 / 脚本用:
-  change "<描述>"      开新变更           [--pipeline light]
+  change "<描述>"      开新变更           [--tier light|full]
+  pipeline full        将 light change 单向升档为 full
   advance              单步推进           [--skip]
   auto                 多阶段自动推进
   loop <claude|codex>  无监督收敛 driver(headless)
@@ -1624,8 +2083,13 @@ function helpAll() {
 
   change "<描述>"     开始新变更（默认 full）
     --id <id>           显式指定 change-id（否则从业务主题自动生成）
-    --pipeline light    显式选择低风险快速路径
-  pipeline full       将当前活跃 change 从 light 单向提升为 full
+    --tier <T>          显式指定管线: light|full（默认 full）
+    --pipeline <T>      --tier 的 deprecated alias（同取值 light|full）
+    --scope <paths>     light 入口: 允许改动的相对路径，逗号分隔（light 必填）
+    --accept "<a;b>"    light 入口: 验收线，分号分隔（默认取描述）
+    --verify "<cmd>"    light 入口: 出口门要执行的 verify 命令（可选）
+  pipeline full       将当前活跃 change 从 light 单向提升为 full（任意 light 阶段可升；已是 full 报错）
+  pipeline light      非零退出：不支持降档（full → light）
   /gantry-next        在客户端中执行当前阶段产物并推进（不是 CLI 命令）
 
   advance             单步推进（供 loop driver / 手动调用）
@@ -2000,34 +2464,76 @@ function stripFlags(args, flagsWithValue = []) {
 
 
 /**
- * 归一化 tier 覆写值 (micro|light|full)，非法值返回 null。
+ * 归一化 tier 覆写值 (light|full)，非法值返回 null。
  */
 function normalizeTierValue(value) {
-  if (value === 'micro' || value === 'light' || value === 'full') return value;
+  if (value === 'light' || value === 'full') return value;
   return null;
 }
 
 /**
- * 构造 fsSnapshot 供 decideTier 判定：
- *   modifiedFiles      git diff --name-only HEAD
- *   newFiles           git ls-files --others --exclude-standard
- *   pkgJsonDepsDelta   git diff HEAD -- package.json 是否改动 dependencies/devDependencies 段（简化为 boolean → ['dependencies']）
- * 非 git 仓库或 git 命令失败 → 空快照（不抛异常）。
+ * 解析 light 入口的 --scope 值（逗号分隔）为数组；缺省 → 空数组。
+ * 空数组会由 validateIntentScope 判为 intent-scope-invalid。
  */
-function detectFsSnapshot(projectRoot) {
-  const snapshot = { modifiedFiles: [], newFiles: [], pkgJsonDepsDelta: [] };
+function parseScopeArg(raw) {
+  if (raw == null) return [];
+  return raw.split(',').map((s) => s.trim());
+}
 
-  if (!isGitRepo(projectRoot)) return snapshot;
+/**
+ * 解析 --accept：分号分隔，去空；缺省或全空 → [description]。
+ */
+function parseAcceptArg(raw, description) {
+  if (raw == null) return [description];
+  const items = raw.split(';').map((s) => s.trim()).filter(Boolean);
+  return items.length > 0 ? items : [description];
+}
 
-  snapshot.modifiedFiles = gitLines(projectRoot, ['diff', '--name-only', 'HEAD']);
-  snapshot.newFiles = gitLines(projectRoot, ['ls-files', '--others', '--exclude-standard']);
-
-  const pkgDiff = gitText(projectRoot, ['diff', 'HEAD', '--', 'package.json']);
-  if (/["']?(dependencies|devDependencies)["']?\s*:/.test(pkgDiff)) {
-    snapshot.pkgJsonDepsDelta = ['dependencies'];
+/**
+ * 采集工作区基线：所有 dirty / untracked 文件 → { 相对路径: sha1 }。
+ * 排除 .gantry/（框架自身产物）；删除或不可读的文件跳过。
+ */
+function collectBaseline(projectRoot) {
+  const files = [
+    ...gitLines(projectRoot, ['diff', '--name-only', 'HEAD']),
+    ...gitLines(projectRoot, ['ls-files', '--others', '--exclude-standard']),
+  ];
+  const baseline = {};
+  for (const rel of files) {
+    if (rel.startsWith('.gantry/') || rel === '.gantry') continue;
+    let content;
+    try {
+      content = readFileSync(join(projectRoot, rel));
+    } catch {
+      continue; // 已删除 / 不可读
+    }
+    baseline[rel] = createHash('sha1').update(content).digest('hex');
   }
+  return baseline;
+}
 
-  return snapshot;
+/**
+ * 渲染 light 意图头（EXECUTION 顶部视图，3~5 行）。
+ */
+function renderLightIntent(lightJson) {
+  const { goal, accept, scope, verify } = lightJson.intent;
+  const lines = [
+    '## light-intent',
+    `- 目标: ${goal}`,
+    `- 验收线: ${accept.join('; ')}`,
+    `- 允许改动范围: ${scope.join(', ')}`,
+  ];
+  if (verify) lines.push(`- verify: ${verify}`);
+  return lines.join('\n');
+}
+
+/**
+ * 渲染 tier-decision 段（无 score / hits / auto 行）。
+ */
+function renderTierDecision({ tier, source, reason = null }) {
+  const lines = ['## tier-decision', `tier: ${tier}`, `source: ${source}`];
+  if (reason) lines.push(`reason: ${reason}`);
+  return lines.join('\n');
 }
 
 function isGitRepo(projectRoot) {
@@ -2039,12 +2545,6 @@ function gitLines(projectRoot, args) {
   const r = spawnSync('git', args, { cwd: projectRoot, encoding: 'utf-8' });
   if (r.status !== 0) return [];
   return String(r.stdout || '').split('\n').map((s) => s.trim()).filter(Boolean);
-}
-
-function gitText(projectRoot, args) {
-  const r = spawnSync('git', args, { cwd: projectRoot, encoding: 'utf-8' });
-  if (r.status !== 0) return '';
-  return String(r.stdout || '');
 }
 
 function generateChangeId(description, projectRoot, explicitId = null) {

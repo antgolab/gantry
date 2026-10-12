@@ -538,7 +538,7 @@ PROGRESS 是临时文件，不归档。
 ## 约束（强制）
 
 - **R2.4**：verify 未通过禁止标记完成
-- **micro 档升档保护**：micro 档 verify 失败累计 2 次即升档（`state.pauseReason = micro-verify-failed-2x`），不再原地自愈；light/full 档才走 R2.5 三次自愈上限
+- **R2.5**：dev 阶段 verify 失败，每次自愈都要有新诊断（越界 / 依赖 / 断言 / import / 环境），最多自愈 3 次；第 4 次仍失败停下汇报，禁盲重试。light 管线不走本阶段，其自愈闭环见 `phases/F-fast.md`
 - **R3.2**：发现需求/设计有问题 → 不要自己改 `SPEC.md` / `DESIGN.md`，停下来开新 PROPOSAL
 - **R4.5**：Schema 变更必伴随迁移文件。只改 model 不生迁移就提交 → 违规，AI 自己回滚
 - **R4.6**：破坏性变更（删 ≥ 5 行 / 改公共接口）必走 1.8 协议：grep 引用图 + 反问用户 + 回归测试覆盖

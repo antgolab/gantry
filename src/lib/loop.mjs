@@ -6,7 +6,7 @@
  * 本模块只做映射与判定。
  *
  * pdlc 骨架(状态机真源 / 客观 check / 只前进)在此落地为 gantry 语义:
- *   - 三种 pipeline(full/light/micro)各自的收敛条件(C4)
+ *   - 两档 pipeline(full/light)各自的收敛条件(C4)
  *   - AC 编号锚定的 check 覆盖校验(C2)
  *   - 白名单单 token 输出契约(pdlc S4)
  *
@@ -23,8 +23,8 @@ export { checkAcCoverage, extractAcIds } from './ac-coverage.mjs';
 // 若未来 loop.mjs 内部需要直接调用,统一 import from './ac-coverage.mjs'。
 
 /**
- * loop-next 白名单:driver 只信这 10 个 token,其他一律 blocked。
- * 顺序与 STAGES 一致 + 结束态 done + 阻塞态 blocked。
+ * loop-next 白名单:driver 只信这 11 个 token,其他一律 blocked。
+ * 顺序与 STAGES 一致 + light 的内部 token(gantry-fast) + 结束态 done + 阻塞态 blocked。
  */
 export const WHITELIST = Object.freeze([
   'gantry-change',
@@ -35,6 +35,7 @@ export const WHITELIST = Object.freeze([
   'gantry-test',
   'gantry-review',
   'gantry-integration',
+  'gantry-fast',
   'done',
   'blocked',
 ]);
@@ -46,8 +47,9 @@ export const WHITELIST = Object.freeze([
  */
 export const CONVERGE_CONDITIONS = Object.freeze({
   full:  (s) => s.currentStage === 'integration' && s.lastStageResult?.ok === true,
-  light: (s) => s.currentStage === 'integration' && s.lastStageResult?.ok === true,
-  micro: (s) => s.currentStage === 'done' || (s.currentStage === 'dev' && s.lastStageResult?.ok === true),
+  // light 只有 fast 一个阶段(DESIGN D16):fast 轮次 ok 即收敛,由 driver 收尾。
+  // light 不经过 integration,也没有独立的结束阶段。
+  light: (s) => s.currentStage === 'fast' && s.lastStageResult?.ok === true,
 });
 
 /**
@@ -112,7 +114,6 @@ function deriveNextFromStage(currentStage, pipelineKey) {
 
   const candidates = STAGES[currentStage]?.next || [];
   for (const c of candidates) {
-    if (CONDITIONAL_STAGES.has(c)) continue;
     return `gantry-${c}`;
   }
   return null;

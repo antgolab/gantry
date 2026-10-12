@@ -13,7 +13,7 @@ stage: auto
 
 - `/gantry:auto` — 按 `config.autonomous.maxStagesPerRun`（默认 3）推进若干阶段
 
-`--trust` 已移除；Change、Design、Integration 三个人工确认关卡不可绕过。
+`--trust` 已移除；Change、Design、Integration 三个人工确认关卡不可绕过——但这三关**只存在于 full 管线**。light 管线无任何人工关卡：它在 `fast` 里由 `gantry advance` 出口门自动收敛（守卫命中则自动升档 `full@change`，否则自动归档），`/gantry:auto` 不需要为它暂停。
 
 ## 执行协议
 

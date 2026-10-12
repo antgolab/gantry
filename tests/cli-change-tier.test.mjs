@@ -1,30 +1,23 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const CLI = join(import.meta.dirname, '..', 'src', 'cli.mjs');
+const TIER_ROUTER = join(import.meta.dirname, '..', 'src', 'lib', 'tier-router.mjs');
 let tmpDir;
 
 const run = (args) =>
   execFileSync(process.execPath, [CLI, ...args], { cwd: tmpDir, encoding: 'utf-8', timeout: 20000 });
 
+// 需要断言非零退出 / 读取 stderr 的用例用 spawnSync 包一层
+const runResult = (args) =>
+  spawnSync(process.execPath, [CLI, ...args], { cwd: tmpDir, encoding: 'utf-8', timeout: 20000 });
+
 function state() {
   return readFileSync(join(tmpDir, '.gantry/planning/STATE.md'), 'utf-8');
-}
-
-// 在 tmpDir 内初始化一个真实 git 仓库，提交 2 个文件后各改一笔，
-// 使 git diff --name-only HEAD 返回 2 个 modifiedFiles（触发 soft:multi-file）。
-function initGitRepoWithTwoModifiedFiles() {
-  execFileSync('git', ['init', '-q'], { cwd: tmpDir });
-  writeFileSync(join(tmpDir, 'a.txt'), 'a\n');
-  writeFileSync(join(tmpDir, 'b.txt'), 'b\n');
-  execFileSync('git', ['add', '.'], { cwd: tmpDir });
-  execFileSync('git', ['-c', 'user.email=t@e', '-c', 'user.name=t', 'commit', '-q', '-m', 'init'], { cwd: tmpDir });
-  writeFileSync(join(tmpDir, 'a.txt'), 'a2\n');
-  writeFileSync(join(tmpDir, 'b.txt'), 'b2\n');
 }
 
 beforeEach(() => {
@@ -35,74 +28,97 @@ afterEach(() => {
   if (tmpDir && existsSync(tmpDir)) rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe('change --dry-run tier 决策', () => {
-  it('纯 README 修复 → tier: micro, hits: [], score: 0', () => {
+describe('change --dry-run tier 决策（AC-2：默认 full，不再软打分）', () => {
+  it('空 diff 下 dry-run → pipeline full，无 score / hits 字段', () => {
     const out = run(['change', '--dry-run', 'fix: README typo']);
     const j = JSON.parse(out);
-    assert.equal(j.tier, 'micro');
-    assert.equal(j.pipeline, 'micro');
-    assert.deepEqual(j.hits, []);
-    assert.equal(j.score, 0);
-    assert.equal(j.code, 'tier_dry_run');
-  });
-
-  it('--tier full 覆写生效，记录 auto-detected: micro', () => {
-    const out = run(['change', '--dry-run', '--tier', 'full', 'fix: README typo']);
-    const j = JSON.parse(out);
     assert.equal(j.tier, 'full');
+    assert.equal(j.pipeline, 'full');
     assert.equal(j.code, 'tier_dry_run');
-    assert.equal(j.tierOverride, true);
-    assert.match(j['tier-override'], /auto-detected: micro/);
+    assert.equal(j.score, undefined, 'dry-run 不应再有 score');
+    assert.equal(j.hits, undefined, 'dry-run 不应再有 hits');
   });
 
-  it('描述命中硬红线 (auth) → tier: full, hits: [auth-keyword]', () => {
+  it('描述命中红线也只是 full（创建期不再升档，红线在执行期守卫）', () => {
     const out = run(['change', '--dry-run', '重构 auth 模块']);
     const j = JSON.parse(out);
     assert.equal(j.tier, 'full');
-    assert.deepEqual(j.hits, ['auth-keyword']);
-    assert.equal(j.score, 0);
+    assert.equal(j.hits, undefined);
   });
 
-  it('多文件改动软打分 → tier: light (soft:multi-file)', () => {
-    initGitRepoWithTwoModifiedFiles();
-    const out = run(['change', '--dry-run', '新增用户 dashboard']);
+  it('--tier full 覆写 → dry-run 仍报告 full', () => {
+    const out = run(['change', '--dry-run', '--tier', 'full', 'fix: README typo']);
     const j = JSON.parse(out);
-    assert.equal(j.tier, 'light');
-    assert.deepEqual(j.hits, ['soft:multi-file']);
-    assert.equal(j.score, 1);
+    assert.equal(j.tier, 'full');
+    assert.equal(j.pipeline, 'full');
   });
 
-  it('--pipeline 作为 deprecated alias 映射到同档位', () => {
-    const out = run(['change', '--dry-run', '--pipeline', 'light', 'fix: README typo']);
+  it('--pipeline 作为 deprecated alias，取值同为 light|full', () => {
+    const out = run(['change', '--dry-run', '--pipeline', 'full', 'fix: README typo']);
     const j = JSON.parse(out);
-    assert.equal(j.tier, 'light');
+    assert.equal(j.tier, 'full');
+  });
+});
+
+describe('AC-2 · tier-router 软打分引擎已移除', () => {
+  it('src/lib/tier-router.mjs 不存在', () => {
+    assert.equal(existsSync(TIER_ROUTER), false);
+  });
+
+  it('非 dry-run 的 EXECUTION.md 不含 score: / hits: / auto: 行', () => {
+    run(['install', '--tool', 'claude']);
+    run(['change', '--id', 'no-score', 'fix: README typo']);
+
+    const exec = readFileSync(join(tmpDir, '.gantry/specs/no-score/EXECUTION.md'), 'utf-8');
+    assert.match(exec, /## tier-decision/);
+    assert.match(exec, /tier: full/);
+    assert.match(exec, /source: default/);
+    assert.doesNotMatch(exec, /score:/);
+    assert.doesNotMatch(exec, /hits:/);
+    assert.doesNotMatch(exec, /auto:/);
+  });
+});
+
+describe('AC-1 · pipeline 枚举收敛为 light|full', () => {
+  it('--tier micro 非零退出，且允许列表不含 micro', () => {
+    const r = runResult(['change', '--tier', 'micro', 'fix: README typo']);
+    assert.notEqual(r.status, 0, '应非零退出');
+    const message = `${r.stdout}${r.stderr}`;
+    assert.equal(/micro/i.test(message), false, `错误信息不应出现 micro: ${message}`);
+    assert.match(message, /light\|full/, '错误信息应列出可选值 light|full');
+  });
+
+  it('--pipeline micro 同样被拒绝', () => {
+    const r = runResult(['change', '--pipeline', 'micro', 'fix: README typo']);
+    assert.notEqual(r.status, 0);
+    assert.equal(/micro/i.test(`${r.stdout}${r.stderr}`), false);
   });
 });
 
 describe('change 非 dry-run 落 STATE 与 EXECUTION', () => {
-  it('默认自动判定 micro，EXECUTION.md 写 tier-decision 段，code: tier_decided', () => {
+  it('默认建 full@change，EXECUTION 记录 source: default，code: tier_decided', () => {
     run(['install', '--tool', 'claude']);
     const out = run(['change', '--id', 'auto-test', 'fix: README typo']);
     assert.match(out, /code: tier_decided/);
-    assert.match(state(), /模式\*\*: `micro`/);
+    assert.match(state(), /模式\*\*: `full`/);
+    assert.match(state(), /当前阶段\*\*: `change`/);
 
     const exec = readFileSync(join(tmpDir, '.gantry/specs/auto-test/EXECUTION.md'), 'utf-8');
-    assert.match(exec, /## tier-decision/);
-    assert.match(exec, /auto: micro/);
-    assert.match(exec, /hits: \[\]/);
-    assert.match(exec, /score: 0/);
-    assert.doesNotMatch(exec, /tier-override/);
+    assert.match(exec, /tier: full/);
+    assert.match(exec, /source: default/);
+    assert.doesNotMatch(exec, /reason:/);
   });
 
-  it('--tier full 覆写生效，EXECUTION.md 记录 override 行，code: tier_override_recorded', () => {
+  it('--tier full 记录 source: override，code: tier_override_recorded', () => {
     run(['install', '--tool', 'claude']);
     const out = run(['change', '--tier', 'full', '--id', 'override-test', 'fix: README typo']);
     assert.match(out, /code: tier_override_recorded/);
     assert.match(state(), /模式\*\*: `full`/);
 
     const exec = readFileSync(join(tmpDir, '.gantry/specs/override-test/EXECUTION.md'), 'utf-8');
-    assert.match(exec, /auto: micro/);
-    assert.match(exec, /tier-override: user requested full \(auto-detected: micro\)/);
+    assert.match(exec, /tier: full/);
+    assert.match(exec, /source: override/);
+    assert.doesNotMatch(exec, /score:/);
   });
 });
 
@@ -124,8 +140,6 @@ describe('knowledge 子命令组', () => {
   });
 
   it('knowledge maintain 委托到 maintainer 并返回 JSON 结果 (T13 实装后)', () => {
-    // T13 完成后,maintainer.mjs 已存在;此处只断言子命令正常委托、输出可解析、含 code 字段。
-    // 具体 promoted/archived 语义由 tests/knowledge-maintain.test.mjs 覆盖。
     const out = run(['knowledge', 'maintain']);
     const j = JSON.parse(out);
     assert.ok(typeof j.code === 'string', 'result 应含 code 字段');

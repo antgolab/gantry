@@ -5,7 +5,7 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
-import { PLANNING_DIR } from './paths.mjs';
+import { PLANNING_DIR, SPECS_DIR } from './paths.mjs';
 import { getAgentForStage } from './agents.mjs';
 
 const STATE_FILE = 'STATE.md';
@@ -56,73 +56,108 @@ function defaultState() {
 }
 
 /**
- * 归一化 pipeline 三值枚举 { micro, light, full }。
+ * 存量 STATE 的 pipeline 归一化 (DESIGN D9)。
  *
- * - 合法值原样返回；
- * - 其他值 (undefined / 'standard' / 未知) 默认 'full'；
- * - 禁止 micro → full 回退 (ADR-001)。
+ * 纯函数：不改 stage，不做 IO。hasLightJson 由调用方决定是否探测。
  *
- * 注：本函数是 state 读取路径的本地定义。pipeline-policy.mjs 的 normalizePipeline
- * 仍为二值 (light/full, 未知抛错)，供 cli/config 使用；T08 边界纪律限定只改 state.mjs，
- * 故这里单独维护 state 侧的 micro 感知归一化，不污染 shared policy。
+ * 规则：
+ *   - pipeline === 'full'                        → 原样，migrated=false
+ *   - pipeline === 'light' 且 currentStage 为 'idle'，或为 'fast' 且 hasLightJson 为
+ *     true                                        → 原样，migrated=false
+ *   - pipeline === 'light' 的其他状态(change / fast 无 light.json / integration / dev…)
+ *     ，以及 micro / standard / 任何未知值         → full，migrated=true
+ *   - currentStage 永不改动
+ *
+ * @param {object} state - 解析出的状态对象
+ * @param {object} [options]
+ * @param {boolean} [options.hasLightJson=false] - 当前 activeChange 目录是否存在 light.json
+ * @returns {{ state: object, migrated: boolean }}
  */
-export function normalizePipeline(value) {
-  if (value === 'micro' || value === 'light' || value === 'full') return value;
-  return 'full';
+export function normalizeLegacyPipeline(state, { hasLightJson = false } = {}) {
+  const pipeline = state?.pipeline;
+
+  if (pipeline === 'full') return { state, migrated: false };
+
+  if (pipeline === 'light') {
+    const stage = state.currentStage;
+    const valid = stage === 'idle' || (stage === 'fast' && hasLightJson === true);
+    if (valid) return { state, migrated: false };
+    return { state: { ...state, pipeline: 'full' }, migrated: true };
+  }
+
+  // micro / standard / undefined / 其他未知值 → full（容忍旧 STATE，不抛错）
+  return { state: { ...state, pipeline: 'full' }, migrated: true };
 }
 
-// pipeline audit：审查所有 `pipeline === 'light'` 判断点是否需要接纳 'micro'
-// ---------------------------------------------------------------------------
-// 1) src/lib/state.mjs (本文件 parseStateMd 的旧 light 兜底)：
-//    → micro 不适用。原因：ADR-001 明确禁止 micro→full 回退，该兜底只服务旧 light
-//      迁移（loop-engineering.test.mjs「旧 light 停在旧阶段时读取为 full」）。
-// 2) src/lib/phases.mjs:93 (integration gate：pipeline==='light' ? execution : review)：
-//    → micro 不适用。原因：micro 阶段图为 change→dev→done (DESIGN 2.4)，不含
-//      integration 阶段；micro 的 verify 保护由本文件 recordVerifyResult 承担，
-//      micro 阶段图扩容归 T10 (phases.mjs)，不在 T08 边界内。
-// 3) src/cli.mjs:230 (`if (pipeline === 'light')`) 与 :1429 (legacy standard/light)：
-//    → micro 不适用 / 待 CLI 任务审查。原因：CLI 层 pipeline 分支与 --tier 覆写归
-//      T12 处理，T08 不触碰 cli.mjs。
-// ---------------------------------------------------------------------------
-
 /**
- * 记录 micro 档 verify 结果 (升档保护核心)。
- *
- * 控制流选择：返回 { state, exitCode } 而非抛异常 —— verify 失败是业务状态而非
- * 程序错误，用返回值承载 CLI 退出码，避免用异常做控制流。
+ * 记录 light 档 verify 结果 (DESIGN D8 · R2.5 自愈上限 3 次)。
  *
  * 语义：
- *   - 仅 state.pipeline === 'micro' 且 pass === false 时 verifyFailCount++；
- *   - 累计达 2 时置 state.pauseReason = 'micro-verify-failed-2x'，返回
- *     exitCode 'micro_verify_failed'；
- *   - 其他 pipeline (light/full) 或 pass===true 时 count 不动，exitCode 为 null。
+ *   - pass → retries 归零，paused=false；
+ *   - fail 且 diagnosis 为空或与 lastDiagnosis 去空白后相同 → 判为无效自愈，
+ *     直接置 pauseReason='light-verify-no-new-diagnosis'，retries 不递增；
+ *   - 否则 retries++；retries > maxRetries(default 3) 时置
+ *     pauseReason='light-verify-failed'，paused=true。
  *
- * @param {object} state - 状态对象 (原地修改)
- * @param {boolean} pass - 本次 verify 是否通过
- * @returns {{ state: object, exitCode: string|null }}
+ * @param {object} state - 状态对象 (原地修改 retries / pauseReason)
+ * @param {object} result
+ * @param {boolean} result.pass - 本次 verify 是否通过
+ * @param {string} [result.diagnosis] - 本次新增诊断文本
+ * @param {string} [result.lastDiagnosis] - 上一条诊断文本
+ * @returns {{ state: object, paused: boolean }}
  */
-export function recordVerifyResult(state, pass) {
-  if (state.pipeline !== 'micro' || pass !== false) {
-    return { state, exitCode: null };
+export function recordLightVerify(state, { pass, diagnosis, lastDiagnosis } = {}) {
+  if (pass) {
+    state.retries = 0;
+    return { state, paused: false };
   }
-  state.verifyFailCount = (state.verifyFailCount ?? 0) + 1;
-  if (state.verifyFailCount >= 2) {
-    state.pauseReason = 'micro-verify-failed-2x';
-    return { state, exitCode: 'micro_verify_failed' };
+
+  const current = String(diagnosis ?? '').trim();
+  const previous = String(lastDiagnosis ?? '').trim();
+
+  if (current === '' || current === previous) {
+    state.pauseReason = 'light-verify-no-new-diagnosis';
+    return { state, paused: true };
   }
-  return { state, exitCode: null };
+
+  state.retries = (state.retries ?? 0) + 1;
+  if (state.retries > (state.maxRetries ?? 3)) {
+    state.pauseReason = 'light-verify-failed';
+    return { state, paused: true };
+  }
+  return { state, paused: false };
 }
 
 /**
- * 读取项目状态
+ * 读取项目状态（含存量 pipeline 归一化，DESIGN D9 / AC-14）。
+ *
+ * 归一化只做内存态：readState 不写回 STATE.md（持久化由 gantry migrate 之类
+ * 的显式命令负责）。
+ *
  * @param {string} projectRoot - 项目根目录
- * @returns {object} 解析后的状态对象
+ * @returns {object} 解析并归一化后的状态对象
  */
 export function readState(projectRoot) {
   const statePath = join(projectRoot, PLANNING_DIR, STATE_FILE);
-  const state = existsSync(statePath)
+  const parsed = existsSync(statePath)
     ? parseStateMd(readFileSync(statePath, 'utf-8'))
     : defaultState();
+
+  // R4：只在 pipeline=light 且 stage=fast 且已知 activeChange 时才碰文件系统，
+  // 其余路径保持纯解析行为不变。
+  const needsLightJsonCheck = parsed.pipeline === 'light'
+    && parsed.currentStage === 'fast'
+    && Boolean(parsed.activeChange);
+  const hasLightJson = needsLightJsonCheck
+    ? existsSync(join(projectRoot, SPECS_DIR, parsed.activeChange, 'light.json'))
+    : false;
+
+  const { state, migrated } = normalizeLegacyPipeline(parsed, { hasLightJson });
+
+  if (migrated) {
+    console.error(`↑ pipeline 迁移: ${parsed.pipeline}@${parsed.currentStage} → full@${state.currentStage}`);
+  }
+
   return state;
 }
 
@@ -329,13 +364,9 @@ function parseStateMd(content) {
     }
   }
 
-  state.pipeline = normalizePipeline(state.pipeline);
-  // pipeline audit #1：旧 light 迁移兜底 —— 仅 light 停在非法阶段时回退 full；
-  // micro 不在此列 (ADR-001 禁止 micro→full 回退)。
-  if (state.pipeline === 'light' && !['change', 'fast', 'integration', 'idle'].includes(state.currentStage)) {
-    state.pipeline = 'full';
-  }
-
+  // pipeline 保留原值，不做本地归一化：存量判定需要知道原值才能提示迁移
+  // (micro / 旧 light 的区别只能在这里看到)。归一化统一在 readState 里由
+  // normalizeLegacyPipeline 承担——它还需要探测 light.json，本函数不做 IO。
   return state;
 }
 

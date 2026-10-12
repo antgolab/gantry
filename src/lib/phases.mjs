@@ -7,7 +7,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, sep } from 'node:path';
 import { parseTasks, allTasksDone } from './tasks.mjs';
 import { artifactExists, getPreferredArtifactName, resolveArtifactPath } from './artifacts.mjs';
-import { assessLightEligibility } from './pipeline-policy.mjs';
+import { validateIntentScope } from './light-guard.mjs';
 // T-FIX-01(REVIEW Round 2 · R5):直接 import 叶子模块,不再走 loop.mjs 的
 // re-export,避免 phases → loop → phases 的循环 import。
 import { checkAcCoverage } from './ac-coverage.mjs';
@@ -30,14 +30,13 @@ export const STAGES = {
 
 // 横向命令（任何阶段可触发）
 
-// 快捷管线：定义 pipeline 实际包含哪些阶段
-//   micro — 极简路径，CHANGE → DEV → DONE（不生成 SPEC/DESIGN/TASKS 占位）
-//   light — 显式低风险路径，CHANGE → FAST → INTEGRATION
-//   full  — 默认完整路径
+// 快捷管线：定义 pipeline 实际包含哪些阶段（ADR-006 · 二分）
+//   light — 无人工关卡的最小循环，只有 FAST 一个阶段；由 CLI 固化的
+//           light.json 意图 + 执行期 diff 守卫兜底，无 change/PROPOSAL
+//   full  — 默认完整路径（8 阶段不变）
 export const PIPELINES = {
   full:     ['change', 'requirement', 'design', 'task', 'dev', 'test', 'review', 'integration'],
-  light:    ['change', 'fast', 'integration'],
-  micro:    ['change', 'dev', 'done'],
+  light:    ['fast'],
 };
 
 // 阶段 → 核心 phase prompt 文件映射
@@ -62,10 +61,10 @@ export const PHASE_FILES = {
 /**
  * 检查阶段门禁是否满足
  *
- * Gate 依赖：
- *   - 默认每个阶段依赖前一个阶段的工件（如 task 依赖 DESIGN.md）
- *   - 若当前 pipeline 跳过了某依赖阶段（light 跳过 requirement/design），
- *     gate 应改为检查 pipeline 中该阶段的实际前驱工件
+ * Gate 依赖（ADR-006 起只有 full / light 两档）：
+ *   - full 的 8 阶段：每阶段依赖前一个阶段的工件（如 task 依赖 DESIGN.md）
+ *   - light 只有 fast 一个阶段，其门禁不读 PROPOSAL，改为校验 CLI 固化的
+ *     light.json 意图（存在 + 可解析 + 范围合法），见 checkLightIntent
  *
  * @param {string} targetStage - 目标阶段
  * @param {string} specsDir - .gantry/specs/<change-id>/ 目录
@@ -82,20 +81,13 @@ export function checkGate(targetStage, specsDir, config, state, projectRoot) {
     return { passed: true, reason: 'stage disabled, skipping' };
   }
 
-  // pipeline-aware gate：dev/test/review/integration 这种"动态依赖"的阶段
-  // 由调用 pipeline 决定前驱
-  const pipeline = config?.pipeline;
-  const pipelineStages = pipeline && PIPELINES[pipeline];
-
-  // 静态门禁（不受 pipeline 影响的）
+  // 静态门禁（只在 full 的 8 阶段图上有意义的固定依赖）
   const staticGates = {
     requirement: () => checkProposalReady(specsDir),
     design:      () => checkArtifact(specsDir, 'spec'),
     test:        () => checkAllTasksDone(specsDir),
     integration: () => {
-      const base = pipeline === 'light'
-        ? checkExecutionPassed(specsDir)
-        : checkReviewPassed(specsDir);
+      const base = checkReviewPassed(specsDir);
       if (!base.passed) return base;
       return checkAcGate(specsDir, projectRoot);
     },
@@ -105,43 +97,60 @@ export function checkGate(targetStage, specsDir, config, state, projectRoot) {
     return staticGates[targetStage]();
   }
 
-  // 动态门禁：根据 pipeline 决定前驱
-  //   task 默认要 DESIGN.md
-  //   dev 默认要 TASKS.md/TASK.md
-  //   review 默认要 TEST.md
+  // 动态门禁：full 的 task / dev / review 各自的前驱工件
   if (targetStage === 'task') {
-    if (pipelineStages && !pipelineStages.includes('design')) {
-      return checkProposalReady(specsDir);
-    }
     return checkArtifact(specsDir, 'design');
   }
+  // light 的唯一阶段：意图由 CLI 固化在 light.json（ADR-006 / D4）。
+  // 不再读 PROPOSAL、不再做创建期软判档——守卫在执行期用真实 diff 判定。
   if (targetStage === 'fast') {
-    const proposal = checkProposalReady(specsDir);
-    if (!proposal.passed) return proposal;
-    const resolved = resolveArtifactPath(specsDir, 'proposal');
-    const eligibility = assessLightEligibility(readFileSync(resolved.path, 'utf-8'));
-    if (!eligibility.eligible) {
-      return {
-        passed: false,
-        hard: true,
-        reason: `light 不允许高风险变更 (${eligibility.risks.join(', ')})；请运行 gantry pipeline full`,
-      };
-    }
-    return { passed: true };
+    return checkLightIntent(specsDir);
   }
   if (targetStage === 'dev') {
-    // micro 无 task 阶段：dev 前驱是 change，只要求 PROPOSAL/CHANGE 就绪，
-    // 不生成也不要求 TASKS.md 占位。
-    if (pipelineStages && !pipelineStages.includes('task')) {
-      return checkProposalReady(specsDir);
-    }
     return checkArtifact(specsDir, 'tasks');
   }
   if (targetStage === 'review') {
-    if (pipelineStages && !pipelineStages.includes('test')) {
-      return checkAllTasksDone(specsDir);
-    }
     return checkArtifact(specsDir, 'test');
+  }
+
+  return { passed: true };
+}
+
+/**
+ * light 进入 fast 的门禁：`<specsDir>/light.json` 必须存在、可解析，
+ * 且 `intent.scope` 合法（light-guard#validateIntentScope）。
+ *
+ * 任一不满足即 hard block：light 没有人工关卡，意图缺失或范围非法时
+ * 没有可信的执行边界，只能升档走 full（AC-5）。
+ */
+function checkLightIntent(specsDir) {
+  const lightJsonPath = join(specsDir, 'light.json');
+  if (!existsSync(lightJsonPath)) {
+    return {
+      passed: false,
+      hard: true,
+      reason: '缺少 light.json：light 意图未固化，请运行 gantry pipeline full 升档',
+    };
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(lightJsonPath, 'utf-8'));
+  } catch {
+    return {
+      passed: false,
+      hard: true,
+      reason: 'light.json 解析失败：意图不可信，请运行 gantry pipeline full 升档',
+    };
+  }
+
+  const scope = validateIntentScope(parsed?.intent?.scope);
+  if (!scope.ok) {
+    return {
+      passed: false,
+      hard: true,
+      reason: `light 意图范围非法 (${scope.reason})：请运行 gantry pipeline full 升档`,
+    };
   }
 
   return { passed: true };
@@ -292,18 +301,6 @@ function checkReviewPassed(specsDir) {
     return { passed: true };
   }
   return { passed: true, skipReason: 'REVIEW.md 未见明确通过标记，请确认审查已完成' };
-}
-
-function checkExecutionPassed(specsDir) {
-  const executionFile = resolveArtifactPath(specsDir, 'execution')?.path;
-  if (!executionFile || !existsSync(executionFile)) {
-    return { passed: false, reason: `缺少 ${getPreferredArtifactName('execution')}` };
-  }
-  const content = readFileSync(executionFile, 'utf-8');
-  if (!/(?:verify|验证)[^\n]*(?:pass|通过)|(?:pass|通过)[^\n]*(?:verify|验证)/i.test(content)) {
-    return { passed: false, reason: `${getPreferredArtifactName('execution')} 缺少 verify 通过证据` };
-  }
-  return { passed: true };
 }
 
 /**

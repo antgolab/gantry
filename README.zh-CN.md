@@ -199,7 +199,7 @@ gantry install --tool claude   # 可选: claude / codex / cursor / copilot / all
 >
 > 已内部化(不再作为用户命令入口):
 > - `exec`:`/gantry-next` / `/gantry-auto` 到 dev 阶段自动触发
-> - `fast`:light 挡位由 `/gantry-change --pipeline light` 或 `/gantry-auto` 内部判定
+> - `fast`：light 管线的唯一阶段，由 `gantry change --tier light --scope …` 直接进入
 > - `knowledge`:capture / curate 并入 `/gantry-context knowledge <sub>`
 
 ### 统一入口 GO.md
@@ -273,21 +273,20 @@ gantry archive             # → INTEGRATION + 归档
 只有文档、配置、文案或局部 bug 等低风险变更可显式选择 light：
 
 ```bash
-gantry change --pipeline light "描述需求"
-/gantry-next  # Change 确认后进入 Fast
-gantry archive
+gantry change --tier light --scope <p,...> "描述需求"
+gantry advance   # 出口门：CLI 执行 verify + diff 守卫
 ```
 
 ### MVP 模式（light 管线，当天跑通）
 
-light 只走 `change → fast → integration`；Fast 内合并范围锁定、实现、测试和自审：
+light 不走 `change` / `integration`，是无人工关卡的 `fast` 单阶段闭环：范围锁定、实现、测试和自审都在 fast 内完成，出口是 `gantry advance`：
 
 ```bash
-gantry change --pipeline light "描述需求"
-/gantry-auto
+gantry change --tier light --scope <p,...> "描述需求"
+gantry advance
 ```
 
-产物：`PROPOSAL.md` + `EXECUTION.md`。命中高风险边界会拒绝 light，需改走 full。
+产物：`light.json` + `EXECUTION.md`，无 `PROPOSAL.md`。出口门命中范围越界 / 红线 / 测试弱化会自动升档 `full@change`（代码保留，转人工确认）。
 
 ---
 
