@@ -1069,3 +1069,140 @@ describe('D29 · 自动归档写 archive-trace（F-15）', () => {
     assert.match(exec, /- at: \d{4}-\d{2}-\d{2}T/);
   });
 });
+
+// --- D34 / B10b · 基线回查：入口后新被忽略的越界文件、被还原回 HEAD 的入口脏文件 ---
+
+/** `git ls-files --others --exclude-standard` 是否还能看到该路径（fixture 自检用）。 */
+function gitSeesUntracked(rel) {
+  const out = execFileSync('git', ['ls-files', '--others', '--exclude-standard'], {
+    cwd: tmpDir, encoding: 'utf-8',
+  });
+  return out.split('\n').includes(rel);
+}
+
+/** 取 CLI 输出里第一条 out-of-scope 命中行（供「唯一越界项是谁」的断言）。 */
+function outOfScopeLine(stdout) {
+  return stdout.split('\n').find((l) => /out-of-scope/.test(l));
+}
+
+describe('D34 · 基线回查：入口后在磁盘上被隐藏的越界改动（B10b）', () => {
+  // B10b 复现核心：入口时就存在的未跟踪文件，入口后被 exclude / .gitignore 收走再改写，
+  // 会同时从 `git diff HEAD` 与 `ls-files --others` 消失。D27 只补「已删除」的路径，
+  // 这种改写原先完全不可见（advance 报 light_archived）。D34 把仍在磁盘的 baseline 路径
+  // 记为 M 候选，哈希变了即走范围检查。
+
+  it('(a) 入口后把 other/ 写进 .git/info/exclude 再改写 note.txt → out-of-scope 升档', () => {
+    initGitRepo();
+    commitFiles({ 'a.txt': 'v0\n' });
+    write('other/note.txt', 'v1\n'); // 入口前既有的未跟踪越界文件 → 进 baseline
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id: 'light-d34-exclude',
+      scope: 'a.txt',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    write('a.txt', 'v1\n'); // 范围内的正常改动
+    addGitInfoExclude(['other/']); // 入口后忽略 other/
+    write('other/note.txt', 'v2\n'); // 再改写 → 哈希与 baseline 不同
+    assert.equal(gitSeesUntracked('other/note.txt'), false, 'fixture: note.txt 应已从 untracked 列表消失');
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_upgraded/);
+    assert.match(r.stdout, /out-of-scope/);
+    assert.match(r.stdout, /other\/note\.txt/);
+    assert.equal(archived('light-d34-exclude'), false);
+  });
+
+  it('(b) 入口后把 other/ 追加进 .gitignore（.gitignore 在 scope 内）→ 唯一越界项是 note.txt', () => {
+    initGitRepo();
+    commitFiles({ 'a.txt': 'v0\n', '.gitignore': '# base\n' });
+    write('other/note.txt', 'v1\n'); // 入口前既有（此时 other/ 还没被忽略）→ 进 baseline
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id: 'light-d34-gitignore',
+      scope: 'a.txt,.gitignore',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    write('a.txt', 'v1\n');
+    write('.gitignore', '# base\nother/\n'); // 范围内的正常改动 + 开始忽略 other/
+    write('other/note.txt', 'v2\n');
+    assert.equal(gitSeesUntracked('other/note.txt'), false, 'fixture: note.txt 应已从 untracked 列表消失');
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_upgraded/);
+    const oos = outOfScopeLine(r.stdout);
+    assert.ok(oos, '应报 out-of-scope');
+    assert.match(oos, /other\/note\.txt/);
+    assert.doesNotMatch(oos, /\.gitignore/, '.gitignore 在 scope 内，不应列入越界');
+    assert.equal(archived('light-d34-gitignore'), false);
+  });
+
+  it('(c) 同一文件入口后只被忽略、内容未改 → 不误报，正常归档', () => {
+    initGitRepo();
+    commitFiles({ 'a.txt': 'v0\n' });
+    write('other/note.txt', 'v1\n');
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id: 'light-d34-ignored-only',
+      scope: 'a.txt',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    write('a.txt', 'v1\n');
+    addGitInfoExclude(['other/']); // 只隐藏，不改写 → 哈希与 baseline 一致、mtime 未变
+    assert.equal(gitSeesUntracked('other/note.txt'), false, 'fixture: note.txt 应已从 untracked 列表消失');
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_archived/);
+    assert.doesNotMatch(r.stdout, /out-of-scope/);
+    assert.ok(archived('light-d34-ignored-only'));
+  });
+
+  it('(d) 入口时已脏的越界跟踪文件被 git checkout HEAD -- 还原 → out-of-scope 升档', () => {
+    initGitRepo();
+    commitFiles({ 'a.txt': 'v0\n', 'b.txt': 'v0\n' });
+    write('b.txt', '入口前的 WIP\n'); // 入口前就脏、不在 scope → 进 baseline（哈希是脏内容）
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id: 'light-d34-revert',
+      scope: 'a.txt',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    write('a.txt', 'v1\n');
+    execFileSync('git', ['checkout', 'HEAD', '--', 'b.txt'], { cwd: tmpDir }); // 丢掉范围外 WIP → 从 diff 消失
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_upgraded/);
+    assert.match(r.stdout, /out-of-scope/);
+    assert.match(r.stdout, /b\.txt/);
+    assert.equal(archived('light-d34-revert'), false);
+  });
+
+  it('(e) 金路径：入口既有的零散改动原样不动 → 仍自动归档（D34 不误报）', () => {
+    initGitRepo();
+    commitFiles({ 'a.txt': 'v0\n', 'b.txt': 'v0\n' });
+    write('b.txt', '入口前的 WIP\n'); // 入口前就脏、不在 scope、出口时未动
+    write('notes.txt', 'stray\n'); // 入口前既有的未跟踪文件、不在 scope、出口时未动
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id: 'light-d34-golden',
+      scope: 'a.txt',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    write('a.txt', 'v1\n');
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_archived/);
+    assert.doesNotMatch(r.stdout, /out-of-scope/);
+    assert.ok(archived('light-d34-golden'));
+  });
+});

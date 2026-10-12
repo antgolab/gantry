@@ -68,10 +68,18 @@
 - 不使用 `gantry advance --skip`
 - 发现范围扩大立即停手，走出口门
 
-> 威胁模型（DESIGN D18 / D29）：出口门防误操作和范围漂移，不防有意改写 `.gantry/` 的执行者。
-> - **能检测**（升档或拒绝）：只改 `light.json`、只删或只改锚定、只伪造 `## upgrade`、任何 ref 变化（commit / stash / 分支 / tag → `head-moved` / `refs-moved`）、被忽略的红线文件新增或改动（入口基线比对，不看 mtime）。
-> - **不能检测**（已知残余）：同时改写多个 `.gantry/` 文件让它们互相自洽，例如改 `light.json` 的同时重算锚定。自动归档会在 EXECUTION 写 `## archive-trace`（light.json sha256 + headSha），留作事后比对。
-> - CLI 无法判断 `intent.verify` 是否真在测试，只看它的 exit code。
+> 威胁模型（DESIGN D18 / D29 / D35）：出口门防误操作和范围漂移，不防有意改写 `.gantry/` 的执行者。
+> - **能检测**（升档或拒绝）：
+>   - 只改 `light.json`、只删或只改锚定、只伪造 `## upgrade`
+>   - 可达的本地 ref 有任何变化（commit / stash / 分支 / tag / notes / replace → `head-moved` / `refs-moved`）
+>   - 被忽略的红线文件新增、改动或删除（入口基线比对，不看 mtime）
+>   - 入口时已存在的文件（未跟踪或已脏）事后被忽略、被改、被还原或被删除（基线回查）
+> - **不能检测**（已知残余）：
+>   - 同时改写多个 `.gantry/` 文件，让它们互相自洽，例如改 `light.json` 的同时重算锚定。自动归档会在 EXECUTION 写 `## archive-trace`（light.json sha256 + headSha），留作事后比对
+>   - 改动被丢弃，或只留在不可达对象 / reflog 里（`stash drop`、commit 后 `reset --hard`、建分支再删）。这些改动不会进入被归档的代码
+>   - 在另一个 `git worktree` 里做的改动
+>   - `refs/remotes/` 下的 ref（为避免后台 fetch 误报，有意排除）
+>   - `intent.verify` 是否真在测试：CLI 只看它的 exit code
 >
 > 诚实执行是本协议的前提。
 

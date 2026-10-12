@@ -591,7 +591,8 @@ export function upgradeFromHits(projectRoot, hits) {
 /**
  * 采集 runLightGuard 的输入快照（IO 汇聚点）。
  *
- * - changedFiles = 全部脏/未跟踪文件（排除 .gantry/），并入「基线里出口时已被删除」的路径（D27）
+ * - changedFiles = 全部脏/未跟踪文件（排除 .gantry/），并入「基线里既不在 name-status 也不在
+ *   untracked 列表」的路径：已删除的计 D（D27），仍在磁盘上的计 M（D34）
  * - hashOf = 当前文件内容 sha1（不可读时抛错，由调用方转为 guard-error）
  * - createdAt / mtimeOf = 基线剔除的 mtime 上界与探针（D17）
  * - maxMtime = 基线过滤后仍存在的改动文件的最大 mtimeMs
@@ -607,14 +608,17 @@ export function collectLightGuardInput(projectRoot, { intent, baseline, startedA
     if (!statusMap.has(p)) statusMap.set(p, 'A');
   }
 
-  // D27 · N4：baseline 里的路径若在出口时已不在磁盘、且 name-status 未记为删除（未跟踪文件
-  // 被删时 git diff 与 ls-files --others 都看不到），补一条 D 记录，照常走范围检查。
+  // D27/D34 · N4/B10b：baseline 里的路径若既不在 name-status、也不在 untracked 列表里，
+  // 按磁盘存在性补一条记录 —— 已从磁盘消失的计 D（未跟踪文件被删时 git diff 与
+  // ls-files --others 都看不到），仍在磁盘上的计 M 候选（入口后把它加进 exclude / .gitignore
+  // 再改写，同样会从两个来源消失；入口时已脏的跟踪文件被 checkout 还原亦然）。
+  // 两种情况都照常走 filterByBaseline：哈希一致且 mtime ≤ createdAt 的剔除，其余进范围检查。
   for (const rel of Object.keys(baseline || {})) {
     if (statusMap.has(rel)) continue;
     if (rel === '.gantry' || rel.startsWith('.gantry/')) continue;
     let onDisk = true;
     try { onDisk = io.exists(join(projectRoot, rel)); } catch { onDisk = false; }
-    if (!onDisk) statusMap.set(rel, 'D');
+    statusMap.set(rel, onDisk ? 'M' : 'D');
   }
 
   const all = [...statusMap.keys()].filter((p) => !(p === '.gantry' || p.startsWith('.gantry/')));

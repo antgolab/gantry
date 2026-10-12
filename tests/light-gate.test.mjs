@@ -705,6 +705,71 @@ describe('D27 · 基线存在性探测（未跟踪文件被删，N4）', () => {
   });
 });
 
+describe('D34 · 基线回查：仍在磁盘、已从 name-status / untracked 双双消失的路径（B10b）', () => {
+  // 场景：入口时就存在的未跟踪文件，入口后被写进 exclude / .gitignore 再改写 —— `git diff`
+  // 与 `ls-files --others` 都看不到它，D27 的「已删除才补记录」探测不到这种越界改动。
+  // D34 把「仍在磁盘」的 baseline 路径记为 M 候选，交给 filterByBaseline 判定。
+  const gitStub = (diffStdout = '') => (args) => {
+    if (args[0] === 'diff') return { status: 0, stdout: diffStdout };
+    return { status: 0, stdout: '' }; // 含 ls-files（untracked / --ignored 均为空）
+  };
+
+  it('仍在磁盘、哈希与基线不同 → 计为 M 并被保留（参与 maxMtime，走范围检查）', () => {
+    const io = makeIo({
+      git: gitStub(),
+      exists: () => true,
+      readFile: () => Buffer.from('入口后改写的内容\n'),
+      stat: () => ({ mtimeMs: 999 }),
+    });
+    const input = collectLightGuardInput('/p', {
+      intent: { scope: ['src/'] },
+      baseline: { 'other/note.txt': sha1('入口时的内容\n') },
+      startedAt: 1000,
+      createdAt: 500,
+    }, io);
+
+    assert.deepEqual(input.changedFiles, ['other/note.txt'], 'M 候选应进入 changedFiles');
+    assert.equal(input.maxMtime, 999, '哈希与基线不同 → 不得被基线剔除');
+  });
+
+  it('仍在磁盘、哈希一致且 mtime ≤ createdAt → 仍被基线剔除（D34 不误报）', () => {
+    const content = '入口时的内容\n';
+    const io = makeIo({
+      git: gitStub(),
+      exists: () => true,
+      readFile: () => Buffer.from(content),
+      stat: () => ({ mtimeMs: 400 }),
+    });
+    const input = collectLightGuardInput('/p', {
+      intent: { scope: ['src/'] },
+      baseline: { 'other/note.txt': sha1(content) },
+      startedAt: 1000,
+      createdAt: 500,
+    }, io);
+
+    assert.ok(input.changedFiles.includes('other/note.txt'), 'M 候选在 changedFiles 里（剔除发生在守卫侧）');
+    assert.equal(input.maxMtime, 0, '哈希一致 + mtime ≤ createdAt → 被 filterByBaseline 剔除');
+  });
+
+  it('已从磁盘消失的 baseline 路径仍计为 D（D27 行为不变，status 传到 testEntries）', () => {
+    const io = makeIo({
+      git: gitStub(),
+      exists: () => false,
+      readFile: () => Buffer.from('x'),
+      stat: () => { throw new Error('ENOENT'); },
+    });
+    const input = collectLightGuardInput('/p', {
+      intent: {},
+      baseline: { 'tests/gone.test.mjs': 'deadbeef' },
+      startedAt: 0,
+    }, io);
+
+    assert.ok(input.changedFiles.includes('tests/gone.test.mjs'));
+    const entry = input.testEntries.find((e) => e.path === 'tests/gone.test.mjs');
+    assert.equal(entry && entry.status, 'D');
+  });
+});
+
 describe('D30 · findForbiddenArtifacts 名单派生自 ARTIFACT_ALIASES（F-16）', () => {
   it('别名 / 小写 / 后缀变体命中；EXECUTION.md 与其别名排除', () => {
     const dir = join(tmpDir, 'chg');
