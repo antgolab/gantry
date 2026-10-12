@@ -35,7 +35,8 @@ describe('hard-rules 常量', () => {
 
   it('导出硬红线路径 glob 列表', () => {
     const globs = HARD_RULE_PATH_GLOBS.map((r) => r.glob);
-    for (const g of ['schema/*', 'migrations/*', '**/*.sql', 'prisma/*', 'api/*.ts', 'openapi.yaml', 'proto/*']) {
+    // T-FIX-10: 单段 * → ** 覆盖嵌套路径（B7）
+    for (const g of ['schema/**', 'migrations/**', '**/*.sql', 'prisma/**', 'api/**/*.ts', 'openapi.yaml', 'proto/**']) {
       assert.ok(globs.includes(g), `缺少 glob ${g}`);
     }
   });

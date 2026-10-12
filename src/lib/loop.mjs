@@ -105,6 +105,11 @@ function deriveNextFromStage(currentStage, pipelineKey) {
         if (next === 'done') return 'done';
         return `gantry-${next}`;
       }
+      // D23 / REVIEW F-04(选项 a):light 只有 fast 一个阶段(见上 CONVERGE_CONDITIONS),
+      // 走到末位且未收敛时必须给出可达的内部 token gantry-fast,否则 light 进行中
+      // driver 只会拿到 blocked + exit 2。收敛(→ done)与 blockedReason(→ blocked)
+      // 已在 computeNextStep 前置判定,此处不再重复。full 行为不变。
+      if (pipelineKey === 'light' && currentStage === 'fast') return 'gantry-fast';
       // pipeline 走到末位:交回上层判定。真正的 'done' 只能由 CONVERGE_CONDITIONS 出——
       // lastStageResult.ok !== true 时会 fall through 到 'blocked',阻止 driver
       // 在未验证 / fence 缺失场景绕过 integration AC 覆盖硬闸。

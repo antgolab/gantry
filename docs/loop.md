@@ -26,7 +26,7 @@
 ```bash
 # 只读输出下一步 token,不改任何状态
 gantry loop-next
-# → stdout: "gantry-task" / "done" / "blocked" 之一
+# → stdout: 白名单 token 之一(如 "gantry-task" / "gantry-fast" / "done" / "blocked")
 # → exit 0(推进 / done)或 exit 2(blocked)
 
 # driver 消费示例(P2 + P4)
@@ -54,11 +54,25 @@ done
 - `gantry-test`
 - `gantry-review`
 - `gantry-integration`
-- `gantry-fast` — light 管线的唯一阶段(fast)内部 token,不对应公开 skill
+- `gantry-fast` — light 管线的唯一阶段(fast)内部 token,不对应公开 skill;
+  light@fast **未收敛**时 driver 拿到的就是它(D23)
 - `done` — 已达 pipeline 收敛条件
 - `blocked` — 需要人工介入
 
 任何超出白名单的输出都会退化为 `blocked` + stderr warn。
+
+### 收敛条件
+
+`CONVERGE_CONDITIONS[pipeline]` 命中即输出 `done`(判定序第 2 步):
+
+| pipeline | 收敛条件 |
+|---|---|
+| `full` | `currentStage === 'integration'` 且 `lastStageResult.ok === true` |
+| `light` | `currentStage === 'fast'` 且 `lastStageResult.ok === true` |
+
+light 只有 `fast` 一个阶段,没有独立收尾阶段:driver 在 `light@fast` 上反复消费
+`gantry-fast`,直到出口门把 `lastStageResult.ok` 写为 true → 下一次 `loop-next`
+输出 `done`。`lastStageResult.blockedReason` 非空时仍然优先输出 `blocked`。
 
 ---
 
@@ -99,7 +113,8 @@ done
 1. `lastStageResult.blockedReason` 非空 → `blocked`
 2. `CONVERGE_CONDITIONS[pipeline]` 命中 → `done`
 3. `state.nextStep` 在白名单 → 直接返回
-4. 兜底:按 pipeline 顺序推导 `currentStage` 的后继(跳过 `ui-design` 条件阶段)
+4. 兜底:按 pipeline 顺序推导 `currentStage` 的后继(跳过 `ui-design` 条件阶段);
+   `light@fast` 走到管线末位且未收敛时返回 `gantry-fast`(D23)
 5. 上述都失败 → `blocked`
 
 ---

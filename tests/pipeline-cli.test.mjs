@@ -69,6 +69,16 @@ describe('pipeline CLI（AC-13 · 手动升档 + 禁止降档）', () => {
     );
   });
 
+  it('pipeline full 后清理 .gantry/planning/light-anchor.json（与自动升档一致）', () => {
+    startLight('anchor-clean');
+    const anchor = join(tmpDir, '.gantry/planning/light-anchor.json');
+    assert.ok(existsSync(anchor), 'light 入口应写锚定文件');
+
+    run(['pipeline', 'full']);
+
+    assert.ok(!existsSync(anchor), '手动升档应清理锚定文件');
+  });
+
   it('pipeline light → 非零退出，提示不支持降档', () => {
     startLight('down-1');
     const r = runResult(['pipeline', 'light']);

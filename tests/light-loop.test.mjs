@@ -9,9 +9,11 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { readState } from '../src/lib/state.mjs';
+import { requiresApproval } from '../src/lib/phases.mjs';
 
 const CLI = join(import.meta.dirname, '..', 'src', 'cli.mjs');
 let tmpDir;
@@ -311,5 +313,310 @@ describe('baseline · 已存在且未改动的零散文件不算越界', () => {
     assert.equal(r.status, 0);
     assert.match(r.stdout, /code: light_archived/);
     assert.ok(archived('light-base'));
+  });
+});
+
+// --- D17 / F-01 · 意图锚定：篡改 light.json 一律升档，不归档 ---
+
+function lightJsonPath(id) {
+  return join(tmpDir, '.gantry/specs', id, 'light.json');
+}
+
+function readLightJson(id) {
+  return JSON.parse(readFileSync(lightJsonPath(id), 'utf-8'));
+}
+
+function writeLightJson(id, obj) {
+  writeFileSync(lightJsonPath(id), `${JSON.stringify(obj, null, 2)}\n`, 'utf-8');
+}
+
+function anchorPath() {
+  return join(tmpDir, '.gantry/planning/light-anchor.json');
+}
+
+describe('D17 · 意图锚定（intent-tampered → 升档）', () => {
+  /** 起一个 light change 并实施一处 in-scope 改动，返回 changeId。 */
+  function setupTamper(id) {
+    initGitRepo();
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id,
+      scope: 'src/lib/foo.mjs',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    write('src/lib/foo.mjs', 'export const a = 1;\n');
+  }
+
+  it('入口后锚定文件存在且 content 为 light.json 的规范化 sha256', () => {
+    setupTamper('light-anchor-ok');
+    assert.ok(existsSync(anchorPath()), '入口应写 .gantry/planning/light-anchor.json');
+    const anchor = JSON.parse(readFileSync(anchorPath(), 'utf-8'));
+    assert.equal(anchor.changeId, 'light-anchor-ok');
+  });
+
+  it('(a) 放宽 scope → intent-tampered 升档，不归档', () => {
+    setupTamper('light-tamper-scope');
+    const lj = readLightJson('light-tamper-scope');
+    lj.intent.scope = ['migrations/'];
+    writeLightJson('light-tamper-scope', lj);
+    write('migrations/001.sql', 'DROP TABLE users;\n');
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_upgraded/);
+    assert.match(r.stdout, /intent-tampered/);
+    assert.equal(archived('light-tamper-scope'), false, '篡改不得归档');
+    assert.equal(state().currentStage, 'change');
+    assert.ok(!existsSync(anchorPath()), '升档后应清理锚定');
+  });
+
+  it('(b) 把 intent.verify 改成 true → intent-tampered 升档', () => {
+    setupTamper('light-tamper-verify');
+    const lj = readLightJson('light-tamper-verify');
+    lj.intent.verify = 'true';
+    writeLightJson('light-tamper-verify', lj);
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_upgraded/);
+    assert.match(r.stdout, /intent-tampered/);
+    assert.equal(archived('light-tamper-verify'), false);
+  });
+
+  it('(c) 注入 baseline 哈希遮蔽越界文件 → intent-tampered 升档', () => {
+    setupTamper('light-tamper-baseline');
+    write('migrations/001.sql', 'DROP TABLE users;\n');
+    const sha1 = createHash('sha1').update(readFileSync(join(tmpDir, 'migrations/001.sql'))).digest('hex');
+    const lj = readLightJson('light-tamper-baseline');
+    lj.baseline['migrations/001.sql'] = sha1;
+    writeLightJson('light-tamper-baseline', lj);
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_upgraded/);
+    assert.match(r.stdout, /intent-tampered/);
+    assert.equal(archived('light-tamper-baseline'), false);
+  });
+
+  it('(d) 删除锚定文件 → intent-tampered(anchor-missing) 升档', () => {
+    setupTamper('light-tamper-noanchor');
+    rmSync(anchorPath());
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_upgraded/);
+    assert.match(r.stdout, /intent-tampered/);
+    assert.match(r.stdout, /anchor-missing/);
+    assert.equal(archived('light-tamper-noanchor'), false);
+  });
+
+  it('未篡改的金路径仍正常收尾（锚定不误报）', () => {
+    setupTamper('light-anchor-clean');
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_archived/);
+    assert.ok(archived('light-anchor-clean'));
+    assert.ok(!existsSync(anchorPath()), '收尾后应清理锚定');
+  });
+
+  it('入口时已脏、入口后又改动的文件不被剔除 → out-of-scope 升档', () => {
+    initGitRepo();
+    run(['install', '--tool', 'claude']);
+    write('src/cli.mjs', 'old\n'); // 入口前就脏 → 进 baseline
+    startLight({
+      id: 'light-edit-after',
+      scope: 'src/lib/foo.mjs',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    write('src/lib/foo.mjs', 'export const a = 1;\n');
+    write('src/cli.mjs', 'changed again after entry\n'); // 入口后再改 → 哈希变化，必须保留
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_upgraded/);
+    assert.match(r.stdout, /out-of-scope/);
+    assert.equal(archived('light-edit-after'), false);
+  });
+});
+
+// --- D21 / F-02 · 改名拆成旧路径 D + 新路径 A ---
+
+function commitFiles(files) {
+  for (const [rel, content] of Object.entries(files)) write(rel, content);
+  execFileSync('git', ['add', '.'], { cwd: tmpDir });
+  execFileSync('git', ['-c', 'user.email=t@e', '-c', 'user.name=t', 'commit', '-q', '-m', 'base files'], { cwd: tmpDir });
+}
+
+describe('D21 · 改名不得绕过守卫（--no-renames：旧路径 D + 新路径 A）', () => {
+  const TEST_FILE = [
+    'import { test } from "node:test";',
+    'import assert from "node:assert";',
+    'test("a", () => { assert.ok(1); });',
+    'test("b", () => { assert.ok(2); });',
+  ].join('\n');
+
+  it('git mv tests/a.test.mjs src/a.mjs（scope 含 tests/ 与 src/）→ test-weakened 升档', () => {
+    initGitRepo();
+    commitFiles({ 'tests/a.test.mjs': `${TEST_FILE}\n` });
+    mkdirSync(join(tmpDir, 'src'), { recursive: true });
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id: 'light-rename-test',
+      scope: 'tests/,src/',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    execFileSync('git', ['mv', 'tests/a.test.mjs', 'src/a.mjs'], { cwd: tmpDir });
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_upgraded/);
+    assert.match(r.stdout, /test-weakened/);
+    assert.match(r.stdout, /tests\/a\.test\.mjs/);
+    assert.equal(archived('light-rename-test'), false);
+  });
+
+  it('git mv openapi.yaml spec.txt（scope 含两者）→ 红线升档', () => {
+    initGitRepo();
+    commitFiles({ 'openapi.yaml': 'openapi: 3.0.0\n' });
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id: 'light-rename-contract',
+      scope: 'openapi.yaml,spec.txt',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    execFileSync('git', ['mv', 'openapi.yaml', 'spec.txt'], { cwd: tmpDir });
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_upgraded/);
+    assert.match(r.stdout, /contract-change/);
+    assert.equal(archived('light-rename-contract'), false);
+  });
+
+  it('范围内普通非测试、非红线文件改名 → 正常归档（不误报）', () => {
+    initGitRepo();
+    commitFiles({ 'src/old.mjs': 'export const x = 1;\n' });
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id: 'light-rename-plain',
+      scope: 'src/',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    execFileSync('git', ['mv', 'src/old.mjs', 'src/new.mjs'], { cwd: tmpDir });
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_archived/);
+    assert.ok(archived('light-rename-plain'));
+  });
+});
+
+// --- D21 / F-05 · 依赖增量结构化比对 ---
+
+describe('D21 · 依赖增量结构化比对（长依赖表末尾追加也不漏）', () => {
+  it('25 项依赖末尾追加一项 → dep-change 升档', () => {
+    initGitRepo();
+    const deps = {};
+    for (let i = 1; i <= 25; i += 1) deps[`pkg${i}`] = `^${i}.0.0`;
+    commitFiles({ 'package.json': `${JSON.stringify({ name: 'demo', dependencies: deps }, null, 2)}\n` });
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id: 'light-dep-append',
+      scope: 'package.json',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    write('package.json', `${JSON.stringify({ name: 'demo', dependencies: { ...deps, 'left-pad': '^1.3.0' } }, null, 2)}\n`);
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_upgraded/);
+    assert.match(r.stdout, /dep-change/);
+    assert.equal(archived('light-dep-append'), false);
+  });
+});
+
+// --- D20 / F-03 · 预置 full 工件不得顶替升档初稿 ---
+
+describe('F-03 · 预置「待澄清=无」的 PROPOSAL 不得顶替升档初稿（D20）', () => {
+  it('预置 PROPOSAL + 红线改动 → 升档后 change 门禁仍锁，第二次 advance 停在 change', () => {
+    initGitRepo();
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id: 'light-f03',
+      scope: 'migrations/',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    // 执行者在 light 期间预置一份「待澄清=无」的 PROPOSAL —— F-03 复现前提
+    write('.gantry/specs/light-f03/PROPOSAL.md', '# PROPOSAL: 预置\n\n## 待澄清问题\n\n无\n');
+    write('migrations/001.sql', 'SELECT 1;\n'); // 范围内的红线改动
+
+    const r1 = runResult(['advance']);
+    assert.equal(r1.status, 0);
+    assert.match(r1.stdout, /code: light_upgraded/);
+    assert.match(r1.stdout, /forbidden-artifact/);
+
+    const specsDir = join(tmpDir, '.gantry/specs/light-f03');
+    // 升档初稿落在规范名上 → change 门禁读到 1 条未勾选待澄清项，保持锁
+    assert.equal(requiresApproval('change', specsDir), true, 'change 门禁必须保持锁');
+    assert.ok(existsSync(join(specsDir, 'PROPOSAL.pre-light.md')), '预置 PROPOSAL 应改名保留');
+
+    // 第二次 advance 不得推进到 requirement：STATE 停在 change，非零退出
+    const r2 = runResult(['advance']);
+    assert.notEqual(r2.status, 0, '有未决问题的 change 门禁应阻断推进');
+    assert.equal(state().currentStage, 'change', 'STATE 应停在 change');
+    assert.equal(state().pipeline, 'full');
+    assert.match(r2.stderr, /unresolved question/);
+  });
+});
+
+describe('D20 · 仅有预置工件（无其他改动）→ forbidden-artifact 升档', () => {
+  it('change 目录出现 SPEC.md → 升档并列出该文件', () => {
+    initGitRepo();
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id: 'light-forbid',
+      scope: 'src/lib/foo.mjs',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    write('.gantry/specs/light-forbid/SPEC.md', '# SPEC: 预置\n');
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_upgraded/);
+    assert.match(r.stdout, /forbidden-artifact/);
+    assert.match(r.stdout, /SPEC\.md/);
+    assert.equal(state().currentStage, 'change');
+    assert.equal(
+      requiresApproval('change', join(tmpDir, '.gantry/specs/light-forbid')),
+      true,
+      '升档后 change 门禁应保持锁',
+    );
+  });
+});
+
+describe('D20 · 无预置工件的正常收尾不受影响', () => {
+  it('light change 目录只有 light.json + EXECUTION.md → 仍自动归档', () => {
+    initGitRepo();
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id: 'light-clean',
+      scope: 'src/lib/foo.mjs',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    write('src/lib/foo.mjs', 'export const a = 1;\n');
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_archived/);
+    assert.ok(archived('light-clean'));
   });
 });

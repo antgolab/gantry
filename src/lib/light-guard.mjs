@@ -38,18 +38,27 @@ export function validateIntentScope(scope) {
 }
 
 /**
- * 从改动文件里剔除「基线中已存在且哈希未变」的文件 —— 这些是本轮 light 开始前
- * 工作区里就有的零散改动,与本次无关。
- * hashOf 由调用方注入;hashOf 抛异常时保守地视为已改动(保留该文件)。
+ * 从改动文件里剔除「基线中已存在、哈希未变、且 mtime 不晚于入口时刻」的文件 ——
+ * 这些是本轮 light 开始前工作区里就有的零散改动,与本次无关。
+ *
+ * D17 收紧:剔除必须同时满足「哈希一致」与「mtime ≤ createdAt」。
+ * 只按哈希剔除的话,执行者把 baseline 改写成当前文件哈希即可让越界文件消失
+ * (F-01);mtime 判据独立于被审对象可写的 light.json,是第二道锚。
+ * 任一判据缺失 / 读取失败一律保守地保留该文件(fail-closed)。
  *
  * @param {string[]} changedFiles
  * @param {Record<string, string>} baseline - { path: sha1 }
  * @param {(path: string) => string} hashOf
+ * @param {number} [createdAt] - light 入口时刻(ms);非有限值时不做任何剔除
+ * @param {(path: string) => number} [mtimeOf] - 文件 mtime(ms);缺失 / 抛错 → 保留
  * @returns {string[]} 保留的(真正属于本次的)改动文件
  */
-export function filterByBaseline(changedFiles, baseline, hashOf) {
+export function filterByBaseline(changedFiles, baseline, hashOf, createdAt, mtimeOf) {
   const files = Array.isArray(changedFiles) ? changedFiles : [];
   if (typeof hashOf !== 'function' || !isPlainObject(baseline)) return files.slice();
+
+  const hasCreatedAt = Number.isFinite(createdAt);
+  const canStat = typeof mtimeOf === 'function';
 
   const kept = [];
   for (const file of files) {
@@ -65,7 +74,23 @@ export function filterByBaseline(changedFiles, baseline, hashOf) {
       kept.push(file);
       continue;
     }
-    if (hash !== baseline[file]) kept.push(file);
+    if (hash !== baseline[file]) {
+      kept.push(file);
+      continue;
+    }
+    // 哈希一致 —— 还需 mtime ≤ createdAt 才允许剔除
+    if (!hasCreatedAt || !canStat) {
+      kept.push(file);
+      continue;
+    }
+    let mtime;
+    try {
+      mtime = mtimeOf(file);
+    } catch {
+      kept.push(file);
+      continue;
+    }
+    if (!Number.isFinite(mtime) || mtime > createdAt) kept.push(file);
   }
   return kept;
 }
@@ -107,9 +132,13 @@ export function checkScope(files, scope) {
  * 检测测试弱化(R5.3)。
  * 仅测试路径参与;命中条件:
  * - 测试文件被删除(status 'D')
- * - 测试文件被修改(status 'M')且 after 的断言 token 数 < before
+ * - 测试文件被修改(status 'M')且断言 token 数**或**用例 token 数净减少(D21 · B8)
  * 新增文件(status 'A')与新增断言永远不算弱化。
- * token 计数 = 断言 token(`assert` 词 / `expect(`)+ 用例声明 token(`it(` / `test(`)。
+ *
+ * token 分两类分别计数(D21 · B8):把「断言 token」和「用例声明 token」合并计数时,
+ * 用 2 个空 `test()` 顶替 2 个真实断言会让总数不变而漏判;分开统计后断言数 2 → 0 即命中。
+ * - 断言 token:`assert` 词 / `assert.` / `expect(`
+ * - 用例 token:`it(` / `test(`
  *
  * @param {Array<{ path: string, status: string, before: string|null, after: string|null }>} entries
  * @param {(path: string) => boolean} isTestPath
@@ -128,9 +157,10 @@ export function detectTestWeakening(entries, isTestPath) {
       files.add(entry.path);
       continue;
     }
-    if (entry.status === 'M' && countTestTokens(entry.after) < countTestTokens(entry.before)) {
-      files.add(entry.path);
-    }
+    if (entry.status !== 'M') continue;
+    const assertionsDown = countAssertions(entry.after) < countAssertions(entry.before);
+    const casesDown = countCases(entry.after) < countCases(entry.before);
+    if (assertionsDown || casesDown) files.add(entry.path);
   }
   return { hit: files.size > 0, files: [...files] };
 }
@@ -138,6 +168,10 @@ export function detectTestWeakening(entries, isTestPath) {
 /**
  * 校验 verify 证据是否新鲜。
  * 仅当记录存在、pass 为 true、且时间戳不早于最后一次代码修改时才算通过。
+ *
+ * 口径(D24):verifyRecord 由 CLI 当场执行 verify 时合成(at = 启动时间),所以正常路径下恒新鲜;
+ * 这一项实际探测的是「verify 命令是否改写了工作区」。maxMtime 只覆盖基线过滤后仍存在的文件,
+ * 删除的文件不参与。
  *
  * @param {{ pass: boolean, at: number }|null|undefined} verifyRecord
  * @param {number} maxMtime - 本次改动文件的最大 mtime(ms)
@@ -164,6 +198,8 @@ export function checkVerifyFresh(verifyRecord, maxMtime) {
  * @param {string[]} input.changedFiles
  * @param {Record<string, string>} input.baseline
  * @param {(path: string) => string} input.hashOf
+ * @param {number} [input.createdAt] - light 入口时刻(ms),基线剔除的 mtime 上界(D17)
+ * @param {(path: string) => number} [input.mtimeOf] - 文件 mtime 探针(ms),由调用方注入
  * @param {Array<object>} input.testEntries
  * @param {{ pass: boolean, at: number }|null} input.verifyRecord
  * @param {number} input.maxMtime
@@ -185,8 +221,10 @@ export function runLightGuard(input) {
       hits.push({ ruleId: 'intent-scope-invalid', files: [] });
     }
 
-    // ② 扣除基线中哈希未变的文件
-    const files = filterByBaseline(input.changedFiles, input.baseline, input.hashOf);
+    // ② 扣除基线中哈希未变且 mtime ≤ createdAt 的文件(D17)
+    const files = filterByBaseline(
+      input.changedFiles, input.baseline, input.hashOf, input.createdAt, input.mtimeOf,
+    );
 
     // ③ 越界检查
     const scopeCheck = checkScope(files, input.scope);
@@ -256,12 +294,22 @@ function pickRuleIds(red) {
   return ['red-line'];
 }
 
-const TEST_TOKEN_RE = /(?:\bassert\b|\bexpect\s*\(|\bit\s*\(|\btest\s*\()/g;
+// D21 · B8：断言 token 与用例 token 分开计
+const ASSERT_TOKEN_RE = /(?:\bassert\b|\bexpect\s*\()/g;
+const CASE_TOKEN_RE = /(?:\bit\s*\(|\btest\s*\()/g;
 
-function countTestTokens(text) {
+function countTokens(text, re) {
   if (typeof text !== 'string') return 0;
-  const matched = text.match(TEST_TOKEN_RE);
+  const matched = text.match(re);
   return matched ? matched.length : 0;
+}
+
+function countAssertions(text) {
+  return countTokens(text, ASSERT_TOKEN_RE);
+}
+
+function countCases(text) {
+  return countTokens(text, CASE_TOKEN_RE);
 }
 
 function scopeGlobToRegExp(glob) {

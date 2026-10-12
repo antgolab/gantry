@@ -36,6 +36,11 @@ function hashOf() {
   return 'h';
 }
 
+// 默认 mtime 探针:恒为 500ms(早于 createdAt=1000ms → 允许剔除)
+function mtimeOf() {
+  return 500;
+}
+
 /**
  * 构造一份「全干净」的 runLightGuard 输入,各用例按需覆写字段。
  */
@@ -45,6 +50,8 @@ function cleanInput(overrides = {}) {
     changedFiles: ['src/lib/foo.mjs'],
     baseline: {},
     hashOf,
+    createdAt: 1000,
+    mtimeOf,
     testEntries: [],
     verifyRecord: { pass: true, at: 1000 },
     maxMtime: 500,
@@ -163,6 +170,28 @@ describe('AC-10 · detectTestWeakening', () => {
     assert.deepEqual(res.files, ['tests/a.test.mjs']);
   });
 
+  it('两个真实断言换成两个空 test() → 命中（断言数单独计，D21 · B8）', () => {
+    const before = 'it("a", () => { assert.ok(1); }); it("b", () => { assert.equal(1, 1); });';
+    const after = 'test("a", () => {}); test("b", () => {});';
+    const res = detectTestWeakening(
+      [{ path: 'tests/a.test.mjs', status: 'M', before, after }],
+      isTestPath,
+    );
+    assert.equal(res.hit, true);
+    assert.deepEqual(res.files, ['tests/a.test.mjs']);
+  });
+
+  it('用例数减少（断言数不变）→ 命中（用例 token 单独计，D21 · B8）', () => {
+    const before = 'it("a", () => { assert.ok(1); }); it("b", () => { assert.ok(2); });';
+    const after = 'it("a", () => { assert.ok(1); assert.ok(2); });';
+    const res = detectTestWeakening(
+      [{ path: 'tests/a.test.mjs', status: 'M', before, after }],
+      isTestPath,
+    );
+    assert.equal(res.hit, true);
+    assert.deepEqual(res.files, ['tests/a.test.mjs']);
+  });
+
   it('新增断言 → 不命中', () => {
     const before = 'it("a", () => { assert.ok(1); });';
     const after = 'it("a", () => { assert.ok(1); assert.equal(1, 1); }); it("b", () => {});';
@@ -232,20 +261,29 @@ describe('AC-11 · checkVerifyFresh', () => {
   });
 });
 
-// --- 基线过滤(D6) ---
+// --- 基线过滤(D6 · D17 收紧) ---
 
 describe('基线过滤 · filterByBaseline', () => {
-  it('基线中哈希未变的文件被剔除', () => {
+  it('哈希一致且 mtime ≤ createdAt 的文件被剔除', () => {
     const kept = filterByBaseline(
       ['src/a.mjs', 'src/b.mjs'],
       { 'src/a.mjs': 'h' },
       (path) => (path === 'src/a.mjs' ? 'h' : 'x'),
+      1000,
+      () => 500,
     );
     assert.deepEqual(kept, ['src/b.mjs']);
   });
 
+  it('哈希一致的基线文件 mtime 晚于 createdAt → 保留（D17 主判据）', () => {
+    // 改写 baseline 让哈希等于当前值(mtime > createdAt)是 F-01 的绕过手法:
+    // 只有哈希一致不足以剔除,必须再满足 mtime ≤ createdAt。
+    const kept = filterByBaseline(['src/a.mjs'], { 'src/a.mjs': 'h' }, () => 'h', 1000, () => 2000);
+    assert.deepEqual(kept, ['src/a.mjs']);
+  });
+
   it('基线中哈希已变的文件被保留', () => {
-    const kept = filterByBaseline(['src/a.mjs'], { 'src/a.mjs': 'old' }, () => 'new');
+    const kept = filterByBaseline(['src/a.mjs'], { 'src/a.mjs': 'old' }, () => 'new', 1000, () => 500);
     assert.deepEqual(kept, ['src/a.mjs']);
   });
 
@@ -254,8 +292,18 @@ describe('基线过滤 · filterByBaseline', () => {
       ['src/a.mjs'],
       { 'src/a.mjs': 'h' },
       () => { throw new Error('EIO'); },
+      1000,
+      () => 500,
     );
     assert.deepEqual(kept, ['src/a.mjs']);
+  });
+
+  it('mtimeOf 抛异常 / createdAt 缺失时保留该文件（fail-closed）', () => {
+    const throws = filterByBaseline(['src/a.mjs'], { 'src/a.mjs': 'h' }, () => 'h', 1000, () => { throw new Error('ENOENT'); });
+    assert.deepEqual(throws, ['src/a.mjs']);
+
+    const noCreatedAt = filterByBaseline(['src/a.mjs'], { 'src/a.mjs': 'h' }, () => 'h', undefined, () => 500);
+    assert.deepEqual(noCreatedAt, ['src/a.mjs']);
   });
 
   it('基线未变文件经 runLightGuard 不产生 out-of-scope', () => {
@@ -267,6 +315,20 @@ describe('基线过滤 · filterByBaseline', () => {
     }));
     assert.equal(res.passed, true);
     assert.deepEqual(res.hits, []);
+  });
+
+  it('基线文件哈希一致但 mtime 晚于 createdAt → 经 runLightGuard 命中 out-of-scope', () => {
+    const res = runLightGuard(cleanInput({
+      scope: ['src/lib/foo.mjs'],
+      changedFiles: ['src/lib/foo.mjs', 'docs/old.md'],
+      baseline: { 'docs/old.md': 'h' },
+      hashOf: () => 'h',
+      mtimeOf: (p) => (p === 'docs/old.md' ? 5000 : 500),
+    }));
+    assert.equal(res.passed, false);
+    const hit = res.hits.find((h) => h.ruleId === 'out-of-scope');
+    assert.ok(hit);
+    assert.deepEqual(hit.files, ['docs/old.md']);
   });
 });
 

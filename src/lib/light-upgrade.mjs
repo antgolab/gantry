@@ -9,17 +9,21 @@
  * - 只读 `.gantry/specs/<id>/light.json`(由 CLI 在 light 入口写入,升档过程不改写),
  *   并把 PROPOSAL / EXECUTION / STATE 写入 `.gantry/` 内。绝不触碰工作区代码,
  *   不执行任何 git 命令。
- * - 已有 PROPOSAL 时绝不覆盖(禁止静默覆盖旧事实),改写 `PROPOSAL.upgrade.md`。
+ * - 初稿一律写规范名 `PROPOSAL.md`(D20 —— change 门禁只读规范名)。已有提案绝不覆盖,
+ *   改名为 `PROPOSAL.pre-light.md`(占用则 `.pre-light.2.md`,依次递增)保留旧事实。
  * - light.json 缺失(存量 light / legacy 手动升档)不是错误:intent 按空对象降级。
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { SPECS_DIR } from './paths.mjs';
-import { getPreferredArtifactName, artifactExists, resolveArtifactPath } from './artifacts.mjs';
+import { resolveArtifactPath } from './artifacts.mjs';
 import { readState, updateState } from './state.mjs';
 
-const UPGRADE_PROPOSAL_NAME = 'PROPOSAL.upgrade.md';
+/** 升档初稿的规范名(change 门禁读它)。 */
+const PROPOSAL_NAME = 'PROPOSAL.md';
+/** 既有提案改名保留时的前缀(D20)。 */
+const PRE_LIGHT_BASE = 'PROPOSAL.pre-light';
 
 /**
  * 渲染升档用 PROPOSAL 初稿(纯函数)。
@@ -131,7 +135,7 @@ ${acceptLines.join('\n')}
  * 步骤(见 TASKS T05 / DESIGN D13):
  *   1. readState(readState 可能已做过存量归一化);无 activeChange 抛错;已是 full 抛错。
  *   2. 读 light.json(缺失 → intent={} 继续,覆盖 legacy 手动升档)。
- *   3. 写 PROPOSAL;已存在则不覆盖,改写 PROPOSAL.upgrade.md。
+ *   3. 写规范名 PROPOSAL.md;已有提案改名为 PROPOSAL.pre-light[.N].md 保留(D20)。
  *   4. 追加 EXECUTION 的 `## upgrade` 段(缺失则创建)。
  *   5. updateState → full@change / planner / 清 pauseReason 与 retries。
  *
@@ -160,10 +164,14 @@ export function upgradeToFull(projectRoot, { source, hits } = {}) {
   const changeDir = join(projectRoot, SPECS_DIR, changeId);
   mkdirSync(changeDir, { recursive: true });
 
-  const proposalName = getPreferredArtifactName('proposal');
-  const proposalPath = artifactExists(changeDir, 'proposal')
-    ? join(changeDir, UPGRADE_PROPOSAL_NAME)
-    : join(changeDir, proposalName);
+  // D20 · F-03：初稿一律写规范名 PROPOSAL.md —— change 门禁（phases.mjs#requiresApproval
+  // / checkProposalReady）只读规范名。已有提案（PROPOSAL.md 或兼容别名 CHANGE.md）绝不
+  // 静默覆盖：改名为 PROPOSAL.pre-light[.N].md 保留旧事实，再把本轮初稿写到规范名上。
+  const existing = resolveArtifactPath(changeDir, 'proposal');
+  if (existing && existsSync(existing.path)) {
+    renameSync(existing.path, join(changeDir, nextPreLightName(changeDir)));
+  }
+  const proposalPath = join(changeDir, PROPOSAL_NAME);
 
   const markdown = renderUpgradeProposal({ changeId, intent, hits: hitList, source: src });
   writeFileSync(proposalPath, markdown, 'utf-8');
@@ -182,6 +190,19 @@ export function upgradeToFull(projectRoot, { source, hits } = {}) {
 }
 
 // --- 内部辅助 ---
+
+/**
+ * 为既有提案选一个空着的 `PROPOSAL.pre-light[.N].md` 文件名 —— 绝不覆盖。
+ * 首选 `PROPOSAL.pre-light.md`；被占用则 `PROPOSAL.pre-light.2.md`、`.3.md` 依次递增。
+ */
+function nextPreLightName(changeDir) {
+  const first = `${PRE_LIGHT_BASE}.md`;
+  if (!existsSync(join(changeDir, first))) return first;
+  for (let n = 2; ; n += 1) {
+    const candidate = `${PRE_LIGHT_BASE}.${n}.md`;
+    if (!existsSync(join(changeDir, candidate))) return candidate;
+  }
+}
 
 /** 读 `.gantry/specs/<id>/light.json`;缺失 / 非法 JSON → 空对象(不是错误)。 */
 function readLightIntent(projectRoot, changeId) {

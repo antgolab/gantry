@@ -9,7 +9,8 @@
  *     `## 待澄清问题` 恰好 1 条未勾选；EXECUTION 追加 `## upgrade`（source: auto）；
  *     升档前后 `git diff HEAD` 与 `git status --porcelain`（排除 .gantry/）逐字节一致
  *   - manual 升档且无 light.json：不报错，intent 降级为空，reason: manual
- *   - 已有 PROPOSAL 不覆盖：改写 PROPOSAL.upgrade.md，原文件字节不变
+ *   - 已有 PROPOSAL 改名保留：旧 PROPOSAL.md → PROPOSAL.pre-light.md（内容不变），
+ *     规范名 PROPOSAL.md 写本轮初稿（D20 · F-03）；.pre-light.md 已占用则 .2 递增
  *   - 已是 full → 抛错（含「已是 full」）；无活跃 change → 抛错
  *   - renderUpgradeProposal 空 intent 不抛错且仍有 1 条未勾选待澄清项
  */
@@ -190,14 +191,18 @@ describe('upgradeToFull · manual（AC-13）', () => {
   });
 });
 
-describe('upgradeToFull · 已有 PROPOSAL 不覆盖', () => {
-  it('改写 PROPOSAL.upgrade.md，原 PROPOSAL.md 字节不变', () => {
+describe('upgradeToFull · 预置 PROPOSAL 改名保留（D20 · F-03）', () => {
+  // D20: 预置 PROPOSAL 会顶替升档初稿（F-03）。
+  // 旧语义「已有 PROPOSAL.md 时改写 PROPOSAL.upgrade.md」已 drop —— change 门禁只读
+  // 规范名 PROPOSAL.md，初稿落到 .upgrade.md 会让门禁读到旧的「待澄清=无」而放行。
+  // replacement：初稿一律写规范名，旧件改名为 PROPOSAL.pre-light.md 保留。
+  it('旧 PROPOSAL.md 改名为 PROPOSAL.pre-light.md（内容不变），规范名写初稿', () => {
     const root = makeRoot();
     const changeId = 'has-proposal';
     writeStateFixture(root, { pipeline: 'light', activeChange: changeId, currentStage: 'fast' });
     const changeDir = writeLightJson(root, changeId, { goal: '改点东西', scope: ['src/a.mjs'] });
 
-    const original = '# PROPOSAL: 旧事实，别覆盖我\n\n- **Change ID**: has-proposal\n';
+    const original = '# PROPOSAL: 旧事实，别覆盖我\n\n## 待澄清问题\n\n无\n';
     writeFileSync(join(changeDir, 'PROPOSAL.md'), original, 'utf-8');
 
     const result = upgradeToFull(root, {
@@ -205,9 +210,44 @@ describe('upgradeToFull · 已有 PROPOSAL 不覆盖', () => {
       hits: [{ ruleId: 'out-of-scope', files: ['src/b.mjs'] }],
     });
 
-    assert.match(result.proposalPath, /PROPOSAL\.upgrade\.md$/);
-    assert.ok(existsSync(join(changeDir, 'PROPOSAL.upgrade.md')));
-    assert.equal(readFileSync(join(changeDir, 'PROPOSAL.md'), 'utf-8'), original, '旧 PROPOSAL 不得被覆盖');
+    // 规范名承载本轮初稿
+    assert.match(result.proposalPath, /PROPOSAL\.md$/);
+    assert.ok(existsSync(join(changeDir, 'PROPOSAL.md')));
+    assert.ok(!existsSync(join(changeDir, 'PROPOSAL.upgrade.md')), '不再写 PROPOSAL.upgrade.md');
+
+    // 旧件改名保留，字节不变
+    assert.ok(existsSync(join(changeDir, 'PROPOSAL.pre-light.md')), '旧 PROPOSAL 应改名保留');
+    assert.equal(
+      readFileSync(join(changeDir, 'PROPOSAL.pre-light.md'), 'utf-8'),
+      original,
+      '旧 PROPOSAL 内容不得变',
+    );
+
+    // 规范名 = 本轮初稿，恰好 1 条未勾选待澄清项（change 门禁据此保持锁）
+    const proposal = readFileSync(join(changeDir, 'PROPOSAL.md'), 'utf-8');
+    assert.ok(proposal.includes('改点东西'), '初稿应含 light 原目标');
+    assert.ok(proposal.includes('out-of-scope'), '初稿应含命中 rule id');
+    assert.equal(countOpenQuestions(proposal), 1);
+  });
+
+  it('PROPOSAL.pre-light.md 已存在 → 旧件落到 PROPOSAL.pre-light.2.md', () => {
+    const root = makeRoot();
+    const changeId = 'has-pre-light';
+    writeStateFixture(root, { pipeline: 'light', activeChange: changeId, currentStage: 'fast' });
+    const changeDir = writeLightJson(root, changeId, { goal: '再改点东西', scope: ['src/a.mjs'] });
+
+    const original = '# PROPOSAL: 这一轮要保留的旧件\n\n## 待澄清问题\n\n无\n';
+    const olderPreLight = '# PROPOSAL: 更早的一版\n';
+    writeFileSync(join(changeDir, 'PROPOSAL.md'), original, 'utf-8');
+    writeFileSync(join(changeDir, 'PROPOSAL.pre-light.md'), olderPreLight, 'utf-8');
+
+    const result = upgradeToFull(root, { source: 'manual' });
+
+    assert.match(result.proposalPath, /PROPOSAL\.md$/);
+    // .pre-light.md 被占用 → 递增到 .2，两件旧事实都不得被覆盖
+    assert.equal(readFileSync(join(changeDir, 'PROPOSAL.pre-light.md'), 'utf-8'), olderPreLight);
+    assert.equal(readFileSync(join(changeDir, 'PROPOSAL.pre-light.2.md'), 'utf-8'), original);
+    assert.equal(countOpenQuestions(readFileSync(join(changeDir, 'PROPOSAL.md'), 'utf-8')), 1);
   });
 });
 

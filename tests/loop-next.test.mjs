@@ -47,7 +47,9 @@ test('AC-1/AC-3 · light pipeline 在 fast + ok 时 done', () => {
   assert.equal(computeNextStep(state), 'done');
 });
 
-test('AC-1/AC-3 · light pipeline 在 fast 但 ok 非 true 时不 done', () => {
+test('AC-1/AC-3 · light pipeline 在 fast 但 ok 非 true 时不 done → gantry-fast', () => {
+  // D23 / REVIEW F-04(选项 a):light@fast 未收敛时不再返回停滞 token,
+  // 而是给出可达的内部 token gantry-fast(driver 靠它继续派发 fast 阶段)。
   for (const lastStageResult of [null, { ok: false, blockedReason: null }]) {
     const state = makeState({
       pipeline: 'light',
@@ -55,8 +57,35 @@ test('AC-1/AC-3 · light pipeline 在 fast 但 ok 非 true 时不 done', () => {
       lastStageResult,
     });
     assert.notEqual(computeNextStep(state), 'done', `lastStageResult=${JSON.stringify(lastStageResult)} 不应收敛`);
-    assert.equal(computeNextStep(state), 'blocked');
+    assert.equal(computeNextStep(state), 'gantry-fast');
   }
+});
+
+test('AC-1/D23 · light@fast 未收敛 → gantry-fast(显式形态)', () => {
+  const state = makeState({
+    pipeline: 'light',
+    currentStage: 'fast',
+    lastStageResult: null,
+  });
+  assert.equal(computeNextStep(state), 'gantry-fast');
+});
+
+test('AC-1/D23 · light@fast 收敛(ok=true) → done,优先于 gantry-fast', () => {
+  const state = makeState({
+    pipeline: 'light',
+    currentStage: 'fast',
+    lastStageResult: { ok: true, blockedReason: null },
+  });
+  assert.equal(computeNextStep(state), 'done');
+});
+
+test('AC-4/D23 · light@fast 带 blockedReason → blocked,优先于 done / gantry-fast', () => {
+  const state = makeState({
+    pipeline: 'light',
+    currentStage: 'fast',
+    lastStageResult: { ok: true, blockedReason: 'needs human decision' },
+  });
+  assert.equal(computeNextStep(state), 'blocked');
 });
 
 test('AC-3 · full 未到 integration 时按 pipeline 顺序推进(design → task)', () => {

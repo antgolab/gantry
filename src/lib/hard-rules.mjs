@@ -62,15 +62,22 @@ export const HARD_RULE_KEYWORDS = [
 /**
  * 硬红线路径 glob: 变更文件路径命中任一 glob 即判定命中。
  * glob 语义对齐 minimatch 子集: `*` 不跨 `/`, `**` 跨 `/`, 其余元字符按字面转义。
+ *
+ * 目录类 glob 一律用 `dir/**`(而非 `dir/*`),以覆盖嵌套路径
+ * (`migrations/2026/001.ts`、`prisma/sub/x.prisma` 也须命中, REVIEW B7)。
+ * `api` 下的 ts 规则写成「api + 双星段 + *.ts」: 双星段夹在两个 `/` 之间允许 0 层目录,
+ * 故 `api/users.ts` 与 `api/v1/users.ts` 同时命中。
  */
 export const HARD_RULE_PATH_GLOBS = [
-  { ruleId: 'schema-change', glob: 'schema/*' },
-  { ruleId: 'migration-change', glob: 'migrations/*' },
+  { ruleId: 'schema-change', glob: 'schema/**' },
+  { ruleId: 'migration-change', glob: 'migrations/**' },
   { ruleId: 'sql-change', glob: '**/*.sql' },
-  { ruleId: 'schema-change', glob: 'prisma/*' },
-  { ruleId: 'contract-change', glob: 'api/*.ts' },
+  // `**/*.sql` 译为 `^.*/[^/]*\.sql$`,要求至少一个 `/`;根目录 .sql 需单独一条
+  { ruleId: 'sql-change', glob: '*.sql' },
+  { ruleId: 'schema-change', glob: 'prisma/**' },
+  { ruleId: 'contract-change', glob: 'api/**/*.ts' },
   { ruleId: 'contract-change', glob: 'openapi.yaml' },
-  { ruleId: 'contract-change', glob: 'proto/*' },
+  { ruleId: 'contract-change', glob: 'proto/**' },
 ];
 
 /**

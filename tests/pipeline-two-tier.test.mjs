@@ -14,7 +14,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSyn
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PIPELINES, checkGate } from '../src/lib/phases.mjs';
-import { CONVERGE_CONDITIONS, WHITELIST } from '../src/lib/loop.mjs';
+import { CONVERGE_CONDITIONS, WHITELIST, computeNextStep } from '../src/lib/loop.mjs';
 
 const LIB_DIR = join(import.meta.dirname, '..', 'src', 'lib');
 
@@ -55,6 +55,42 @@ test('AC-1 · WHITELIST 含 gantry-fast，且无 micro 相关 token', () => {
     assert.ok(!/micro/i.test(token), `WHITELIST 不应含 micro token: ${token}`);
   }
   assert.ok(Object.isFrozen(WHITELIST), 'WHITELIST 必须保持冻结');
+});
+
+test('AC-1/D23 · WHITELIST 中除 blocked 外每个 token 都由 computeNextStep 可达', () => {
+  // F-04 的教训:只断言 WHITELIST「含」某 token 发现不了死 token。
+  // 这里对每个 token 反查一条能产出它的 state —— 白名单是 driver 的契约面,
+  // 任何一个 token 不可达都意味着契约说谎(blocked 是兜底失败态,不在此列)。
+  const witnesses = {
+    'gantry-change': { pipeline: 'full', currentStage: 'idle' },
+    'gantry-requirement': { pipeline: 'full', currentStage: 'change' },
+    'gantry-design': { pipeline: 'full', currentStage: 'requirement' },
+    'gantry-task': { pipeline: 'full', currentStage: 'design' },
+    'gantry-dev': { pipeline: 'full', currentStage: 'task' },
+    'gantry-test': { pipeline: 'full', currentStage: 'dev' },
+    'gantry-review': { pipeline: 'full', currentStage: 'test' },
+    'gantry-integration': { pipeline: 'full', currentStage: 'review' },
+    // D23:light 只有 fast 一个阶段,未收敛正是靠这条产生 gantry-fast。
+    'gantry-fast': { pipeline: 'light', currentStage: 'fast' },
+    done: { pipeline: 'light', currentStage: 'fast', lastStageResult: { ok: true } },
+  };
+
+  const reachable = new Set();
+  for (const [token, state] of Object.entries(witnesses)) {
+    const produced = computeNextStep({
+      nextStep: null,
+      currentWave: null,
+      previousWave: null,
+      lastStageResult: null,
+      ...state,
+    });
+    assert.equal(produced, token, `state ${JSON.stringify(state)} 应产出 ${token}, 实际 ${produced}`);
+    reachable.add(produced);
+  }
+
+  const expected = WHITELIST.filter((t) => t !== 'blocked');
+  const missing = expected.filter((t) => !reachable.has(t));
+  assert.deepEqual(missing, [], `以下白名单 token 无任何 state 可达(死 token): ${missing.join(', ')}`);
 });
 
 test('AC-5 · fast 门禁：缺 light.json 时 hard block', () => {

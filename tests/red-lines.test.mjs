@@ -86,6 +86,37 @@ describe('detectHardRuleHit · ruleIds 集合 / files', () => {
   });
 });
 
+describe('T-FIX-10 (B7) · 红线目录 glob 覆盖嵌套路径', () => {
+  const nestedPositives = [
+    ['migrations/2026/001.ts', 'migration-change'],
+    ['prisma/sub/x.prisma', 'schema-change'],
+    ['proto/v1/a.proto', 'contract-change'],
+    ['api/v1/users.ts', 'contract-change'],
+    // 根目录 .sql:`**/*.sql` 要求至少一个 `/`,由单独的 `*.sql` 覆盖
+    ['001.sql', 'sql-change'],
+  ];
+  for (const [file, ruleId] of nestedPositives) {
+    it(`嵌套路径 ${file} → ${ruleId}`, () => {
+      const r = detectHardRuleHit(snap({ modifiedFiles: [file] }), 'chore');
+      assert.equal(r.hit, true, `未命中,实际 ruleIds=${JSON.stringify(r.ruleIds)}`);
+      assert.ok(
+        r.ruleIds.includes(ruleId),
+        `ruleIds=${JSON.stringify(r.ruleIds)} 应包含 ${ruleId}`,
+      );
+    });
+  }
+
+  // 锚定在 `dir/` 前缀,相似名的非红线路径不得被误伤。
+  const lookalikes = ['src/migrations-helper.mjs', 'docs/schema.md'];
+  for (const file of lookalikes) {
+    it(`相似路径 ${file} 不命中 schema-change / migration-change`, () => {
+      const r = detectHardRuleHit(snap({ modifiedFiles: [file] }), 'chore');
+      assert.ok(!r.ruleIds.includes('schema-change'), `误命中 schema-change: ${JSON.stringify(r.ruleIds)}`);
+      assert.ok(!r.ruleIds.includes('migration-change'), `误命中 migration-change: ${JSON.stringify(r.ruleIds)}`);
+    });
+  }
+});
+
 describe('D11 · 跨模块排除测试与文档路径', () => {
   it('代码 + 测试 + 文档三处 → 不命中跨模块', () => {
     const r = detectHardRuleHit(

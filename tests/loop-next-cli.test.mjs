@@ -121,7 +121,10 @@ test('AC-1/AC-5 · light pipeline · fast + ok → done', () => {
   }
 });
 
-test('AC-1/AC-5 · light pipeline · fast 未 ok → blocked, exit 2', () => {
+test('AC-1/AC-5 · light pipeline · fast 未 ok → gantry-fast, exit 0', () => {
+  // D23: light 未收敛时 gantry-fast 可达。
+  // 旧期望(blocked + exit 2)已被 D23 选项 (a) 取代 —— 让白名单 token 全部可达,
+  // light 进行中 driver 不再被判为「需要人工介入」。
   const root = makeProject(
     { pipeline: 'light', currentStage: 'fast', activeChange: 'demo' },
     { nextStep: null, lastStageResult: null, currentWave: null, previousWave: null },
@@ -129,8 +132,9 @@ test('AC-1/AC-5 · light pipeline · fast 未 ok → blocked, exit 2', () => {
   try {
     writeLightJson(root, 'demo');
     const r = runLoopNext(root);
-    assert.equal(r.status, 2, `期望 blocked, stderr=${r.stderr}`);
-    assert.equal(r.stdout.trim(), 'blocked');
+    assert.equal(r.status, 0, `期望 exit 0, stderr=${r.stderr}`);
+    assert.equal(r.stdout.trim(), 'gantry-fast');
+    assert.ok(WHITELIST_REGEX.test(r.stdout.trim()));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -145,6 +145,14 @@
       "description": "agent / skill 说明文档改动（*.md 全部按文档排除，不命中任何红线）",
       "changedFiles": ["src/agents/executor.md", "skills/auto.md"],
       "expectRedLine": false
+    },
+    {
+      "id": "nested-migration",
+      "source": "synthetic",
+      "description": "嵌套目录下的迁移脚本（migrations/** 命中 migration-change，B7 回归样本）",
+      "changedFiles": ["migrations/2026/001_add.ts"],
+      "expectRedLine": true,
+      "expectRuleIds": ["migration-change"]
     }
   ]
 }
