@@ -163,14 +163,16 @@ gantry loop-next                     # read-only: prints the next whitelist toke
 gantry advance                       # advance one step; entry inlines loop-guard breaker
 gantry heal T02 --reason "…"         # record a DEV verify failure into EXECUTION.md
 gantry heal --check T02              # query R2.5 3-attempt ceiling
-# AC coverage hard gate runs at the integration gate; no standalone ac-gate command
+# AC coverage hard gate runs at the integration gate (fail-closed since 2026-10-12:
+# every SPEC AC must be covered by a `covers` entry in .gantry/loop/test-commands.yml,
+# which `gantry install` seeds as a commented template); no standalone ac-gate command
 ```
 
 ### Unattended Convergence Loop
 
-`gantry loop` is a self-driving convergence engine built on the state machine. `bash .gantry/loop/loop.sh <client>` (client ∈ `claude` | `codex`) reads `STATE.md`, dispatches each phase to a headless AI via `dispatch-<client>.sh`, calls `gantry advance` per iteration, and stops on `done` / `blocked` / stuck detection. See:
+`gantry loop` is a self-driving convergence engine built on the state machine. `gantry loop <client> [--quiet]` (client ∈ `claude` | `codex`) reads `STATE.md`, dispatches each phase to a headless AI via `dispatch-<client>.sh`, calls `gantry advance` per iteration, and stops on `done` / `blocked` / stuck detection. Output is fully streamed by default (`--quiet` collapses it to one summary line per step), and dispatch / advance failures are retried with backoff up to `config.autonomous.maxRetries`, carrying the failure context back into the AI prompt — `advance rc=2` is a hard stop and is never retried. See:
 
-- [`docs/loop.md`](docs/loop.md) — driver contract, whitelist tokens, fence layout, `state-must-advance`
+- [`docs/loop.md`](docs/loop.md) — driver contract, whitelist tokens, fence layout, `state-must-advance`, output discipline and retry semantics
 - [`docs/loop-guard.md`](docs/loop-guard.md) — context / step-budget circuit breakers (now inlined into `gantry advance`)
 - [`docs/self-heal.md`](docs/self-heal.md) — `EXECUTION.md ## Self-Heal Log` buffer, R2.5 ceiling, integration AC gate
 

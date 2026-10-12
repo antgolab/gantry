@@ -1109,6 +1109,9 @@ async function install(args) {
     console.log(`  状态: ${PLANNING_DIR}/ 已存在，保留当前状态`);
   }
   if (result.items.length > 1) console.log(`  总文件: ${result.total} 个`);
+  if (initResult?.testCommandsSeeded) {
+    console.log(`  AC 覆盖模板: .gantry/loop/test-commands.yml（integration 门禁的输入，需填写 covers）`);
+  }
   if (!globalMode) {
     console.log(`\n下一步: gantry change "<描述你的变更>"`);
   }
@@ -1121,6 +1124,8 @@ function initializeProject(projectRoot, { pipeline, tool, primaryAgent }) {
 
   installCorePhases(projectRoot);
   installCoreAgents(projectRoot);
+  // 与 planningDir 是否新建无关:模板按文件粒度判断,已存在不覆盖。
+  const testCommandsSeeded = installTestCommandsTemplate(projectRoot);
 
   if (!created) {
     migrateLegacyPipelines(projectRoot);
@@ -1169,7 +1174,7 @@ function initializeProject(projectRoot, { pipeline, tool, primaryAgent }) {
     pauseReason: null,
   });
 
-  return { created, config };
+  return { created, config, testCommandsSeeded };
 }
 
 async function installToolsToTarget({ projectRoot, installTools, globalMode }) {
@@ -1243,6 +1248,27 @@ function installCoreAgents(projectRoot) {
     mkdirSync(dirname(full), { recursive: true });
     writeFileSync(full, insertBanner(content, bannerFor('core', relPath, content)), 'utf-8');
   }
+}
+
+/**
+ * 铺一份 `<project>/.gantry/loop/test-commands.yml` 模板(2026-10-12)。
+ *
+ * 背景:该文件是 integration AC 覆盖硬闸的输入,而此前谁都不生成它 —— 门禁于是
+ * 在 fail-open 下静默放行,等于不存在。门禁收紧为 fail-closed 后,必须让用户
+ * 知道该文件存在、放哪、什么格式,否则新项目一进 integration 就被挡且无从下手。
+ *
+ * **绝不覆盖**:已存在即原样保留(包括用户改过的)。
+ *
+ * @returns {boolean} 是否新写入(用于 install 输出)
+ */
+function installTestCommandsTemplate(projectRoot) {
+  const dest = join(projectRoot, '.gantry', 'loop', 'test-commands.yml');
+  if (existsSync(dest)) return false;
+  const tpl = join(GANTRY_ROOT, 'src', 'loop', 'test-commands.template.yml');
+  if (!existsSync(tpl)) return false;
+  mkdirSync(dirname(dest), { recursive: true });
+  writeFileSync(dest, readFileSync(tpl, 'utf-8'), 'utf-8');
+  return true;
 }
 
 function addCorePhaseFiles(files, phases) {
@@ -1639,40 +1665,53 @@ function metrics(args) {
 /**
  * gantry loop [claude|codex] — 无监督收敛 driver 的终端入口。
  *
- * 把 .gantry/loop/loop.sh 包成 subcommand:
+ * 把 src/loop/loop.sh 包成 subcommand:
  *   - 脚本从 gantry 包根(GANTRY_ROOT)读,不依赖用户项目有没有 loop.sh
+ *     2026-10-12:driver 从 .gantry/loop/ 迁到 src/loop/。.gantry/ 只放运行时产物,
+ *     仓库逻辑不得依赖其下的文件;搬迁后用户项目里的 .gantry/loop/ 纯粹是日志目录。
  *   - 用户项目 cwd 由 spawn 的 cwd 透传;dispatcher 用环境变量 PROJECT_ROOT 读
  *   - 退出码原样透传(0=done / 2=blocked / 3=max-steps / 4=dispatch-fail / 5=stuck / 64=usage)
  *
  * 环境变量透传:GANTRY_BIN(默认 "gantry") / GANTRY_LOOP_MAX_STEPS / LOOP_STUCK_LIMIT /
- *              GANTRY_LOOP_DISPATCHER。
+ *              GANTRY_LOOP_RETRIES / GANTRY_LOOP_BACKOFF / GANTRY_LOOP_DISPATCHER。
+ *
+ * 2026-10-12:client 之后的参数原样透传给 loop.sh(--quiet / --verbose / -h),
+ * 不再静默吞掉——此前 `gantry loop claude --verbose` 的 flag 会被丢弃。
  */
 function loop(args) {
   const client = args[0];
+  const passthrough = args.slice(1);
   if (!client || ['-h', '--help'].includes(client)) {
-    console.log(`gantry loop <client> — 无监督收敛 driver
+    console.log(`gantry loop <client> [--quiet] — 无监督收敛 driver
 
-用法: gantry loop <client>
-  client       claude | codex(明确指定,不做自动探测)
+用法: gantry loop <client> [--quiet]
+  client        claude | codex(明确指定,不做自动探测)
+  --quiet, -q   只打每步一行摘要,dispatch/advance 输出落日志
+  --verbose,-v  兼容别名(默认已全显示),接受但不改变行为
+
+默认全显示:每步打印头行 + 流式转发 dispatch 输出。
+遇到 dispatch / advance 失败会带诊断退避重试(上限取 config.autonomous.maxRetries)。
 
 环境变量:
   GANTRY_BIN              CLI 入口,默认 "gantry"(全局可执行)
   GANTRY_LOOP_MAX_STEPS   步数上限,默认 40
   LOOP_STUCK_LIMIT        同 token 连续次数上限,默认 2
+  GANTRY_LOOP_RETRIES     失败重试上限,默认取 config.autonomous.maxRetries(3)
+  GANTRY_LOOP_BACKOFF     退避基数秒,默认 1
 
 退出码: 0=done  2=blocked  3=达步数上限  4=dispatch 失败  5=stuck  64=用法错`);
     if (!client) process.exit(64);
     return;
   }
 
-  const loopScript = join(GANTRY_ROOT, '.gantry', 'loop', 'loop.sh');
+  const loopScript = join(GANTRY_ROOT, 'src', 'loop', 'loop.sh');
   if (!existsSync(loopScript)) {
     console.error(`未找到 loop 脚本: ${loopScript}`);
     console.error(`gantry 包安装不完整——请重装(npm i -g gantry)。`);
     process.exit(1);
   }
 
-  const r = spawnSync('bash', [loopScript, client], {
+  const r = spawnSync('bash', [loopScript, client, ...passthrough], {
     stdio: 'inherit',
     cwd: process.cwd(),
   });
@@ -1710,7 +1749,7 @@ function help(args = []) {
   pipeline full        将 light change 单向升档为 full
   advance              单步推进           [--skip]
   auto                 多阶段自动推进
-  loop <claude|codex>  无监督收敛 driver(headless)
+  loop <claude|codex>  无监督收敛 driver(headless)  [--quiet]
   loop-next            无监督 driver 消费的 token
   heal                 dev 阶段 self-heal
 
@@ -1744,9 +1783,12 @@ function helpAll() {
 
   auto                自动多阶段推进（步数取 config.autonomous.maxStagesPerRun），遇门禁失败 / 人工确认关卡 / 终态即停
 
-  loop <claude|codex> 无监督收敛 driver(headless)——包装 .gantry/loop/loop.sh
+  loop <claude|codex> 无监督收敛 driver(headless)——包装 src/loop/loop.sh
+                      [--quiet] 只打每步摘要;默认全显示并流式转发 dispatch 输出
+                      dispatch/advance 失败带诊断退避重试(上限 config.autonomous.maxRetries)
                       退出码: 0=done  2=blocked  3=max-steps  4=dispatch 失败  5=stuck  64=用法错
                       环境变量: GANTRY_BIN(默认 gantry) / GANTRY_LOOP_MAX_STEPS / LOOP_STUCK_LIMIT
+                                / GANTRY_LOOP_RETRIES / GANTRY_LOOP_BACKOFF
 
   loop-next           只读输出下一步 loop token（供无监督 driver 消费）
                       白名单单 token,stdout 单行;exit 0=推进/done,exit 2=blocked

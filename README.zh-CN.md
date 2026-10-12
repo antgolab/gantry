@@ -228,14 +228,16 @@ gantry loop-next                     # 只读:输出下一步白名单 token
 gantry advance                       # 推进一步;入口内联 loop-guard 熔断
 gantry heal T02 --reason "..."       # 记录一次 DEV verify 失败到 EXECUTION.md
 gantry heal --check T02              # 查询 R2.5 3 次上限
-# AC 覆盖硬闸随 integration 门禁自动触发,不再有独立 ac-gate 命令
+# AC 覆盖硬闸随 integration 门禁自动触发(2026-10-12 起 fail-closed:SPEC 的每个 AC
+# 都必须被 .gantry/loop/test-commands.yml 的 covers 覆盖;该文件由 gantry install 铺
+# 注释模板),不再有独立 ac-gate 命令
 ```
 
 ### 无人值守收敛引擎
 
-`gantry loop` 是基于状态机的自驱收敛引擎。`bash .gantry/loop/loop.sh <client>`(client ∈ `claude` | `codex`)读 `STATE.md`、每轮通过 `dispatch-<client>.sh` 派发到 headless AI 产阶段产物、再调 `gantry advance`,遇到 `done` / `blocked` / stuck 后停下:
+`gantry loop` 是基于状态机的自驱收敛引擎。`gantry loop <client> [--quiet]`(client ∈ `claude` | `codex`)读 `STATE.md`、每轮通过 `dispatch-<client>.sh` 派发到 headless AI 产阶段产物、再调 `gantry advance`,遇到 `done` / `blocked` / stuck 后停下。默认全显示并流式转发 dispatch 输出,`--quiet` 只打每步一行摘要;dispatch / advance 失败会带失败上下文退避重试(上限取 `config.autonomous.maxRetries`),`advance rc=2` 属硬停不重试:
 
-- [`docs/loop.md`](docs/loop.md) — driver 契约、白名单 token、fence 结构、`state-must-advance` 断言
+- [`docs/loop.md`](docs/loop.md) — driver 契约、白名单 token、fence 结构、`state-must-advance` 断言、输出纪律与重试语义
 - [`docs/loop-guard.md`](docs/loop-guard.md) — 上下文 / 步数熔断(现内联到 `gantry advance` 入口)
 - [`docs/self-heal.md`](docs/self-heal.md) — `EXECUTION.md ## Self-Heal Log` 缓冲、R2.5 上限、integration 门禁末端 AC 强校验
 

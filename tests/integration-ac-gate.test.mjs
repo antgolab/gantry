@@ -5,7 +5,7 @@
  *   - 全覆盖 → passed:true
  *   - 缺失 → passed:false + reason 含 'ac-gate: missing ...'
  *   - SPEC 无 AC → passed:true + skipReason
- *   - test-commands.yml 缺失 → passed:true + skipReason
+ *   - SPEC 有 AC 但 test-commands.yml 缺失/为空 → passed:false(fail-closed,2026-10-12)
  *   - dev/test/review 不受 ac-gate 影响
  */
 
@@ -83,12 +83,46 @@ test('AC-7 · SPEC 无 AC → passed:true + skipReason', () => {
   }
 });
 
-test('AC-7 · test-commands.yml 缺失 → passed:true + skipReason', () => {
+// 2026-10-12 fail-closed:此前缺失即放行,而 install 从不生成该文件 —— 等于这道闸
+// 在真实项目里不存在。现在 SPEC 有 AC 就必须有覆盖映射。
+test('AC-7 · test-commands.yml 缺失且 SPEC 有 AC → passed:false + 指路', () => {
   const { root, specsDir } = makeSpecsDir({ withTestCommands: false });
   try {
     const r = checkGate('integration', specsDir, { pipeline: 'full' });
-    assert.equal(r.passed, true);
-    assert.match(r.skipReason || '', /ac-gate.*test-commands/);
+    assert.equal(r.passed, false, '缺失不再放行');
+    assert.match(r.reason, /ac-gate: missing AC-1, AC-2, AC-3/);
+    assert.match(r.reason, /test-commands\.yml 缺失/);
+    assert.match(r.reason, /gantry install/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AC-7 · test-commands.yml 存在但无有效条目 → passed:false', () => {
+  const { root, specsDir } = makeSpecsDir({ withTestCommands: false });
+  try {
+    // 全注释文件 = 解析为 {},即 install 铺的模板在用户填写前的状态
+    writeFileSync(
+      join(root, '.gantry/loop/test-commands.yml'),
+      "# unit:\n#   cmd: npm test\n#   covers: ['*']\n",
+      'utf-8',
+    );
+    const r = checkGate('integration', specsDir, { pipeline: 'full' });
+    assert.equal(r.passed, false);
+    assert.match(r.reason, /ac-gate: missing AC-1/);
+    assert.match(r.reason, /无有效命令条目/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('AC-7 · test-commands.yml 语法非法 → passed:false 而非抛穿', () => {
+  const { root, specsDir } = makeSpecsDir({ withTestCommands: false });
+  try {
+    writeFileSync(join(root, '.gantry/loop/test-commands.yml'), 'unit:\n  covers: [AC-1]\n', 'utf-8');
+    const r = checkGate('integration', specsDir, { pipeline: 'full' });
+    assert.equal(r.passed, false);
+    assert.match(r.reason, /ac-gate: test-commands\.yml 解析失败/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

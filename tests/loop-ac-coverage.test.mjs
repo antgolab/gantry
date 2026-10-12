@@ -34,12 +34,29 @@ const SAMPLE_SPEC = `# SPEC: sample
 ## 非 AC 标题
 `;
 
-test('AC-7 · testCommands 为 null 时 skipped:true', () => {
+// 2026-10-12 契约变更(fail-closed):SPEC 有 AC 时,null / 空表都算「无覆盖映射」,
+// 判为全部 missing,不再 skipped 放行。理由是 install 从不生成 test-commands.yml,
+// fail-open 会让这道闸在真实项目里永远等于不存在。
+test('AC-7 · testCommands 为 null → 全部 AC missing(fail-closed)', () => {
   const dir = makeSpecDir(SAMPLE_SPEC);
   const result = checkAcCoverage(dir, null);
-  assert.equal(result.skipped, true);
+  assert.equal(result.skipped, false, 'null 不再降级放行');
   assert.deepEqual(result.covered, []);
-  assert.deepEqual(result.missing, []);
+  assert.deepEqual(result.missing, ['AC-1', 'AC-2', 'AC-3']);
+});
+
+test('AC-7 · testCommands 为空表 {} → 全部 AC missing(fail-closed)', () => {
+  const dir = makeSpecDir(SAMPLE_SPEC);
+  const result = checkAcCoverage(dir, {});
+  assert.equal(result.skipped, false, '空表不再降级放行');
+  assert.deepEqual(result.missing, ['AC-1', 'AC-2', 'AC-3']);
+});
+
+test('AC-7 · 条目存在但 covers 为空 → 全部 AC missing', () => {
+  const dir = makeSpecDir(SAMPLE_SPEC);
+  const result = checkAcCoverage(dir, { unit: { cmd: 'npm test', covers: [] } });
+  assert.equal(result.skipped, false);
+  assert.deepEqual(result.missing, ['AC-1', 'AC-2', 'AC-3']);
 });
 
 test('AC-7 · 全覆盖 → missing 为空', () => {

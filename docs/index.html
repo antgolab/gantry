@@ -884,11 +884,12 @@
         <h3>一句话，pipeline 跑到底</h3>
         <div class="code-block">
           <span class="comment"># headless AI 无人值守，收敛到 done 或硬门禁</span><br />
-          <span class="cmd">bash</span> .gantry/loop/loop.sh claude<br />
+          <span class="cmd">gantry</span> loop claude<br />
           <br />
           <span class="comment"># change → spec → design → task →</span><br />
           <span class="comment"># dev → test → review → integration</span><br />
-          <span class="comment"># 全阶段自动派发，每步走门禁 + 转 state</span>
+          <span class="comment"># 全阶段自动派发，每步走门禁 + 转 state</span><br />
+          <span class="comment"># 失败带诊断退避重试；--quiet 只打每步摘要</span>
         </div>
       </div>
       <div class="qs-card">
@@ -967,7 +968,7 @@
           <tbody>
             <tr style="border-bottom:1px solid var(--border);"><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);width:42%;"><code>/gantry:auto</code></td><td style="padding:12px 24px;color:var(--text-dim);">自主推进(默认 3 阶段)</td></tr>
             <tr style="border-bottom:1px solid var(--border);"><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);"><code>/gantry:fast</code></td><td style="padding:12px 24px;color:var(--text-dim);">light pipeline · 小变更省流</td></tr>
-            <tr><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);"><code>bash .gantry/loop/loop.sh <span style="color:var(--text-dim);">&lt;claude|codex&gt;</span></code></td><td style="padding:12px 24px;color:var(--text-dim);">headless 无人值守 · 全流程收敛</td></tr>
+            <tr><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);"><code>gantry loop <span style="color:var(--text-dim);">&lt;claude|codex&gt;</span> [--quiet]</code></td><td style="padding:12px 24px;color:var(--text-dim);">headless 无人值守 · 全流程收敛</td></tr>
           </tbody>
         </table>
       </div>
@@ -1029,7 +1030,7 @@
 
     <div data-reveal style="max-width:640px;margin:0 auto 56px;">
       <div class="code-block" style="font-size:16px;padding:28px 32px;border:1px solid var(--cyan);box-shadow:0 0 60px var(--cyan-dim);text-align:center;">
-        <span class="cmd" style="font-size:17px;">bash</span> .gantry/loop/loop.sh claude
+        <span class="cmd" style="font-size:17px;">gantry</span> loop claude
       </div>
     </div>
 
@@ -1185,7 +1186,7 @@
           <li class="done">Brownfield 安全护栏</li>
           <li class="done">LESSONS 知识库 + 月度维护</li>
           <li class="done">loop-next 白名单 + advance 内联 guard 熔断</li>
-          <li class="done">headless loop:claude / codex 双 client 派发</li>
+          <li class="done">headless loop:claude / codex 双 client 派发 · 失败带诊断退避重试</li>
           <li class="done">DEV self-heal 缓冲 + R2.5 上限熔断</li>
           <li>gantry doctor 自检命令</li>
           <li>测试覆盖率提升至 90%+</li>

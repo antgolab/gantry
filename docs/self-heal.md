@@ -102,11 +102,22 @@ gantry heal --check <taskId>
 **触发时机**:
 `checkGate('integration', ...)` 末端会自动调 `checkAcCoverage`,校验 SPEC 声明的 AC 编号是否全部被 `test-commands.yml` 的 `covers` 覆盖。
 
+**fail-closed(2026-10-12)**:只要 SPEC 有 AC 编号,就必须有覆盖映射。
+此前 `test-commands.yml` 缺失即放行,而 `install` 从不生成它——这道闸于是在
+真实用户项目里永远等于不存在。现在缺口一律阻塞。
+
 | 场景 | 门禁行为 |
 |---|---|
-| 全覆盖 | 门禁通过 |
-| 有缺失 | 门禁 fail · reason: `ac-gate: missing AC-3, AC-5` |
-| SPEC 无 AC 或 test-commands.yml 缺失 | 门禁通过 + skipReason |
+| 全覆盖(含 `covers: ['*']` 通配) | 门禁通过 |
+| 覆盖不全 | 门禁 fail · reason: `ac-gate: missing AC-3, AC-5` |
+| SPEC 有 AC,但 test-commands.yml 缺失 | 门禁 fail · reason 附 `test-commands.yml 缺失(...),运行 gantry install 生成模板` |
+| SPEC 有 AC,但文件无有效条目(含 install 刚铺的注释模板) | 门禁 fail · reason 附 `无有效命令条目(每条需 cmd + covers)` |
+| test-commands.yml 语法非法 | 门禁 fail · reason `ac-gate: test-commands.yml 解析失败(...)`(不再抛穿 advance) |
+| SPEC 无 AC 或 SPEC.md 缺失 | 门禁通过 + skipReason(唯一保留的放行) |
+
+**模板来源**:`gantry install` 会铺一份 `<项目>/.gantry/loop/test-commands.yml`
+(源:`src/loop/test-commands.template.yml`),**整份注释、绝不覆盖已有文件**。
+注释态解析为空表 = 无有效条目 = 按上表阻塞,直到你填入真实命令。
 
 **手动自检**:review 阶段直接跑 `gantry advance` 直到 integration,门禁失败即可看到缺失 AC 列表。
 
@@ -125,14 +136,18 @@ gantry heal --check <taskId>
    - **AC/需求问题** → 走 PATCH 流程(不是 self-heal 的职责)
    - **测试本身有 bug** → 修测试,不要弱化(R5.3 硬底线)
 4. 清 fence:手动编辑 `.gantry/planning/STATE.md` fence JSON,`lastStageResult.blockedReason` 置 `null`
-5. 继续 `gantry advance` 或 `bash .gantry/loop/loop.sh <client>`(client ∈ `claude` | `codex`)
+5. 继续 `gantry advance` 或 `gantry loop <client>`(client ∈ `claude` | `codex`)
 
 ### integration AC 覆盖门禁阻塞
 
-1. 检查门禁 reason:`ac-gate: missing AC-X, AC-Y`
-2. 到 `.gantry/loop/test-commands.yml` 里给某条命令的 `covers` 加上缺失 AC
-3. 或者补齐一条 test 命令,例如 `integration: cmd: ...  covers: [AC-X, AC-Y]`
-4. 再跑 `gantry advance` 进 integration
+1. 检查门禁 reason:`ac-gate: missing AC-X, AC-Y`(缺失 / 空文件 / 解析失败时 reason 会带对应指路)
+2. 文件不存在(install 未跑或项目较老)→ 先 `gantry install` 铺模板
+3. 到 `.gantry/loop/test-commands.yml` 里给某条命令的 `covers` 加上缺失 AC
+4. 或者补齐一条 test 命令,例如 `integration: cmd: ...  covers: [AC-X, AC-Y]`
+5. 再跑 `gantry advance` 进 integration
+
+> 若该门禁对你不适用(例如 SPEC 的 AC 本就无法用仓库内命令覆盖),正确做法是修 SPEC 的
+> AC 划分或走 PATCH 流程,**不是**删掉 `covers` 让它重新 fail-open。
 
 ---
 
@@ -140,7 +155,7 @@ gantry heal --check <taskId>
 
 ```
         ┌────────────────────────────────────┐
-        │       .gantry/loop/loop.sh          │
+        │         src/loop/loop.sh            │
         └────────────────┬───────────────────┘
                          │
              ┌───────────┼───────────┬─────────┐

@@ -321,18 +321,36 @@ function checkAcGate(specsDir, projectRoot) {
     return { passed: true, skipReason: 'ac-gate: 无法定位项目根,跳过 AC 覆盖检查' };
   }
   const tcPath = join(root, '.gantry/loop/test-commands.yml');
-  if (!existsSync(tcPath)) {
-    return { passed: true, skipReason: 'ac-gate: test-commands.yml 缺失,跳过 AC 覆盖检查' };
+
+  // fail-closed(2026-10-12):此前 test-commands.yml 缺失即放行,而 install 从不
+  // 生成它 —— 于是这道「AC 强校验闸」在真实用户项目里永远等于不存在。现在改为:
+  // SPEC 有 AC 编号就必须有覆盖映射,缺失 / 空 / 漏覆盖一律阻塞进入 integration。
+  // 唯一放行的是 SPEC 本身没有可校验的 AC(见下方 cov.skipped 分支)。
+  let testCommands = null;
+  if (existsSync(tcPath)) {
+    try {
+      testCommands = parseTestCommands(tcPath);
+    } catch (err) {
+      // 解析失败以前会直接抛穿 advance;门禁应给可执行的诊断,而不是崩栈。
+      return { passed: false, reason: `ac-gate: test-commands.yml 解析失败(${err.message})` };
+    }
   }
-  const testCommands = parseTestCommands(tcPath);
+
   const cov = checkAcCoverage(specsDir, testCommands);
   if (cov.skipped) {
-    return { passed: true, skipReason: 'ac-gate: SPEC 无 AC 或 test-commands.yml 无有效 covers' };
+    return { passed: true, skipReason: 'ac-gate: SPEC 无 AC 或 SPEC.md 缺失,跳过 AC 覆盖检查' };
   }
   if (cov.missing && cov.missing.length > 0) {
+    // 缺文件 / 文件空这两种「没有映射」的情况,理由要能直接指路。
+    let hint = '';
+    if (!existsSync(tcPath)) {
+      hint = ` · test-commands.yml 缺失(${tcPath}),运行 gantry install 生成模板`;
+    } else if (!testCommands || Object.keys(testCommands).length === 0) {
+      hint = ' · test-commands.yml 无有效命令条目(每条需 cmd + covers)';
+    }
     return {
       passed: false,
-      reason: `ac-gate: missing ${cov.missing.join(', ')}`,
+      reason: `ac-gate: missing ${cov.missing.join(', ')}${hint}`,
     };
   }
   return { passed: true };

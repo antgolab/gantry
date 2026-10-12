@@ -18,15 +18,19 @@ import { join } from 'node:path';
 /**
  * 检查 SPEC.md 里所有 AC 编号是否都被 test-commands.yml 里某个命令的 covers 覆盖。
  *
+ * **fail-closed(2026-10-12)**:SPEC 只要含 AC 编号,就必须有覆盖映射。因此
+ * `testCommands` 为 `null`(文件缺失)或为 `{}`(文件存在但无有效条目)时,
+ * 不再返回 `skipped`,而是把全部 AC 判为 `missing`。这是为了让「AC 强校验闸」
+ * 在真实项目里真正存在——此前它是 fail-open,而 `install` 从不生成
+ * `test-commands.yml`,导致每个用户项目的 integration 门禁都静默跳过。
+ *
+ * 唯一保留的降级放行:SPEC.md 不存在,或其中没有任何 AC 编号(无从校验)。
+ *
  * @param {string} specsDir - .gantry/specs/<change-id>/
- * @param {object|null} testCommands - 解析后的 test-commands.yml,null 表示无该文件
- * @returns {{ covered: string[], missing: string[], skipped?: boolean }}
+ * @param {object|null} testCommands - 解析后的 test-commands.yml;null = 无该文件
+ * @returns {{ covered: string[], missing: string[], skipped: boolean }}
  */
 export function checkAcCoverage(specsDir, testCommands) {
-  if (testCommands == null) {
-    return { covered: [], missing: [], skipped: true };
-  }
-
   const specPath = join(specsDir, 'SPEC.md');
   if (!existsSync(specPath)) {
     return { covered: [], missing: [], skipped: true };
@@ -37,12 +41,14 @@ export function checkAcCoverage(specsDir, testCommands) {
     return { covered: [], missing: [], skipped: true };
   }
 
-  // 收集所有 covers 项(合并所有命令)
+  // 收集所有 covers 项(合并所有命令);null / 非对象 = 无任何覆盖映射
   const allCovers = new Set();
-  for (const cmdKey of Object.keys(testCommands)) {
-    const covers = testCommands[cmdKey]?.covers;
-    if (Array.isArray(covers)) {
-      for (const c of covers) allCovers.add(c);
+  if (testCommands != null && typeof testCommands === 'object') {
+    for (const cmdKey of Object.keys(testCommands)) {
+      const covers = testCommands[cmdKey]?.covers;
+      if (Array.isArray(covers)) {
+        for (const c of covers) allCovers.add(c);
+      }
     }
   }
 
