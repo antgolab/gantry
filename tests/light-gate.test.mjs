@@ -38,6 +38,12 @@ import {
   isForbiddenArtifactName,
   checkHeadMoved,
   resolveHeadSha,
+  parseRefsSnapshot,
+  collectRefsSnapshot,
+  diffRefs,
+  checkRefsMoved,
+  matchesRedLinePath,
+  collectIgnoredRedLineBaseline,
 } from '../src/lib/light-gate.mjs';
 
 const CLI = join(import.meta.dirname, '..', 'src', 'cli.mjs');
@@ -123,13 +129,21 @@ describe('collectBaseline · 入口 IO（原 cli.mjs collectBaseline）', () => 
     assert.deepEqual(collectBaseline('/p', io), {});
   });
 
-  it('writeLightEntry 写 light.json（intent + baseline + headSha + createdAt）与意图头 EXECUTION', () => {
+  it('writeLightEntry 写 light.json（intent + baseline + headSha + refsSnapshot + createdAt）与意图头 EXECUTION', () => {
     const changeDir = join(tmpDir, '.gantry/specs/lg-entry');
     mkdirSync(changeDir, { recursive: true });
     const executionPath = join(changeDir, getPreferredArtifactName('execution'));
     const io = makeIo({
       // fixture 更新（D25）：入口现在锚定 HEAD，git stub 需让 rev-parse 返回 sha 才能断言 headSha
-      git: (args) => (args[0] === 'rev-parse' ? { status: 0, stdout: 'cafe1234\n' } : { status: 0, stdout: '' }),
+      // fixture 更新（D31）：入口还锚定 refs，stub 需给出 for-each-ref 输出，并含一条
+      // refs/remotes/ 用来断言它被排除
+      git: (args) => {
+        if (args[0] === 'rev-parse') return { status: 0, stdout: 'cafe1234\n' };
+        if (args[0] === 'for-each-ref') {
+          return { status: 0, stdout: 'refs/heads/main cafe1234\nrefs/tags/v1 1111aaaa\nrefs/remotes/origin/main 2222bbbb\n' };
+        }
+        return { status: 0, stdout: '' };
+      },
       now: () => Date.parse('2026-10-12T00:00:00.000Z'),
     });
 
@@ -142,10 +156,16 @@ describe('collectBaseline · 入口 IO（原 cli.mjs collectBaseline）', () => 
     assert.equal(lightJson.createdAt, '2026-10-12T00:00:00.000Z');
     assert.deepEqual(lightJson.baseline, {});
     assert.equal(lightJson.headSha, 'cafe1234', 'D25：入口应锚定 HEAD');
+    // D31：refsSnapshot 记录除 refs/remotes/ 外的全部 ref（键序字典序）
+    assert.deepEqual(lightJson.refsSnapshot, {
+      'refs/heads/main': 'cafe1234',
+      'refs/tags/v1': '1111aaaa',
+    });
 
     const parsed = JSON.parse(readFileSync(join(changeDir, 'light.json'), 'utf-8'));
     assert.equal(parsed.intent.goal, '调整 foo');
     assert.match(parsed.createdAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.deepEqual(parsed.refsSnapshot, lightJson.refsSnapshot, 'refsSnapshot 应随 light.json 落盘');
 
     const exec = readFileSync(executionPath, 'utf-8');
     assert.match(exec, /## light-intent/);
@@ -440,8 +460,85 @@ describe('D25 · HEAD 锚定与漂移检查（F-14 / N18）', () => {
   });
 });
 
-describe('D26 · 被忽略文件只送红线检查（F-14 第二实例）', () => {
-  it('入口后新出现、被 ignore 的 migrations/001.sql → 红线命中；缓存 / 构建产物不误报', () => {
+describe('D31 · refs 快照（F-19 / F-2 / F-3）', () => {
+  it('parseRefsSnapshot：解析 refname / objectname，跳过空行与字段不足的行', () => {
+    const out = parseRefsSnapshot([
+      'refs/heads/main aaaa',
+      '',
+      'no-sha-here',
+      'refs/tags/v1 bbbb',
+      '   ',
+    ].join('\n'));
+    assert.deepEqual(out, { 'refs/heads/main': 'aaaa', 'refs/tags/v1': 'bbbb' });
+  });
+
+  it('collectRefsSnapshot：排除 refs/remotes/，键序字典序；git 失败抛错', () => {
+    const io = makeIo({
+      git: () => ({ status: 0, stdout: 'refs/tags/v1 t1\nrefs/heads/main h1\nrefs/remotes/origin/main r1\nrefs/stash s1\n' }),
+    });
+    assert.deepEqual(collectRefsSnapshot('/p', io), {
+      'refs/heads/main': 'h1',
+      'refs/stash': 's1',
+      'refs/tags/v1': 't1',
+    });
+
+    const badIo = makeIo({ git: () => ({ status: 128, stdout: '' }) });
+    assert.throws(() => collectRefsSnapshot('/p', badIo), /git for-each-ref 失败 \(exit 128\)/);
+  });
+
+  it('diffRefs：added / removed / changed / identical 四种情形', () => {
+    const base = { 'refs/heads/main': 'h1', 'refs/heads/old': 'o1' };
+    assert.deepEqual(diffRefs(base, base), { added: [], removed: [], changed: [] });
+    assert.deepEqual(diffRefs(base, { 'refs/heads/main': 'h1' }), {
+      added: [], removed: ['refs/heads/old'], changed: [],
+    });
+    assert.deepEqual(diffRefs(base, { ...base, 'refs/tags/t1': 't' }), {
+      added: ['refs/tags/t1'], removed: [], changed: [],
+    });
+    assert.deepEqual(diffRefs(base, { 'refs/heads/main': 'h2', 'refs/heads/old': 'o1' }), {
+      added: [], removed: [], changed: ['refs/heads/main'],
+    });
+  });
+
+  it('checkRefsMoved：一致 → null；新增 / 删除 / 变化 → refs-moved(detail 列 ref)', () => {
+    const io = makeIo({ git: () => ({ status: 0, stdout: 'refs/heads/main h1\n' }) });
+    assert.equal(checkRefsMoved('/p', { refsSnapshot: { 'refs/heads/main': 'h1' } }, io), null);
+
+    const added = checkRefsMoved('/p', { refsSnapshot: {} }, io);
+    assert.equal(added.ruleId, 'refs-moved');
+    assert.match(added.detail, /added: refs\/heads\/main/);
+
+    const removedIo = makeIo({ git: () => ({ status: 0, stdout: '' }) });
+    const removed = checkRefsMoved('/p', { refsSnapshot: { 'refs/stash': 's1' } }, removedIo);
+    assert.match(removed.detail, /removed: refs\/stash/);
+
+    const changedIo = makeIo({ git: () => ({ status: 0, stdout: 'refs/heads/main h2\n' }) });
+    const changed = checkRefsMoved('/p', { refsSnapshot: { 'refs/heads/main': 'h1' } }, changedIo);
+    assert.match(changed.detail, /changed: refs\/heads\/main/);
+  });
+
+  it('缺 refsSnapshot（legacy light.json）→ refs-moved(refs-snapshot-missing)，fail-closed', () => {
+    const io = makeIo({ git: () => ({ status: 0, stdout: 'refs/heads/main h1\n' }) });
+    const hit = checkRefsMoved('/p', {}, io);
+    assert.equal(hit.ruleId, 'refs-moved');
+    assert.equal(hit.detail, 'refs-snapshot-missing');
+  });
+
+  it('git for-each-ref 失败 → checkRefsMoved 抛错（调用方转 guard-error）', () => {
+    const io = makeIo({ git: () => ({ status: 1, stdout: '' }) });
+    assert.throws(
+      () => checkRefsMoved('/p', { refsSnapshot: { 'refs/heads/main': 'h1' } }, io),
+      /git for-each-ref 失败 \(exit 1\)/,
+    );
+  });
+});
+
+describe('D32 · 被忽略红线文件基线（取代 D26 的 mtime 判据）', () => {
+  // drop reason（本 describe 整体改写）：D26 用「mtime > createdAt」推断被忽略文件是否本次新增，
+  // mtime 可被 `touch -t` 回拨（F-1）。D32 改为入口记录 {path: sha1} 基线、出口比对哈希，故原
+  // 依赖 mtime 的 fixture / 断言按新语义重写（uvsn 未弱化：命中面与「不误报」两侧都保留并加强）。
+
+  it('入口后新增的被忽略红线文件（migrations/001.sql）→ 红线命中；缓存 / 构建产物不误报', () => {
     const ignored = ['migrations/001.sql', '__pycache__/x.pyc', 'dist/a.js'];
     const io = makeIo({
       git(args) {
@@ -449,13 +546,13 @@ describe('D26 · 被忽略文件只送红线检查（F-14 第二实例）', () =
         if (args[0] === 'ls-files' && args.includes('--ignored')) return { status: 0, stdout: `${ignored.join('\n')}\n` };
         return { status: 0, stdout: '' };
       },
-      stat: () => ({ mtimeMs: 200 }), // > createdAt(100)
     });
     const input = collectLightGuardInput('/p', {
       intent: { scope: ['src/lib/foo.mjs'], goal: 'g' },
       baseline: {},
       startedAt: 300,
       createdAt: 100,
+      ignoredRedLineBaseline: {}, // 入口基线为空 → 入口后出现即算变化
     }, io);
 
     // 只喂红线：scope / changedFiles 不含被忽略文件
@@ -482,18 +579,100 @@ describe('D26 · 被忽略文件只送红线检查（F-14 第二实例）', () =
     );
   });
 
-  it('入口前已存在的被忽略文件（mtime ≤ createdAt）不进红线输入', () => {
+  it('基线里已存在、哈希未变的被忽略红线文件不进红线输入（D32 取代「mtime ≤ createdAt」）', () => {
+    const content = 'SELECT 1;\n';
     const io = makeIo({
       git(args) {
         if (args[0] === 'diff') return { status: 0, stdout: '' };
         if (args[0] === 'ls-files' && args.includes('--ignored')) return { status: 0, stdout: 'migrations/old.sql\n' };
         return { status: 0, stdout: '' };
       },
-      stat: () => ({ mtimeMs: 50 }), // ≤ createdAt(100)
+      readFile: () => content,
     });
-    const input = collectLightGuardInput('/p', { intent: {}, baseline: {}, startedAt: 0, createdAt: 100 }, io);
+    const input = collectLightGuardInput('/p', {
+      intent: {},
+      baseline: {},
+      startedAt: 0,
+      createdAt: 100,
+      ignoredRedLineBaseline: { 'migrations/old.sql': sha1(content) },
+    }, io);
     const red = input.detectRedLines({ modifiedFiles: [], newFiles: [], pkgJsonDepsDelta: [] }, '');
     assert.equal(red.hit, false);
+  });
+
+  it('基线里的被忽略红线文件哈希变化 → 红线命中', () => {
+    const io = makeIo({
+      git(args) {
+        if (args[0] === 'diff') return { status: 0, stdout: '' };
+        if (args[0] === 'ls-files' && args.includes('--ignored')) return { status: 0, stdout: 'migrations/old.sql\n' };
+        return { status: 0, stdout: '' };
+      },
+      readFile: () => 'SELECT 2;\n', // 与基线哈希不同
+    });
+    const input = collectLightGuardInput('/p', {
+      intent: {},
+      baseline: {},
+      startedAt: 0,
+      ignoredRedLineBaseline: { 'migrations/old.sql': sha1('SELECT 1;\n') },
+    }, io);
+    const red = input.detectRedLines({ modifiedFiles: [], newFiles: [], pkgJsonDepsDelta: [] }, '');
+    assert.equal(red.hit, true);
+    assert.deepEqual([...red.files].sort(), ['migrations/old.sql']);
+  });
+
+  it('基线里的被忽略红线文件被删除 → 同样计为红线命中', () => {
+    const io = makeIo({
+      git(args) {
+        if (args[0] === 'diff') return { status: 0, stdout: '' };
+        if (args[0] === 'ls-files' && args.includes('--ignored')) return { status: 0, stdout: '' }; // 已删除
+        return { status: 0, stdout: '' };
+      },
+    });
+    const input = collectLightGuardInput('/p', {
+      intent: {},
+      baseline: {},
+      startedAt: 0,
+      ignoredRedLineBaseline: { 'migrations/gone.sql': 'deadbeef' },
+    }, io);
+    const red = input.detectRedLines({ modifiedFiles: [], newFiles: [], pkgJsonDepsDelta: [] }, '');
+    assert.equal(red.hit, true);
+    assert.deepEqual([...red.files].sort(), ['migrations/gone.sql']);
+  });
+
+  it('legacy light.json 缺 ignoredRedLineBaseline → 空基线 fail-closed（每个红线被忽略文件都算变化）', () => {
+    const io = makeIo({
+      git(args) {
+        if (args[0] === 'diff') return { status: 0, stdout: '' };
+        if (args[0] === 'ls-files' && args.includes('--ignored')) return { status: 0, stdout: 'migrations/001.sql\n' };
+        return { status: 0, stdout: '' };
+      },
+    });
+    // 不传 ignoredRedLineBaseline（undefined）→ 空基线
+    const input = collectLightGuardInput('/p', { intent: {}, baseline: {}, startedAt: 0 }, io);
+    const red = input.detectRedLines({ modifiedFiles: [], newFiles: [], pkgJsonDepsDelta: [] }, '');
+    assert.equal(red.hit, true);
+  });
+});
+
+describe('D32 · matchesRedLinePath / collectIgnoredRedLineBaseline', () => {
+  it('matchesRedLinePath：命中红线路径 glob，非红线路径不命中', () => {
+    assert.equal(matchesRedLinePath('migrations/001.sql'), true);
+    assert.equal(matchesRedLinePath('db/x.sql'), true);
+    assert.equal(matchesRedLinePath('schema/users.ts'), true);
+    assert.equal(matchesRedLinePath('__pycache__/x.pyc'), false);
+    assert.equal(matchesRedLinePath('dist/a.js'), false);
+    assert.equal(matchesRedLinePath('node_modules/x/y.sql'), true, '纯路径判定不负责排除 node_modules（由列表层排除）');
+  });
+
+  it('collectIgnoredRedLineBaseline：只收红线路径，排除 node_modules/ 与 .gantry/；git 失败 → {}', () => {
+    const io = makeIo({
+      git: () => ({ status: 0, stdout: 'migrations/a.sql\nnode_modules/x/y.sql\ndist/a.js\n.gantry/specs/z.sql\n' }),
+      readFile: () => 'x',
+    });
+    assert.deepEqual(collectIgnoredRedLineBaseline('/p', io), { 'migrations/a.sql': sha1('x') });
+
+    const badIo = makeIo({ git: () => ({ status: 2, stdout: '' }) });
+    assert.deepEqual(collectIgnoredRedLineBaseline('/p', badIo), {});
   });
 });
 
@@ -629,11 +808,17 @@ describe('runLightExitGate · git 失败 ⇒ guard-error（fail-closed）', () =
     const changeId = 'lg-gitfail';
     const changeDir = join(tmpDir, '.gantry/specs', changeId);
     mkdirSync(changeDir, { recursive: true });
-    // drop reason：D25 之后出口门先做 head-moved 检查。旧 fixture 让 git 全失败 → headSha
-    // 为 null → 会先命中 head-moved(head-sha-missing) 而非快照 guard-error。改为让 rev-parse
-    // 成功（锚定 HEAD）但 diff / ls-files 失败，精确测到快照 guard-error 路径。
+    // drop reason：D25 之后出口门先做 head-moved 检查，D31 之后又加 refs-moved。旧 fixture 让
+    // git 全失败 → headSha 为 null 且入口 refsSnapshot 落 null，出口会先命中 head-moved
+    // (head-sha-missing) / refs-moved(refs-snapshot-missing) 而非快照 guard-error。
+    // fixture 更新（D31）：让 rev-parse（锚定 HEAD）与 for-each-ref（锚定 refs）都成功、且出口
+    // 复采一致，才能精确走到「diff / ls-files 失败 ⇒ 快照 guard-error」这条路径。
     const io = makeIo({
-      git: (args) => (args[0] === 'rev-parse' ? { status: 0, stdout: 'deadbeef\n' } : { status: 1, stdout: '' }),
+      git: (args) => {
+        if (args[0] === 'rev-parse') return { status: 0, stdout: 'deadbeef\n' };
+        if (args[0] === 'for-each-ref') return { status: 0, stdout: 'refs/heads/main deadbeef\n' };
+        return { status: 1, stdout: '' };
+      },
     });
     writeLightEntry(tmpDir, {
       changeId,

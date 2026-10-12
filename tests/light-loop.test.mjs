@@ -66,11 +66,25 @@ function worktreeSnapshot() {
     .join('\n');
 }
 
+// fixture 更新（D31）：固定分支名 main —— 新用例要 `git checkout -b feat` / `git checkout main`
+// 往返，不能依赖宿主 `init.defaultBranch` 的取值。
 function initGitRepo() {
-  execFileSync('git', ['init', '-q'], { cwd: tmpDir });
+  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: tmpDir });
   writeFileSync(join(tmpDir, 'README.md'), '# base\n');
   execFileSync('git', ['add', '.'], { cwd: tmpDir });
   execFileSync('git', ['-c', 'user.email=t@e', '-c', 'user.name=t', 'commit', '-q', '-m', 'init'], { cwd: tmpDir });
+}
+
+/**
+ * D31 用例专用：把 install 产物（.gantry/、.claude/、CLAUDE.md）写进 `.git/info/exclude`（不入库），
+ * 使 `git stash -u` / `git add -A` 只作用于工作区改动：否则 light 状态（STATE / light.json / 锚定）
+ * 会被 stash 或提交搬走，用例测的就不是「refs 漂移」了；而 stash→pop 往返还会刷新 CLAUDE.md 的
+ * mtime，被 D17 的 `filterByBaseline`（哈希一致但仍需 mtime ≤ createdAt）判成改动。
+ */
+function excludeInstallArtifacts() {
+  const p = join(tmpDir, '.git', 'info', 'exclude');
+  const cur = existsSync(p) ? readFileSync(p, 'utf-8') : '';
+  writeFileSync(p, `${cur.replace(/\s*$/, '')}\n.gantry/\n.claude/\nCLAUDE.md\n`, 'utf-8');
 }
 
 function startLight({ id, scope, verify, desc }) {
@@ -671,9 +685,219 @@ describe('D25 · 出口门拒绝 head-moved（F-14 / N18）', () => {
   });
 });
 
-// --- D26 / F-14 第二实例 · 被 gitignore 覆盖的红线路径 ---
+// --- D31 / F-19 / F-2 / F-3 · refs 漂移：改动藏进 stash / 别的分支 / tag ---
 
-describe('D26 · 被忽略路径只送红线检查', () => {
+describe('D31 · 出口门拒绝 refs-moved（F-19 / F-2 / F-3）', () => {
+  it('(a) git stash -u 后直接 advance → refs-moved 升档，不归档', () => {
+    initGitRepo();
+    excludeInstallArtifacts();
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id: 'light-stash',
+      scope: 'src/lib/foo.mjs',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    write('src/lib/foo.mjs', 'export const a = 1;\n');
+    write('migrations/001.sql', 'DROP TABLE users;\n'); // 红线文件藏进 stash
+    execFileSync('git', ['stash', '-u'], { cwd: tmpDir });
+    assert.ok(
+      existsSync(join(tmpDir, '.gantry/specs/light-stash/light.json')),
+      '前置：框架状态不应被 stash 掉（.gantry 已在 info/exclude）',
+    );
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_upgraded/);
+    assert.match(r.stdout, /refs-moved/);
+    assert.equal(archived('light-stash'), false, 'stash 后不得归档');
+    assert.equal(changelog(), '', 'CHANGELOG 不得写入');
+    assert.equal(state().currentStage, 'change');
+    assert.equal(state().pipeline, 'full');
+  });
+
+  it('(b) 切到别的分支 commit 红线文件后切回 → refs-moved 升档（HEAD 未动）', () => {
+    initGitRepo();
+    excludeInstallArtifacts();
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id: 'light-branch',
+      scope: 'src/lib/foo.mjs',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    write('src/lib/foo.mjs', 'export const a = 1;\n');
+    execFileSync('git', ['checkout', '-q', '-b', 'feat'], { cwd: tmpDir });
+    write('migrations/001.sql', 'DROP TABLE users;\n');
+    execFileSync('git', ['add', '-A'], { cwd: tmpDir });
+    execFileSync('git', ['-c', 'user.email=t@e', '-c', 'user.name=t', 'commit', '-q', '-m', 'sneak'], { cwd: tmpDir });
+    execFileSync('git', ['checkout', '-q', 'main'], { cwd: tmpDir });
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_upgraded/);
+    assert.match(r.stdout, /refs-moved/);
+    assert.match(r.stdout, /refs\/heads\/feat/);
+    assert.equal(archived('light-branch'), false);
+    assert.equal(state().currentStage, 'change');
+  });
+
+  it('(c) 打 tag → refs-moved 升档', () => {
+    initGitRepo();
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id: 'light-tag',
+      scope: 'src/lib/foo.mjs',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    write('src/lib/foo.mjs', 'export const a = 1;\n');
+    execFileSync('git', ['tag', 't1'], { cwd: tmpDir });
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_upgraded/);
+    assert.match(r.stdout, /refs-moved/);
+    assert.match(r.stdout, /refs\/tags\/t1/);
+    assert.equal(archived('light-tag'), false);
+  });
+
+  it('(d) stash -u 后 pop（refs 恢复原状）→ 正常归档', () => {
+    initGitRepo();
+    excludeInstallArtifacts();
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id: 'light-stash-pop',
+      scope: 'src/lib/foo.mjs',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    write('src/lib/foo.mjs', 'export const a = 1;\n');
+    execFileSync('git', ['stash', '-u'], { cwd: tmpDir });
+    execFileSync('git', ['stash', 'pop'], { cwd: tmpDir });
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_archived/);
+    assert.equal(archived('light-stash-pop'), true);
+  });
+
+  it('(e) refs 未变的金路径仍正常归档', () => {
+    initGitRepo();
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id: 'light-refs-clean',
+      scope: 'src/lib/foo.mjs',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    write('src/lib/foo.mjs', 'export const a = 1;\n');
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_archived/);
+    assert.ok(archived('light-refs-clean'));
+  });
+});
+
+// --- D32 / F-1 · 被忽略红线文件基线（取代 D26 的 mtime 判据） ---
+
+/** 把 ignore 规则写进 `.git/info/exclude`（不入库），用于构造被忽略文件场景。 */
+function addGitInfoExclude(lines) {
+  const p = join(tmpDir, '.git', 'info', 'exclude');
+  const cur = existsSync(p) ? readFileSync(p, 'utf-8') : '';
+  writeFileSync(p, `${cur.replace(/\s*$/, '')}\n${lines.join('\n')}\n`, 'utf-8');
+}
+
+describe('D32 · 被忽略红线文件基线（F-1）', () => {
+  // drop reason：本 describe 由 D26 改写而来 —— D26 用 mtime > createdAt 推断「入口后新增」，
+  // `touch -t` 可回拨 mtime 让红线文件被当成「入口前既有」而放行（F-1）。D32 改为入口记录
+  // {path: sha1} 基线、出口比对哈希，mtime 不再参与。原来靠 mtime 通过的两条用例按新语义重写，
+  // 命中面与「不误报」两侧的断言均保留（未弱化）。
+
+  it('(a) 入口后新增 migrations/001.sql 且 touch -t 回拨 mtime → 仍红线升档', () => {
+    initGitRepo();
+    addGitInfoExclude(['migrations/']);
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id: 'light-f1-mtime',
+      scope: 'src/lib/foo.mjs',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    write('migrations/001.sql', 'DROP TABLE users;\n');
+    execFileSync('touch', ['-t', '202001010000', join(tmpDir, 'migrations/001.sql')]);
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_upgraded/);
+    assert.match(r.stdout, /migration-change|sql-change/);
+    assert.equal(archived('light-f1-mtime'), false);
+  });
+
+  it('(b) 入口前就存在、未改动的被忽略红线文件（dist/db/schema.sql）→ 不误报，正常归档', () => {
+    initGitRepo();
+    addGitInfoExclude(['dist/']);
+    write('dist/db/schema.sql', 'CREATE TABLE t (id int);\n'); // 入口前既有 → 进 ignoredRedLineBaseline
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id: 'light-f1-baseline',
+      scope: 'src/lib/foo.mjs',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    write('src/lib/foo.mjs', 'export const a = 1;\n');
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_archived/);
+    assert.doesNotMatch(r.stdout, /sql-change|out-of-scope/);
+    assert.ok(archived('light-f1-baseline'));
+  });
+
+  it('(c) 入口后修改该被忽略红线文件 → 哈希变化 → 红线升档', () => {
+    initGitRepo();
+    addGitInfoExclude(['dist/']);
+    write('dist/db/schema.sql', 'CREATE TABLE t (id int);\n');
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id: 'light-f1-changed',
+      scope: 'src/lib/foo.mjs',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    write('src/lib/foo.mjs', 'export const a = 1;\n');
+    write('dist/db/schema.sql', 'DROP TABLE t;\n'); // 入口后改写 → 哈希变化
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_upgraded/);
+    assert.match(r.stdout, /sql-change/);
+    assert.equal(archived('light-f1-changed'), false);
+  });
+
+  it('(d) 入口后新写 __pycache__/x.pyc 与 dist/a.js（被忽略、不命中红线）→ 不误报，正常归档', () => {
+    initGitRepo();
+    addGitInfoExclude(['__pycache__/', 'dist/']);
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id: 'light-f1-nonred',
+      scope: 'src/lib/foo.mjs',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    write('src/lib/foo.mjs', 'export const a = 1;\n');
+    write('__pycache__/x.pyc', 'binary-ish\n');
+    write('dist/a.js', 'console.log(1);\n');
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_archived/);
+    assert.ok(archived('light-f1-nonred'));
+  });
+});
+
+describe('D26 → D32 · 被忽略路径只送红线检查（.gitignore 场景回归）', () => {
   it('.gitignore 含 migrations/，入口后新增 migrations/001.sql → 红线升档', () => {
     initGitRepo();
     commitFiles({ '.gitignore': 'migrations/\n' });
@@ -694,10 +918,12 @@ describe('D26 · 被忽略路径只送红线检查', () => {
     assert.equal(archived('light-ignored-red'), false);
   });
 
+  // drop reason：D32 之后这条用例的通过理由变了 —— 原来是「mtime ≤ createdAt 故不算新增」，
+  // 现在是「入口基线记录了它的 sha1 且未变故不算变化」。断言与场景不变（不误报、正常归档）。
   it('入口前已存在的被忽略文件 + 入口后新写的 __pycache__ / dist（均被忽略）→ 不误报，正常归档', () => {
     initGitRepo();
     commitFiles({ '.gitignore': 'migrations/\n__pycache__/\ndist/\n' });
-    write('migrations/old.sql', 'SELECT 1;\n'); // 入口前就存在（被忽略，mtime ≤ createdAt）
+    write('migrations/old.sql', 'SELECT 1;\n'); // 入口前就存在 → 进 ignoredRedLineBaseline
     run(['install', '--tool', 'claude']);
     startLight({
       id: 'light-ignored-ok',

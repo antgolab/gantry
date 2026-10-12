@@ -39,7 +39,7 @@
 5. 实施满足 `intent.accept` 的最小改动。
 6. 自审：`git diff --name-status` 确认改动都在范围内；`git diff --check` 干净。
 7. **不要手动编辑 `light.json`**，也不要手写 `verify: PASS`。
-8. **advance 之前不要 `git commit` / `git stash`**：light 的改动只认工作区相对入口 HEAD 的 diff，入口已记下 HEAD（`headSha`），HEAD 一旦移动，出口门会命中 `head-moved` 并直接升档。收尾后再按团队习惯提交。
+8. **advance 之前不要 commit / stash / 切分支 / 打 tag**：light 的改动只认工作区相对入口 HEAD 的 diff。入口记下了 HEAD（`headSha`）和全部本地 ref（`refsSnapshot`），任何 ref 变化都会让出口门命中 `head-moved` / `refs-moved` 并直接升档。收尾后再按团队习惯提交。
 9. 运行 `gantry advance`（见下节「出口门」）。
 
 ## 出口门：`gantry advance`
@@ -69,7 +69,7 @@
 - 发现范围扩大立即停手，走出口门
 
 > 威胁模型（DESIGN D18 / D29）：出口门防误操作和范围漂移，不防有意改写 `.gantry/` 的执行者。
-> - **能检测**（升档或拒绝）：只改 `light.json`、只删或只改锚定、只伪造 `## upgrade`、提交或 stash 改动（`head-moved`）。
+> - **能检测**（升档或拒绝）：只改 `light.json`、只删或只改锚定、只伪造 `## upgrade`、任何 ref 变化（commit / stash / 分支 / tag → `head-moved` / `refs-moved`）、被忽略的红线文件新增或改动（入口基线比对，不看 mtime）。
 > - **不能检测**（已知残余）：同时改写多个 `.gantry/` 文件让它们互相自洽，例如改 `light.json` 的同时重算锚定。自动归档会在 EXECUTION 写 `## archive-trace`（light.json sha256 + headSha），留作事后比对。
 > - CLI 无法判断 `intent.verify` 是否真在测试，只看它的 exit code。
 >

@@ -28,7 +28,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { SPECS_DIR, PLANNING_DIR, specsPath } from './paths.mjs';
 import { readFence, writeFence, writeState, updateState, recordLightVerify } from './state.mjs';
-import { detectRedLines, isTestPath } from './hard-rules.mjs';
+import { detectRedLines, isTestPath, HARD_RULE_PATH_GLOBS, globToRegExp } from './hard-rules.mjs';
 import { filterByBaseline, runLightGuard } from './light-guard.mjs';
 import { upgradeToFull } from './light-upgrade.mjs';
 import { writeContextPack } from './context-pack.mjs';
@@ -126,6 +126,113 @@ export function checkHeadMoved(projectRoot, lightJson, io = defaultIo) {
 }
 
 /**
+ * 解析 `git for-each-ref --format='%(refname) %(objectname)'` 的 stdout →
+ * 排序后的 `{ refname: sha }` 对象（D31）。
+ *
+ * 键序固定为字典序：light.json 的锚定哈希走 canonicalJson（本就会排序），但显式排序让
+ * 写盘的可读 diff 也稳定。字段不足 / 空行跳过（容忍 git 的边角输出）。
+ */
+export function parseRefsSnapshot(stdout) {
+  const parsed = {};
+  for (const raw of String(stdout || '').split('\n')) {
+    const line = raw.trim();
+    if (!line) continue;
+    const idx = line.indexOf(' ');
+    if (idx <= 0) continue;
+    const refname = line.slice(0, idx);
+    const sha = line.slice(idx + 1).trim();
+    if (!refname || !sha) continue;
+    parsed[refname] = sha;
+  }
+  const sorted = {};
+  for (const refname of Object.keys(parsed).sort()) sorted[refname] = parsed[refname];
+  return sorted;
+}
+
+/**
+ * 采集当前 refs 快照（D31 · F-19/F-2/F-3）：`git for-each-ref` 的全部 ref 排除
+ * `refs/remotes/`（后台 fetch 会改动它，且本地改动不会藏在那里）。
+ * git 失败抛错 —— 出口门把它转成 guard-error（fail-closed）。
+ *
+ * 快照覆盖 heads / tags / stash 等一切「改动可能藏身的 ref」：HEAD 所在分支的 ref 也在内，
+ * 因此同时兜住 D25 的 head-moved（detached HEAD 场景除外，那由 headSha 兜底）。
+ */
+export function collectRefsSnapshot(projectRoot, io = defaultIo) {
+  const r = io.git(['for-each-ref', '--format=%(refname) %(objectname)'], projectRoot);
+  if (r.status !== 0) throw new Error(`git for-each-ref 失败 (exit ${r.status})`);
+  const all = parseRefsSnapshot(r.stdout);
+  const snapshot = {};
+  for (const refname of Object.keys(all)) {
+    if (refname.startsWith('refs/remotes/')) continue;
+    snapshot[refname] = all[refname];
+  }
+  return snapshot;
+}
+
+/** 入口侧安全采集：git 失败时落 null（出口门把 null 判为 missing → fail-closed）。 */
+function safeRefsSnapshot(projectRoot, io) {
+  try {
+    return collectRefsSnapshot(projectRoot, io);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 比对入口快照与出口快照，返回新增 / 删除 / 指向变化的 ref（各自字典序）。
+ * 纯函数，供单测直接喂两组快照。
+ */
+export function diffRefs(recorded, current) {
+  const base = recorded && typeof recorded === 'object' ? recorded : {};
+  const now = current && typeof current === 'object' ? current : {};
+  const added = [];
+  const changed = [];
+  const removed = [];
+  for (const refname of Object.keys(now)) {
+    if (!Object.prototype.hasOwnProperty.call(base, refname)) added.push(refname);
+    else if (base[refname] !== now[refname]) changed.push(refname);
+  }
+  for (const refname of Object.keys(base)) {
+    if (!Object.prototype.hasOwnProperty.call(now, refname)) removed.push(refname);
+  }
+  return {
+    added: added.sort(),
+    removed: removed.sort(),
+    changed: changed.sort(),
+  };
+}
+
+/**
+ * refs 漂移检查（D31 · F-19/F-2/F-3）：出口门重新采集 refs，与入口的 light.json.refsSnapshot
+ * 比对。任一新 ref、删除的 ref 或指向变化的 ref → 命中 `refs-moved`（fail-closed）。
+ * light.json 缺 refsSnapshot（legacy）同样命中 —— 无可信基准时不允许自动归档。
+ *
+ * 与 checkHeadMoved 的分工：head-moved 先判（D25，覆盖 detached HEAD / HEAD 移动这类
+ * 最直白的场景），refs-moved 作为更宽的网兜住「HEAD 不动但 ref 动了」的 stash / 别的分支
+ * commit / 打 tag。
+ *
+ * @returns {{ ruleId: string, files: string[], detail: string }|null}
+ * @throws git for-each-ref 失败时抛错（调用方转 guard-error）
+ */
+export function checkRefsMoved(projectRoot, lightJson, io = defaultIo) {
+  const recorded = lightJson && lightJson.refsSnapshot
+    && typeof lightJson.refsSnapshot === 'object' && !Array.isArray(lightJson.refsSnapshot)
+    ? lightJson.refsSnapshot
+    : null;
+  if (!recorded) {
+    return { ruleId: 'refs-moved', files: [], detail: 'refs-snapshot-missing' };
+  }
+  const current = collectRefsSnapshot(projectRoot, io);
+  const { added, removed, changed } = diffRefs(recorded, current);
+  if (added.length === 0 && removed.length === 0 && changed.length === 0) return null;
+  const parts = [];
+  if (added.length) parts.push(`added: ${added.join(', ')}`);
+  if (removed.length) parts.push(`removed: ${removed.join(', ')}`);
+  if (changed.length) parts.push(`changed: ${changed.join(', ')}`);
+  return { ruleId: 'refs-moved', files: [], detail: parts.join('; ') };
+}
+
+/**
  * 采集工作区基线：所有 dirty / untracked 文件 → { 相对路径: sha1 }。
  * 排除 .gantry/（框架自身产物）；删除或不可读的文件跳过。git 失败 → 该条命令返回空列表。
  */
@@ -165,6 +272,12 @@ export function writeLightEntry(projectRoot, { changeId, executionPath, intent }
     baseline: collectBaseline(projectRoot, io),
     // D25：记录入口 HEAD，受 D17 锚定保护；出口门据此判 head-moved。
     headSha: resolveHeadSha(projectRoot, io),
+    // D31：记录入口 refs 快照（排除 refs/remotes/），受 D17 锚定保护；出口门据此判 refs-moved。
+    // stash / 在别的分支 commit / 打 tag 都会改动 ref 而不移动 HEAD —— 快照是唯一可信基准。
+    refsSnapshot: safeRefsSnapshot(projectRoot, io),
+    // D32：记录入口被忽略红线文件的 {path: sha1} 基线（受 D17 锚定保护）。mtime 可回拨，不足为凭；
+    // 出口以哈希比对取代 D26 的 mtime 判据。
+    ignoredRedLineBaseline: collectIgnoredRedLineBaseline(projectRoot, io),
     createdAt: new Date(io.now()).toISOString(),
   };
   writeFileSync(join(projectRoot, SPECS_DIR, changeId, 'light.json'), `${JSON.stringify(lightJson, null, 2)}\n`, 'utf-8');
@@ -222,7 +335,8 @@ export function renderTierDecision({ tier, source, reason = null }) {
  *      FAIL → recordLightVerify 计数 / 暂停，exit 1，不归档不写 CHANGELOG
  *   ⑤ PASS → 清暂停 / 重试
  *   ⑥ HEAD 漂移与预置工件：HEAD ≠ light.json.headSha ⇒ head-moved（D25）；change 目录出现
- *      full 流水线工件 ⇒ forbidden-artifact（D20）—— 任一命中即升档
+ *      full 流水线工件 ⇒ forbidden-artifact（D20）；refs 与 light.json.refsSnapshot 不一致
+ *      ⇒ refs-moved（D31）—— 任一命中即升档
  *   ⑦ 采 diff 快照 + runLightGuard，写 `## guard-decision`
  *   ⑧ 命中 → upgradeToFull（仅 stale-verify 时回到 verify）；全通过 → 写 `## archive-trace`
  *      （D29）+ archiveChange + STATE 复位 idle
@@ -314,10 +428,30 @@ export async function runLightExitGate(projectRoot, state, { isSkip = false, io 
   const headHit = checkHeadMoved(projectRoot, lightJson, io);
   if (headHit) return upgradeFromHits(projectRoot, [...forbiddenHits, headHit]);
 
+  // ⑥' refs 漂移（D31 · F-19/F-2/F-3）：head-moved 之后判 —— 先报 HEAD 移动这类最直白的
+  //     迹象，再用更宽的 refs 网兜住「HEAD 不动但 ref 动了」（stash / 别的分支 commit / tag）。
+  //     git 失败 ⇒ guard-error；缺快照 / 任一 ref 变动 ⇒ refs-moved 升档。
+  let refsHit;
+  try {
+    refsHit = checkRefsMoved(projectRoot, lightJson, io);
+  } catch (err) {
+    return upgradeFromHits(projectRoot, [
+      ...forbiddenHits,
+      { ruleId: 'guard-error', files: [], detail: `refs: ${err.message}` },
+    ]);
+  }
+  if (refsHit) return upgradeFromHits(projectRoot, [...forbiddenHits, refsHit]);
+
   // ⑦ 采快照 + 守卫（任一 git 失败 ⇒ guard-error，fail-closed）
   let guardInput;
   try {
-    guardInput = collectLightGuardInput(projectRoot, { intent, baseline, startedAt, createdAt: createdAtMs }, io);
+    guardInput = collectLightGuardInput(projectRoot, {
+      intent,
+      baseline,
+      startedAt,
+      createdAt: createdAtMs,
+      ignoredRedLineBaseline: lightJson.ignoredRedLineBaseline, // D32：legacy 缺失 → 空基线（fail-closed）
+    }, io);
   } catch (err) {
     return upgradeFromHits(projectRoot, [
       ...forbiddenHits,
@@ -463,10 +597,10 @@ export function upgradeFromHits(projectRoot, hits) {
  * - maxMtime = 基线过滤后仍存在的改动文件的最大 mtimeMs
  * - testEntries = 基线过滤后测试路径的 {path, status, before(=HEAD), after(=工作区)}
  * - pkgJsonDepsDelta = package.json 变更触及 dependencies/devDependencies 时为 ['dependencies']
- * - detectRedLines = 包一层：把入口后新出现、被 gitignore 覆盖的文件并入 newFiles（D26），
- *   使它们只参与红线路径检查，不进范围 / 测试弱化 / 新鲜度
+ * - detectRedLines = 包一层：把「相对入口基线新增 / 改哈希 / 被删除」的被忽略红线文件并入
+ *   newFiles（D32，取代 D26 的 mtime 判据），使它们只参与红线路径检查，不进范围 / 测试弱化 / 新鲜度
  */
-export function collectLightGuardInput(projectRoot, { intent, baseline, startedAt, createdAt }, io = defaultIo) {
+export function collectLightGuardInput(projectRoot, { intent, baseline, startedAt, createdAt, ignoredRedLineBaseline }, io = defaultIo) {
   const statusMap = new Map();
   for (const e of gitNameStatus(projectRoot, io)) statusMap.set(e.path, e.status);
   for (const p of gitLsUntracked(projectRoot, io)) {
@@ -506,8 +640,10 @@ export function collectLightGuardInput(projectRoot, { intent, baseline, startedA
     after: readFileOrNull(join(projectRoot, rel), io),
   }));
 
-  // D26 · F-14 第二实例：被 gitignore 覆盖、且入口后新出现的文件只送红线路径检查。
-  const ignoredRedLineFiles = listIgnoredAfterEntry(projectRoot, createdAt, io);
+  // D32 · F-1（取代 D26 的 mtime 判据）：被忽略文件里命中红线路径、且相对入口基线新增 / 改哈希 /
+  // 被删除的那些，只送红线路径检查。基线由 light.json.ignoredRedLineBaseline 提供；legacy 缺失
+  // → 空基线 → 每个红线被忽略文件都算变化（fail-closed，F-22 的误报方向由基线消解）。
+  const ignoredRedLineFiles = listIgnoredRedLineChanges(projectRoot, ignoredRedLineBaseline, io);
   const detectRedLinesWithIgnored = (snapshot, description) => detectRedLines(
     {
       modifiedFiles: snapshot.modifiedFiles,
@@ -717,20 +853,93 @@ export function gitLsUntracked(projectRoot, io = defaultIo) {
 }
 
 /**
- * 列出「被 gitignore 覆盖、且在入口后新出现」的文件（D26 · F-14 第二实例）。
- * 排除 `node_modules/`（依赖变更已由 D21 结构化比对覆盖）与 `.gantry/`（框架自身产物），
- * 仅保留 mtime > createdAt 的条目。git 失败抛错（由调用方转为 guard-error，fail-closed）。
+ * 红线路径判定（纯路径，不看内容/描述）—— 由 hard-rules 的 `HARD_RULE_PATH_GLOBS` 单点派生
+ * （AC-12 红线唯一源；本文件不复制第二份 glob 名单）。供 D32 的被忽略文件基线使用。
  */
-function listIgnoredAfterEntry(projectRoot, createdAt, io) {
+const RED_LINE_PATH_RES = HARD_RULE_PATH_GLOBS.map(({ glob }) => globToRegExp(glob));
+
+/** 路径是否命中任一硬红线路径 glob。 */
+export function matchesRedLinePath(rel) {
+  const p = String(rel ?? '');
+  return RED_LINE_PATH_RES.some((re) => re.test(p));
+}
+
+/**
+ * 列出当前被 gitignore 覆盖的文件（`git ls-files --others --ignored --exclude-standard`）。
+ * 排除 `node_modules/`（依赖变更已由 D21 结构化比对覆盖）与 `.gantry/`（框架自身产物）。
+ * git 失败抛错（由调用方转为 guard-error，fail-closed）。
+ */
+function listIgnoredFiles(projectRoot, io) {
   const r = io.git(['ls-files', '--others', '--ignored', '--exclude-standard'], projectRoot);
   if (r.status !== 0) throw new Error(`git ls-files --ignored 失败 (exit ${r.status})`);
-  const files = String(r.stdout || '').split('\n').map((s) => s.trim()).filter(Boolean);
-  return files.filter((p) => {
+  return String(r.stdout || '').split('\n').map((s) => s.trim()).filter(Boolean).filter((p) => {
     if (p === '.gantry' || p.startsWith('.gantry/')) return false;
     if (/(^|\/)node_modules\//.test(p)) return false;
-    if (!Number.isFinite(createdAt)) return false;
-    try { return io.stat(join(projectRoot, p)).mtimeMs > createdAt; } catch { return false; }
+    return true;
   });
+}
+
+/** 文件内容 sha1；不可读 → undefined（不抛错）。 */
+function sha1IfReadable(abs, io) {
+  try {
+    return sha1File(abs, io);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * 入口基线（D32 · F-1）：当前被忽略文件中命中红线路径的那部分 → `{ path: sha1 }`。
+ *
+ * 为什么只记红线路径：这是少数命中红线的文件，成本极低；而给整棵被忽略树（缓存 / 构建产物）
+ * 做哈希既慢又会把无谓的变动变成误报。
+ *
+ * 入口侧不抛错：git 失败 → `{}`（出口时每个红线被忽略文件都会被判为「不在基线」→ 命中，
+ * 方向 fail-closed，与 legacy light.json 缺该字段的处理一致）。
+ */
+export function collectIgnoredRedLineBaseline(projectRoot, io = defaultIo) {
+  const baseline = {};
+  let files;
+  try {
+    files = listIgnoredFiles(projectRoot, io);
+  } catch {
+    return baseline;
+  }
+  for (const rel of files) {
+    if (!matchesRedLinePath(rel)) continue;
+    const sha = sha1IfReadable(join(projectRoot, rel), io);
+    if (sha !== undefined) baseline[rel] = sha;
+  }
+  return baseline;
+}
+
+/**
+ * 出口侧的「被忽略红线文件变化集」（D32 · F-1，取代 D26 的 mtime 判据）。
+ *
+ * 规则：当前被忽略文件里命中红线路径的，若不在入口基线中、或 sha1 与基线不同 → 计为变化；
+ * 基线里的红线被忽略文件若已消失（删除 / 改名）→ 同样计为变化。
+ *
+ * 返回的路径会被并入 `detectRedLines` 的 newFiles（只走路径 glob，不进范围 / 测试弱化 / 新鲜度）。
+ * mtime 不再作为判据（可回拨），基线哈希才是证据。
+ *
+ * @param {Record<string, string>} baseline - light.json.ignoredRedLineBaseline；缺失 → 空基线（fail-closed）
+ */
+export function listIgnoredRedLineChanges(projectRoot, baseline, io = defaultIo) {
+  const base = baseline && typeof baseline === 'object' && !Array.isArray(baseline) ? baseline : {};
+  const files = listIgnoredFiles(projectRoot, io);
+  const changed = [];
+  const seen = new Set();
+  for (const rel of files) {
+    if (!matchesRedLinePath(rel)) continue;
+    seen.add(rel);
+    const sha = sha1IfReadable(join(projectRoot, rel), io);
+    if (sha === undefined || base[rel] !== sha) changed.push(rel);
+  }
+  // 基线里记录、当前已不在被忽略列表里的红线文件（被删 / 改名）也算变化
+  for (const rel of Object.keys(base)) {
+    if (!seen.has(rel)) changed.push(rel);
+  }
+  return changed.sort();
 }
 
 /**
