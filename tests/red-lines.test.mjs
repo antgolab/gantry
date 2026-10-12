@@ -15,12 +15,33 @@ describe('D10 · 英文关键词词边界', () => {
     ['author', 'refactor the author module'],
     ['tokenizer', 'fix tokenizer bug'],
     ['authored', 'authored by team'],
-    ['permissions', 'permissions model tweak'], // 复数不命中单数 permission
+    // D36: 原负例「permissions 不命中」已改为下方正例 —— 它锁住的正是复数漏判缺陷,
+    // D10 的本意只是挡 author / tokenizer 这类子串误命中。
   ];
   for (const [kw, description] of negatives) {
     it(`"${kw}" 不命中 (${description})`, () => {
       const r = detectHardRuleHit({}, description);
       assert.equal(r.hit, false, `不应命中,实际 ruleIds=${JSON.stringify(r.ruleIds)}`);
+    });
+  }
+
+  // D36 · 屈折形式(复数 / 过去式)照样命中
+  const inflected = [
+    ['update permissions', 'permission-keyword'],
+    ['rotate secrets', 'secret-keyword'],
+    ['add tokens', 'token-keyword'],
+    ['drop tables', 'schema-change'],
+    ['deleted old files', 'destructive-keyword'],
+    ['removed endpoint', 'destructive-keyword'],
+    ['renamed module', 'destructive-keyword'],
+    // 归档 install-claude-code-claude-settings 的真实描述
+    ['合并 Bash(gantry *) 到 permissions.allow', 'permission-keyword'],
+  ];
+  for (const [description, ruleId] of inflected) {
+    it(`D36 · "${description}" → ${ruleId}`, () => {
+      const r = detectHardRuleHit({}, description);
+      assert.equal(r.hit, true, `未命中,实际 ruleIds=${JSON.stringify(r.ruleIds)}`);
+      assert.ok(r.ruleIds.includes(ruleId), `ruleIds=${JSON.stringify(r.ruleIds)} 应包含 ${ruleId}`);
     });
   }
 

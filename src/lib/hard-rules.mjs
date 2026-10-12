@@ -92,7 +92,9 @@ const WORD_BOUNDARY_CACHE = new Map();
 /**
  * 为单个关键词构造匹配器:
  * - 含中日韩字符 → 子串匹配 (`String#includes`)。
- * - 纯英文关键词 → `\b<keyword>\b` 大小写不敏感,元字符按字面转义。
+ * - 纯英文关键词 → `\b<keyword>(?:s|es|d|ed|ing)?\b` 大小写不敏感,元字符按字面转义。
+ *   词尾允许常见屈折(D36):复数 / 过去式照样命中(permissions、deleted),
+ *   而 author / tokenizer 这类子串仍不命中(D10 的本意)。
  */
 function keywordMatcher(keyword) {
   if (CJK_RE.test(keyword)) {
@@ -101,7 +103,7 @@ function keywordMatcher(keyword) {
   let re = WORD_BOUNDARY_CACHE.get(keyword);
   if (!re) {
     const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    re = new RegExp(`\\b${escaped}\\b`, 'i');
+    re = new RegExp(`\\b${escaped}(?:s|es|d|ed|ing)?\\b`, 'i');
     WORD_BOUNDARY_CACHE.set(keyword, re);
   }
   return (text) => re.test(text);
