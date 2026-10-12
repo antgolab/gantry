@@ -33,7 +33,7 @@ import { filterByBaseline, runLightGuard } from './light-guard.mjs';
 import { upgradeToFull } from './light-upgrade.mjs';
 import { writeContextPack } from './context-pack.mjs';
 import { parseTestCommandsFromString } from './test-commands.mjs';
-import { resolveArtifactPath } from './artifacts.mjs';
+import { resolveArtifactPath, ARTIFACT_ALIASES } from './artifacts.mjs';
 
 /**
  * 默认 IO 适配器：spawnSync / node:fs。
@@ -94,6 +94,38 @@ export function isGitRepo(projectRoot, io = defaultIo) {
 }
 
 /**
+ * 解析当前 HEAD（D25 · F-14/N18）：`git rev-parse HEAD` → sha；仓库尚无提交 / git 失败
+ * → null。入口把它写进 light.json.headSha（受 D17 锚定保护）；HEAD 无法解析时由 change()
+ * 回落 full@change（reason `no-head-commit`）。
+ */
+export function resolveHeadSha(projectRoot, io = defaultIo) {
+  const r = io.git(['rev-parse', 'HEAD'], projectRoot);
+  if (r.status !== 0) return null;
+  const sha = String(r.stdout || '').trim();
+  return sha || null;
+}
+
+/**
+ * HEAD 漂移检查（D25 · F-14/N18）：出口门在采快照前比对当前 HEAD 与入口记录的
+ * light.json.headSha。三者任一成立即命中 `head-moved`（fail-closed）：
+ *   - 记录缺失（legacy light.json 无 headSha，无可信基准）；
+ *   - 当前 HEAD 无法解析；
+ *   - 两者不一致（典型：light 期间 commit 了工作区改动，守卫采集面会归零）。
+ * 不尝试用 `headSha..HEAD` 重算 diff —— 那会引入新的信任面（D25）。
+ *
+ * @returns {{ ruleId: string, files: string[], detail: string }|null}
+ */
+export function checkHeadMoved(projectRoot, lightJson, io = defaultIo) {
+  const recorded = lightJson && typeof lightJson.headSha === 'string' && lightJson.headSha
+    ? lightJson.headSha
+    : null;
+  const current = resolveHeadSha(projectRoot, io);
+  if (recorded && current && recorded === current) return null;
+  const detail = !recorded ? 'head-sha-missing' : (!current ? 'head-unresolvable' : 'head-moved');
+  return { ruleId: 'head-moved', files: [], detail };
+}
+
+/**
  * 采集工作区基线：所有 dirty / untracked 文件 → { 相对路径: sha1 }。
  * 排除 .gantry/（框架自身产物）；删除或不可读的文件跳过。git 失败 → 该条命令返回空列表。
  */
@@ -131,6 +163,8 @@ export function writeLightEntry(projectRoot, { changeId, executionPath, intent }
   const lightJson = {
     intent,
     baseline: collectBaseline(projectRoot, io),
+    // D25：记录入口 HEAD，受 D17 锚定保护；出口门据此判 head-moved。
+    headSha: resolveHeadSha(projectRoot, io),
     createdAt: new Date(io.now()).toISOString(),
   };
   writeFileSync(join(projectRoot, SPECS_DIR, changeId, 'light.json'), `${JSON.stringify(lightJson, null, 2)}\n`, 'utf-8');
@@ -182,14 +216,16 @@ export function renderTierDecision({ tier, source, reason = null }) {
  *
  * 步骤：
  *   ① 拒绝 --skip（light 无人工关卡，门禁不可绕过）
- *   ② 校验 light.json 意图锚定（D17，篡改 ⇒ intent-tampered 升档）
+ *   ② 读 light.json 并校验意图锚定（D17，篡改 ⇒ intent-tampered 升档）
  *   ③ 解析 verify 命令（intent.verify → test-commands.yml → 无 ⇒ guard-error 升档）
- *   ③ startedAt 先于执行记录，执行 verify，写 EXECUTION `## verify-log`
- *   ④ FAIL → recordLightVerify 计数/暂停，exit 1，不归档不写 CHANGELOG
- *   ⑤ PASS → 采 diff 快照 + runLightGuard，写 `## guard-decision`
- *   ⑤-pre 扫描 change 目录的预置 full 工件（D20）：命中 forbidden-artifact 并与守卫命中合并升档
- *   ⑥ 命中 → upgradeToFull（仅 stale-verify 时回到 verify）
- *   ⑦ 全通过 → archiveChange + STATE 复位 idle
+ *   ④ 执行 verify（startedAt 先于执行记录），写 EXECUTION `## verify-log`；
+ *      FAIL → recordLightVerify 计数 / 暂停，exit 1，不归档不写 CHANGELOG
+ *   ⑤ PASS → 清暂停 / 重试
+ *   ⑥ HEAD 漂移与预置工件：HEAD ≠ light.json.headSha ⇒ head-moved（D25）；change 目录出现
+ *      full 流水线工件 ⇒ forbidden-artifact（D20）—— 任一命中即升档
+ *   ⑦ 采 diff 快照 + runLightGuard，写 `## guard-decision`
+ *   ⑧ 命中 → upgradeToFull（仅 stale-verify 时回到 verify）；全通过 → 写 `## archive-trace`
+ *      （D29）+ archiveChange + STATE 复位 idle
  *
  * @param {string} projectRoot
  * @param {object} state - readState 结果
@@ -210,7 +246,7 @@ export async function runLightExitGate(projectRoot, state, { isSkip = false, io 
 
   const lightJson = readLightJson(changeDir, io);
 
-  // ②-pre 意图锚定校验（D17）：在读取 intent.verify / scope / baseline 之前完成。
+  // ② 意图锚定校验（D17）：在读取 intent.verify / scope / baseline 之前完成。
   // 锚定缺失 / 篡改一律 fail-closed 升档，不给被改写过的意图任何效力。
   const tamperHit = verifyLightAnchor(projectRoot, changeId, lightJson, io);
   if (tamperHit) return upgradeFromHits(projectRoot, [tamperHit]);
@@ -219,7 +255,7 @@ export async function runLightExitGate(projectRoot, state, { isSkip = false, io 
   const baseline = (lightJson && lightJson.baseline) || {};
   const createdAtMs = Date.parse(lightJson.createdAt);
 
-  // ② verify 命令
+  // ③ verify 命令
   const verifyCmd = resolveLightVerifyCommand(projectRoot, intent, io);
   if (!verifyCmd) {
     // D7/D14：没有可执行的 verify 证据，不能放行 → guard-error 升档
@@ -228,7 +264,7 @@ export async function runLightExitGate(projectRoot, state, { isSkip = false, io 
     ]);
   }
 
-  // ③ 执行 verify（startedAt 先于执行记录：verify 若改写代码会让证据失效，AC-11）
+  // ④ 执行 verify（startedAt 先于执行记录：verify 若改写代码会让证据失效，AC-11）
   const startedAt = io.now();
   const run = spawnSync(verifyCmd, {
     shell: true, cwd: projectRoot, encoding: 'utf-8', timeout: 600000,
@@ -237,7 +273,7 @@ export async function runLightExitGate(projectRoot, state, { isSkip = false, io 
   const pass = exitCode === 0;
   printVerifyTail(run.stdout, run.stderr);
 
-  // ④ FAIL：R2.5 自愈计数 / 暂停，永不归档
+  // 失败分支：R2.5 自愈计数 / 暂停，永不归档
   if (!pass) {
     const executionText = readExecutionText(changeDir, io);
     const { failDiagnoses } = parseVerifyLog(executionText);
@@ -271,11 +307,14 @@ export async function runLightExitGate(projectRoot, state, { isSkip = false, io 
   appendExecutionBlock(changeDir, 'verify-log',
     `- ${new Date(startedAt).toISOString()} PASS \`${verifyCmd}\` (exit ${exitCode}) diagnosis: —`, io);
 
-  // ⑥ 采快照 + 守卫（任一 git 失败 ⇒ guard-error，fail-closed）
-  //    ⑥-pre 预置工件扫描（D20 · F-03）：light 期间不该出现的 full 流水线工件一律记
-  //    forbidden-artifact。必须在跑守卫前扫（门禁只读规范名，预置文件会顶替升档初稿）。
+  // ⑥ HEAD 漂移（D25 · F-14/N18）+ 预置工件扫描（D20 · F-03）。
+  //    head-moved 必须在采快照前判：light 期间 commit 会让「未提交 diff」采集面归零，
+  //    否则守卫会在空集合上全通过。预置工件同样在跑守卫前扫（门禁只读规范名，预置文件会顶替升档初稿）。
   const forbiddenHits = forbiddenArtifactHits(changeDir);
+  const headHit = checkHeadMoved(projectRoot, lightJson, io);
+  if (headHit) return upgradeFromHits(projectRoot, [...forbiddenHits, headHit]);
 
+  // ⑦ 采快照 + 守卫（任一 git 失败 ⇒ guard-error，fail-closed）
   let guardInput;
   try {
     guardInput = collectLightGuardInput(projectRoot, { intent, baseline, startedAt, createdAt: createdAtMs }, io);
@@ -289,7 +328,7 @@ export async function runLightExitGate(projectRoot, state, { isSkip = false, io 
   const guardResult = runLightGuard(guardInput);
   appendExecutionBlock(changeDir, 'guard-decision', renderGuardDecision(guardResult, io), io);
 
-  // ⑦ 命中处理：预置工件与守卫命中合并，全部进入升档原因
+  // ⑧ 命中处理：预置工件 / 守卫命中合并，全部进入升档原因
   const hits = [...forbiddenHits, ...guardResult.hits];
   if (hits.length > 0) {
     // SPEC AC-11：缺 fresh verify 证据时门禁失败，循环回到 verify（不升档）
@@ -302,7 +341,7 @@ export async function runLightExitGate(projectRoot, state, { isSkip = false, io 
     return upgradeFromHits(projectRoot, hits);
   }
 
-  // ⑧ 全通过 → 自动收尾（全程无人工确认，AC-7）
+  // 全通过 → 自动收尾（全程无人工确认，AC-7）
   const files = filterByBaseline(
     guardInput.changedFiles, baseline, guardInput.hashOf, guardInput.createdAt, guardInput.mtimeOf,
   );
@@ -314,6 +353,10 @@ export async function runLightExitGate(projectRoot, state, { isSkip = false, io 
   if (typeof archiveChange !== 'function') {
     throw new Error('runLightExitGate: archiveChange 未注入（归档编排由 CLI 提供）');
   }
+  // D29 · F-15：归档留痕 —— light.json 锚定值与 headSha 随目录一起归档，供事后比对。
+  appendExecutionBlock(changeDir, 'archive-trace',
+    `- light.json sha256: ${hashLightJson(lightJson)}\n- headSha: ${lightJson.headSha || '—'}\n- at: ${new Date(io.now()).toISOString()}`,
+    io);
   await archiveChange(projectRoot, changeId, { summary });
   resetStateToIdle(projectRoot, state, { loopDone: true });
   removeLightAnchor(projectRoot);
@@ -324,23 +367,39 @@ export async function runLightExitGate(projectRoot, state, { isSkip = false, io 
   return { stop: true };
 }
 
-/**
- * light change 目录里允许出现的文件（light 流程自身写入的产物）：
- *   - `light.json`   —— 入口固化的意图 + baseline（writeLightEntry）
- *   - `EXECUTION.md` —— 意图头视图 / verify-log / guard-decision（writeLightEntry、
- *                       appendExecutionBlock；别名 SUMMARY.md 亦不落入禁用前缀）
- * 其余 `.gantry/` 内的文件（STATE、context-pack、anchor）都在 planning 目录下，不在本目录。
- */
+// --- 预置 full 工件判定（D20 · F-03；D30 · F-16：名单派生自 artifacts.mjs）---
 
 /**
- * 预置 full 工件判定：basename 以 PROPOSAL / SPEC / DESIGN / TASKS / TASK / TEST /
- * REVIEW 开头且以 `.md` 结尾（覆盖 `PROPOSAL.md`、`PROPOSAL.upgrade.md`、
- * `SPEC.md`、`TASKS.md`、`TEST.md` 等一切变体）。
+ * 禁止清单的推导：light 期间 change 目录里出现 full 流水线工件一律视为
+ * `forbidden-artifact` —— 门禁只读规范名（`resolveArtifactPath`），预置的同名文件会顶替升档初稿。
+ *
+ * 名字集合从 `ARTIFACT_ALIASES` 的 full 流水线键派生（proposal / spec / design / tasks /
+ * test / review 及其别名，如 CHANGE.md / REQUIREMENT.md / TASK.md），不再本地硬编码第二份
+ * 名单（F-16：旧的本地名单漏了别名与小写变体）。比较口径：basename 去扩展名后取第一段
+ * （容忍 `.upgrade` / `.pre-light` / `.pre-light.2` 等后缀变体），大小写不敏感。
+ * EXECUTION.md 及其别名（SUMMARY.md）不在派生键内 —— 它们是 light 自身产物，天然排除。
  */
-const FORBIDDEN_ARTIFACT_RE = /^(?:PROPOSAL|SPEC|DESIGN|TASKS|TASK|TEST|REVIEW).*\.md$/;
+const FORBIDDEN_ARTIFACT_KEYS = ['proposal', 'spec', 'design', 'tasks', 'test', 'review'];
+
+function artifactStem(name) {
+  return String(name).replace(/\.md$/i, '').split('.')[0].toUpperCase();
+}
+
+/** 禁止工件的 stem 集合（大小写不敏感比较，见上方推导说明）。 */
+export const FORBIDDEN_ARTIFACT_STEMS = new Set(
+  FORBIDDEN_ARTIFACT_KEYS.flatMap((key) => (ARTIFACT_ALIASES[key] || []).map(artifactStem)),
+);
+
+/** 名字是否命中禁止工件（仅 `.md`；大小写不敏感；容忍 `.upgrade` / `.pre-light[.N]` 后缀）。 */
+export function isForbiddenArtifactName(name) {
+  const n = String(name ?? '');
+  if (!/\.md$/i.test(n)) return false;
+  return FORBIDDEN_ARTIFACT_STEMS.has(artifactStem(n));
+}
 
 /**
- * 扫描 change 目录（仅顶层文件）里的预置 full 工件，返回排序后的文件名列表。
+ * 扫描 change 目录（仅顶层条目）里的预置 full 工件，返回排序后的名字列表。
+ * 文件与符号链接都算（F-16：旧的 `e.isFile()` 漏报 symlink PROPOSAL.md）；
  * 目录不存在 / 不可读 → 空列表（不误报）。
  */
 export function findForbiddenArtifacts(changeDir) {
@@ -351,7 +410,8 @@ export function findForbiddenArtifacts(changeDir) {
     return [];
   }
   return entries
-    .filter((e) => e.isFile() && FORBIDDEN_ARTIFACT_RE.test(e.name))
+    .filter((e) => e.isFile() || e.isSymbolicLink())
+    .filter((e) => isForbiddenArtifactName(e.name))
     .map((e) => e.name)
     .sort();
 }
@@ -397,18 +457,30 @@ export function upgradeFromHits(projectRoot, hits) {
 /**
  * 采集 runLightGuard 的输入快照（IO 汇聚点）。
  *
- * - changedFiles = 全部脏/未跟踪文件（排除 .gantry/）
+ * - changedFiles = 全部脏/未跟踪文件（排除 .gantry/），并入「基线里出口时已被删除」的路径（D27）
  * - hashOf = 当前文件内容 sha1（不可读时抛错，由调用方转为 guard-error）
  * - createdAt / mtimeOf = 基线剔除的 mtime 上界与探针（D17）
  * - maxMtime = 基线过滤后仍存在的改动文件的最大 mtimeMs
  * - testEntries = 基线过滤后测试路径的 {path, status, before(=HEAD), after(=工作区)}
  * - pkgJsonDepsDelta = package.json 变更触及 dependencies/devDependencies 时为 ['dependencies']
+ * - detectRedLines = 包一层：把入口后新出现、被 gitignore 覆盖的文件并入 newFiles（D26），
+ *   使它们只参与红线路径检查，不进范围 / 测试弱化 / 新鲜度
  */
 export function collectLightGuardInput(projectRoot, { intent, baseline, startedAt, createdAt }, io = defaultIo) {
   const statusMap = new Map();
   for (const e of gitNameStatus(projectRoot, io)) statusMap.set(e.path, e.status);
   for (const p of gitLsUntracked(projectRoot, io)) {
     if (!statusMap.has(p)) statusMap.set(p, 'A');
+  }
+
+  // D27 · N4：baseline 里的路径若在出口时已不在磁盘、且 name-status 未记为删除（未跟踪文件
+  // 被删时 git diff 与 ls-files --others 都看不到），补一条 D 记录，照常走范围检查。
+  for (const rel of Object.keys(baseline || {})) {
+    if (statusMap.has(rel)) continue;
+    if (rel === '.gantry' || rel.startsWith('.gantry/')) continue;
+    let onDisk = true;
+    try { onDisk = io.exists(join(projectRoot, rel)); } catch { onDisk = false; }
+    if (!onDisk) statusMap.set(rel, 'D');
   }
 
   const all = [...statusMap.keys()].filter((p) => !(p === '.gantry' || p.startsWith('.gantry/')));
@@ -434,6 +506,18 @@ export function collectLightGuardInput(projectRoot, { intent, baseline, startedA
     after: readFileOrNull(join(projectRoot, rel), io),
   }));
 
+  // D26 · F-14 第二实例：被 gitignore 覆盖、且入口后新出现的文件只送红线路径检查。
+  const ignoredRedLineFiles = listIgnoredAfterEntry(projectRoot, createdAt, io);
+  const detectRedLinesWithIgnored = (snapshot, description) => detectRedLines(
+    {
+      modifiedFiles: snapshot.modifiedFiles,
+      // 并入 newFiles：只喂路径 glob（不影响 scope / test-weakening / maxMtime，也不计跨模块）
+      newFiles: [...(snapshot.newFiles || []), ...ignoredRedLineFiles],
+      pkgJsonDepsDelta: snapshot.pkgJsonDepsDelta,
+    },
+    description,
+  );
+
   return {
     scope: Array.isArray(intent.scope) ? intent.scope : [],
     changedFiles: all,
@@ -446,7 +530,7 @@ export function collectLightGuardInput(projectRoot, { intent, baseline, startedA
     maxMtime,
     description: typeof intent.goal === 'string' ? intent.goal : '',
     isTestPath,
-    detectRedLines,
+    detectRedLines: detectRedLinesWithIgnored,
     pkgJsonDepsDelta: detectPkgJsonDepsDelta(projectRoot, filtered, io),
   };
 }
@@ -630,6 +714,23 @@ export function gitLsUntracked(projectRoot, io = defaultIo) {
   const r = io.git(['ls-files', '--others', '--exclude-standard'], projectRoot);
   if (r.status !== 0) throw new Error(`git ls-files 失败 (exit ${r.status})`);
   return String(r.stdout || '').split('\n').map((s) => s.trim()).filter(Boolean);
+}
+
+/**
+ * 列出「被 gitignore 覆盖、且在入口后新出现」的文件（D26 · F-14 第二实例）。
+ * 排除 `node_modules/`（依赖变更已由 D21 结构化比对覆盖）与 `.gantry/`（框架自身产物），
+ * 仅保留 mtime > createdAt 的条目。git 失败抛错（由调用方转为 guard-error，fail-closed）。
+ */
+function listIgnoredAfterEntry(projectRoot, createdAt, io) {
+  const r = io.git(['ls-files', '--others', '--ignored', '--exclude-standard'], projectRoot);
+  if (r.status !== 0) throw new Error(`git ls-files --ignored 失败 (exit ${r.status})`);
+  const files = String(r.stdout || '').split('\n').map((s) => s.trim()).filter(Boolean);
+  return files.filter((p) => {
+    if (p === '.gantry' || p.startsWith('.gantry/')) return false;
+    if (/(^|\/)node_modules\//.test(p)) return false;
+    if (!Number.isFinite(createdAt)) return false;
+    try { return io.stat(join(projectRoot, p)).mtimeMs > createdAt; } catch { return false; }
+  });
 }
 
 /**

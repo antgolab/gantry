@@ -13,7 +13,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync, symlinkSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -34,6 +34,10 @@ import {
   hashLightJson,
   verifyLightAnchor,
   readLightJson,
+  findForbiddenArtifacts,
+  isForbiddenArtifactName,
+  checkHeadMoved,
+  resolveHeadSha,
 } from '../src/lib/light-gate.mjs';
 
 const CLI = join(import.meta.dirname, '..', 'src', 'cli.mjs');
@@ -119,11 +123,15 @@ describe('collectBaseline · 入口 IO（原 cli.mjs collectBaseline）', () => 
     assert.deepEqual(collectBaseline('/p', io), {});
   });
 
-  it('writeLightEntry 写 light.json（intent + baseline + createdAt）与意图头 EXECUTION', () => {
+  it('writeLightEntry 写 light.json（intent + baseline + headSha + createdAt）与意图头 EXECUTION', () => {
     const changeDir = join(tmpDir, '.gantry/specs/lg-entry');
     mkdirSync(changeDir, { recursive: true });
     const executionPath = join(changeDir, getPreferredArtifactName('execution'));
-    const io = makeIo({ git: () => ({ status: 0, stdout: '' }), now: () => Date.parse('2026-10-12T00:00:00.000Z') });
+    const io = makeIo({
+      // fixture 更新（D25）：入口现在锚定 HEAD，git stub 需让 rev-parse 返回 sha 才能断言 headSha
+      git: (args) => (args[0] === 'rev-parse' ? { status: 0, stdout: 'cafe1234\n' } : { status: 0, stdout: '' }),
+      now: () => Date.parse('2026-10-12T00:00:00.000Z'),
+    });
 
     const lightJson = writeLightEntry(tmpDir, {
       changeId: 'lg-entry',
@@ -133,6 +141,7 @@ describe('collectBaseline · 入口 IO（原 cli.mjs collectBaseline）', () => 
 
     assert.equal(lightJson.createdAt, '2026-10-12T00:00:00.000Z');
     assert.deepEqual(lightJson.baseline, {});
+    assert.equal(lightJson.headSha, 'cafe1234', 'D25：入口应锚定 HEAD');
 
     const parsed = JSON.parse(readFileSync(join(changeDir, 'light.json'), 'utf-8'));
     assert.equal(parsed.intent.goal, '调整 foo');
@@ -408,6 +417,150 @@ describe('collectLightGuardInput · 快照', () => {
   });
 });
 
+describe('D25 · HEAD 锚定与漂移检查（F-14 / N18）', () => {
+  it('resolveHeadSha：git 成功返回 trim 后的 sha；失败 / 空输出 → null', () => {
+    assert.equal(resolveHeadSha('/p', makeIo({ git: () => ({ status: 0, stdout: 'abc\n' }) })), 'abc');
+    assert.equal(resolveHeadSha('/p', makeIo({ git: () => ({ status: 128, stdout: '' }) })), null);
+    assert.equal(resolveHeadSha('/p', makeIo({ git: () => ({ status: 0, stdout: '  \n' }) })), null);
+  });
+
+  it('checkHeadMoved：一致 → null；不一致 / 记录缺失 / 当前不可解析 → head-moved', () => {
+    const io = makeIo({ git: () => ({ status: 0, stdout: 'sha1\n' }) });
+    assert.equal(checkHeadMoved('/p', { headSha: 'sha1' }, io), null);
+
+    const hit = checkHeadMoved('/p', { headSha: 'other' }, io);
+    assert.equal(hit.ruleId, 'head-moved');
+    assert.equal(hit.detail, 'head-moved');
+
+    // legacy light.json（无 headSha）→ fail-closed
+    assert.equal(checkHeadMoved('/p', {}, io).detail, 'head-sha-missing');
+
+    const badIo = makeIo({ git: () => ({ status: 128, stdout: '' }) });
+    assert.equal(checkHeadMoved('/p', { headSha: 'sha1' }, badIo).detail, 'head-unresolvable');
+  });
+});
+
+describe('D26 · 被忽略文件只送红线检查（F-14 第二实例）', () => {
+  it('入口后新出现、被 ignore 的 migrations/001.sql → 红线命中；缓存 / 构建产物不误报', () => {
+    const ignored = ['migrations/001.sql', '__pycache__/x.pyc', 'dist/a.js'];
+    const io = makeIo({
+      git(args) {
+        if (args[0] === 'diff') return { status: 0, stdout: 'M\tsrc/lib/foo.mjs\n' };
+        if (args[0] === 'ls-files' && args.includes('--ignored')) return { status: 0, stdout: `${ignored.join('\n')}\n` };
+        return { status: 0, stdout: '' };
+      },
+      stat: () => ({ mtimeMs: 200 }), // > createdAt(100)
+    });
+    const input = collectLightGuardInput('/p', {
+      intent: { scope: ['src/lib/foo.mjs'], goal: 'g' },
+      baseline: {},
+      startedAt: 300,
+      createdAt: 100,
+    }, io);
+
+    // 只喂红线：scope / changedFiles 不含被忽略文件
+    assert.deepEqual(input.changedFiles, ['src/lib/foo.mjs']);
+    const red = input.detectRedLines({ modifiedFiles: ['src/lib/foo.mjs'], newFiles: [], pkgJsonDepsDelta: [] }, '');
+    assert.equal(red.hit, true);
+    assert.ok(red.ruleIds.includes('migration-change') || red.ruleIds.includes('sql-change'));
+    // 只有红线路径命中；缓存 / 构建产物不引入额外命中，也不触发跨模块
+    assert.deepEqual([...red.files].sort(), ['migrations/001.sql']);
+    assert.ok(!red.ruleIds.includes('cross-module-change'));
+  });
+
+  it('git ls-files --ignored 失败 → 抛错（转 guard-error，fail-closed）', () => {
+    const io = makeIo({
+      git(args) {
+        if (args[0] === 'diff') return { status: 0, stdout: '' };
+        if (args[0] === 'ls-files' && args.includes('--ignored')) return { status: 1, stdout: '' };
+        return { status: 0, stdout: '' };
+      },
+    });
+    assert.throws(
+      () => collectLightGuardInput('/p', { intent: {}, baseline: {}, startedAt: 0, createdAt: 0 }, io),
+      /--ignored 失败/,
+    );
+  });
+
+  it('入口前已存在的被忽略文件（mtime ≤ createdAt）不进红线输入', () => {
+    const io = makeIo({
+      git(args) {
+        if (args[0] === 'diff') return { status: 0, stdout: '' };
+        if (args[0] === 'ls-files' && args.includes('--ignored')) return { status: 0, stdout: 'migrations/old.sql\n' };
+        return { status: 0, stdout: '' };
+      },
+      stat: () => ({ mtimeMs: 50 }), // ≤ createdAt(100)
+    });
+    const input = collectLightGuardInput('/p', { intent: {}, baseline: {}, startedAt: 0, createdAt: 100 }, io);
+    const red = input.detectRedLines({ modifiedFiles: [], newFiles: [], pkgJsonDepsDelta: [] }, '');
+    assert.equal(red.hit, false);
+  });
+});
+
+describe('D27 · 基线存在性探测（未跟踪文件被删，N4）', () => {
+  it('baseline 路径出口时不在磁盘、name-status 无 D 记录 → 补进 changedFiles', () => {
+    const io = makeIo({
+      git: () => ({ status: 0, stdout: '' }),
+      exists: (p) => !p.endsWith('notes.txt'), // notes.txt 已删除
+      stat: (p) => { if (p.endsWith('notes.txt')) throw new Error('ENOENT'); return { mtimeMs: 1 }; },
+    });
+    const input = collectLightGuardInput('/p', {
+      intent: { scope: ['src/lib/foo.mjs'] },
+      baseline: { 'notes.txt': 'deadbeef' },
+      startedAt: 0,
+    }, io);
+    assert.ok(input.changedFiles.includes('notes.txt'), '已删除的基线文件应补进 changedFiles');
+  });
+
+  it('name-status 已记 D 的路径不重复添加', () => {
+    const io = makeIo({
+      git(args) {
+        if (args[0] === 'diff') return { status: 0, stdout: 'D\tgone.mjs\n' };
+        return { status: 0, stdout: '' };
+      },
+      exists: () => false,
+      stat: () => { throw new Error('ENOENT'); },
+    });
+    const input = collectLightGuardInput('/p', { intent: {}, baseline: { 'gone.mjs': 'h' }, startedAt: 0 }, io);
+    assert.deepEqual(input.changedFiles, ['gone.mjs']);
+  });
+});
+
+describe('D30 · findForbiddenArtifacts 名单派生自 ARTIFACT_ALIASES（F-16）', () => {
+  it('别名 / 小写 / 后缀变体命中；EXECUTION.md 与其别名排除', () => {
+    const dir = join(tmpDir, 'chg');
+    mkdirSync(dir, { recursive: true });
+    const names = [
+      'CHANGE.md', 'proposal.md', 'SPEC.md', 'REQUIREMENT.md', 'DESIGN.upgrade.md',
+      'TASKS.pre-light.2.md', 'TASK.md', 'TEST.md', 'REVIEW.md',
+      'EXECUTION.md', 'SUMMARY.md', 'light.json', 'notes.txt',
+    ];
+    for (const n of names) writeFileSync(join(dir, n), 'x\n');
+
+    assert.deepEqual(findForbiddenArtifacts(dir), [
+      'CHANGE.md', 'DESIGN.upgrade.md', 'REQUIREMENT.md', 'REVIEW.md',
+      'SPEC.md', 'TASK.md', 'TASKS.pre-light.2.md', 'TEST.md', 'proposal.md',
+    ]);
+  });
+
+  it('symlink PROPOSAL.md 也命中（用 lstat / isSymbolicLink）', () => {
+    // 单独目录：macOS 默认大小写不敏感，PROPOSAL.md 与上面的 proposal.md 会撞名
+    const dir = join(tmpDir, 'chg-link');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'target.txt'), 'y\n');
+    symlinkSync('target.txt', join(dir, 'PROPOSAL.md'));
+    assert.deepEqual(findForbiddenArtifacts(dir), ['PROPOSAL.md']);
+  });
+
+  it('isForbiddenArtifactName：非 .md 不命中；大小写不敏感；EXECUTION / SUMMARY 排除', () => {
+    assert.equal(isForbiddenArtifactName('proposal.md'), true);
+    assert.equal(isForbiddenArtifactName('ProPoSaL.MD'), true);
+    assert.equal(isForbiddenArtifactName('proposal.txt'), false);
+    assert.equal(isForbiddenArtifactName('EXECUTION.md'), false);
+    assert.equal(isForbiddenArtifactName('SUMMARY.md'), false);
+  });
+});
+
 describe('verify-log / diagnosis 解析', () => {
   const log = [
     '# EXECUTION: x',
@@ -476,11 +629,17 @@ describe('runLightExitGate · git 失败 ⇒ guard-error（fail-closed）', () =
     const changeId = 'lg-gitfail';
     const changeDir = join(tmpDir, '.gantry/specs', changeId);
     mkdirSync(changeDir, { recursive: true });
+    // drop reason：D25 之后出口门先做 head-moved 检查。旧 fixture 让 git 全失败 → headSha
+    // 为 null → 会先命中 head-moved(head-sha-missing) 而非快照 guard-error。改为让 rev-parse
+    // 成功（锚定 HEAD）但 diff / ls-files 失败，精确测到快照 guard-error 路径。
+    const io = makeIo({
+      git: (args) => (args[0] === 'rev-parse' ? { status: 0, stdout: 'deadbeef\n' } : { status: 1, stdout: '' }),
+    });
     writeLightEntry(tmpDir, {
       changeId,
       executionPath: join(changeDir, getPreferredArtifactName('execution')),
       intent: { goal: '调整 foo', accept: ['a'], scope: ['src/lib/foo.mjs'], verify: 'node -e "process.exit(0)"' },
-    });
+    }, io);
     updateState(tmpDir, {
       pipeline: 'light',
       activeChange: changeId,
@@ -488,8 +647,7 @@ describe('runLightExitGate · git 失败 ⇒ guard-error（fail-closed）', () =
       activeAgent: 'executor',
     });
 
-    // 只有 git 失败：其余 IO 走真实实现（light.json / EXECUTION 都在真实临时目录里）
-    const io = makeIo({ git: () => ({ status: 1, stdout: '' }) });
+    // 只有 diff / ls-files 失败；其余 IO 走真实实现（light.json / EXECUTION 都在真实临时目录里）
     let archived = 0;
     const { result, lines } = await captureConsole(() => runLightExitGate(tmpDir, readState(tmpDir), {
       io,

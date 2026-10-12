@@ -201,6 +201,35 @@ describe('D15 · 非 git 项目 light 入口回落 full', () => {
   });
 });
 
+describe('D25 · 空仓库（尚无提交）light 入口回落 full', () => {
+  it('git init 但无 commit → full@change，reason: no-head-commit，无 light.json', () => {
+    execFileSync('git', ['init', '-q'], { cwd: tmpDir });
+    run(['install', '--tool', 'claude']);
+
+    const out = run(['change', '--tier', 'light', '--scope', 'src/a.mjs', '--id', 'no-head', '调整 d 模块']);
+    assert.match(out, /管线: full/);
+    assert.match(out, /light 入口被拒绝/);
+    assert.match(state(), /模式\*\*: `full`/);
+    assert.match(state(), /当前阶段\*\*: `change`/);
+
+    const exec = execFile('no-head');
+    assert.match(exec, /tier: full/);
+    assert.match(exec, /source: light-fallback/);
+    assert.match(exec, /reason: no-head-commit/);
+    assert.equal(existsSync(join(tmpDir, '.gantry/specs/no-head/light.json')), false);
+  });
+
+  it('--dry-run 空仓库 → reason: no-head-commit，不写目录', () => {
+    execFileSync('git', ['init', '-q'], { cwd: tmpDir });
+    const r = runResult(['change', '--dry-run', '--tier', 'light', '--scope', 'src/a.mjs', '调整 d 模块']);
+    assert.equal(r.status, 0);
+    const j = JSON.parse(r.stdout);
+    assert.equal(j.tier, 'full');
+    assert.equal(j.reason, 'no-head-commit');
+    assert.equal(existsSync(join(tmpDir, '.gantry/specs')), false, 'dry-run 不建目录');
+  });
+});
+
 describe('light 入口描述解析：flag 值不进入描述', () => {
   it('--scope / --accept / --verify 的值被 stripFlags 剥离', () => {
     initGitRepo();

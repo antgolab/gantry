@@ -8,7 +8,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync, symlinkSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -449,6 +449,12 @@ function commitFiles(files) {
   execFileSync('git', ['-c', 'user.email=t@e', '-c', 'user.name=t', 'commit', '-q', '-m', 'base files'], { cwd: tmpDir });
 }
 
+/** 把当前工作区全部改动（含 .gantry/）提交 —— head-moved 用例的复现动作。 */
+function commitAll(msg = 'sneak commit') {
+  execFileSync('git', ['add', '-A'], { cwd: tmpDir });
+  execFileSync('git', ['-c', 'user.email=t@e', '-c', 'user.name=t', 'commit', '-q', '-m', msg], { cwd: tmpDir });
+}
+
 describe('D21 · 改名不得绕过守卫（--no-renames：旧路径 D + 新路径 A）', () => {
   const TEST_FILE = [
     'import { test } from "node:test";',
@@ -618,5 +624,222 @@ describe('D20 · 无预置工件的正常收尾不受影响', () => {
     assert.equal(r.status, 0);
     assert.match(r.stdout, /code: light_archived/);
     assert.ok(archived('light-clean'));
+  });
+});
+
+// --- D25 / F-14 / N18 · HEAD 锚定：light 期间 commit 让守卫采集面归零 ---
+
+describe('D25 · 出口门拒绝 head-moved（F-14 / N18）', () => {
+  it('入口后 commit 全部改动（含红线 migrations/001.sql）→ head-moved 升档，不归档、CHANGELOG 不写', () => {
+    initGitRepo();
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id: 'light-head-moved',
+      scope: 'src/lib/foo.mjs',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    write('src/lib/foo.mjs', 'export const a = 1;\n');
+    write('migrations/001.sql', 'DROP TABLE users;\n'); // 红线文件
+    commitAll(); // git add -A && commit：HEAD 移动，工作区 diff 归零
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_upgraded/);
+    assert.match(r.stdout, /head-moved/);
+    assert.equal(archived('light-head-moved'), false, 'HEAD 漂移不得归档');
+    assert.equal(changelog(), '', 'CHANGELOG 不得写入');
+    assert.equal(state().currentStage, 'change');
+    assert.equal(state().pipeline, 'full');
+  });
+
+  it('入口后未 commit 的金路径仍正常归档（head-moved 不误报）', () => {
+    initGitRepo();
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id: 'light-no-commit',
+      scope: 'src/lib/foo.mjs',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    write('src/lib/foo.mjs', 'export const a = 1;\n');
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_archived/);
+    assert.ok(archived('light-no-commit'));
+  });
+});
+
+// --- D26 / F-14 第二实例 · 被 gitignore 覆盖的红线路径 ---
+
+describe('D26 · 被忽略路径只送红线检查', () => {
+  it('.gitignore 含 migrations/，入口后新增 migrations/001.sql → 红线升档', () => {
+    initGitRepo();
+    commitFiles({ '.gitignore': 'migrations/\n' });
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id: 'light-ignored-red',
+      scope: 'src/lib/foo.mjs',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    write('src/lib/foo.mjs', 'export const a = 1;\n');
+    write('migrations/001.sql', 'DROP TABLE users;\n'); // 被 ignore 覆盖，两条常规采集命令都看不到
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_upgraded/);
+    assert.match(r.stdout, /migration-change|sql-change/);
+    assert.equal(archived('light-ignored-red'), false);
+  });
+
+  it('入口前已存在的被忽略文件 + 入口后新写的 __pycache__ / dist（均被忽略）→ 不误报，正常归档', () => {
+    initGitRepo();
+    commitFiles({ '.gitignore': 'migrations/\n__pycache__/\ndist/\n' });
+    write('migrations/old.sql', 'SELECT 1;\n'); // 入口前就存在（被忽略，mtime ≤ createdAt）
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id: 'light-ignored-ok',
+      scope: 'src/lib/foo.mjs',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    write('src/lib/foo.mjs', 'export const a = 1;\n');
+    write('__pycache__/x.pyc', 'binary-ish\n');
+    write('dist/a.js', 'console.log(1);\n');
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_archived/);
+    assert.ok(archived('light-ignored-ok'));
+  });
+});
+
+// --- D27 / N4 · 未跟踪基线文件被删除 ---
+
+describe('D27 · 基线存在性探测（未跟踪文件被删）', () => {
+  it('入口前有 notes.txt（不在 scope），入口后删除 → out-of-scope 升档', () => {
+    initGitRepo();
+    run(['install', '--tool', 'claude']);
+    write('notes.txt', 'stray pending edit\n'); // change 之前就在 → 进 baseline
+    startLight({
+      id: 'light-del-oos',
+      scope: 'src/lib/foo.mjs',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    write('src/lib/foo.mjs', 'export const a = 1;\n');
+    rmSync(join(tmpDir, 'notes.txt')); // 未跟踪文件被删：git 两条命令都看不到
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_upgraded/);
+    assert.match(r.stdout, /out-of-scope/);
+    assert.equal(archived('light-del-oos'), false);
+  });
+
+  it('入口前有 notes.txt（在 scope），入口后删除 → 正常归档', () => {
+    initGitRepo();
+    run(['install', '--tool', 'claude']);
+    write('notes.txt', 'stray pending edit\n');
+    startLight({
+      id: 'light-del-scope',
+      scope: 'src/lib/foo.mjs,notes.txt',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    write('src/lib/foo.mjs', 'export const a = 1;\n');
+    rmSync(join(tmpDir, 'notes.txt'));
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_archived/);
+    assert.ok(archived('light-del-scope'));
+  });
+});
+
+// --- D30 / F-16 · forbidden-artifact 名单派生自 ARTIFACT_ALIASES ---
+
+describe('D30 · forbidden-artifact 覆盖别名 / 小写 / symlink', () => {
+  it('预置 CHANGE.md（proposal 别名）→ forbidden-artifact 升档', () => {
+    initGitRepo();
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id: 'light-fa-change',
+      scope: 'src/lib/foo.mjs',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    write('.gantry/specs/light-fa-change/CHANGE.md', '# CHANGE 预置\n');
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_upgraded/);
+    assert.match(r.stdout, /forbidden-artifact/);
+    assert.match(r.stdout, /CHANGE\.md/);
+  });
+
+  it('预置小写 proposal.md → forbidden-artifact 升档', () => {
+    initGitRepo();
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id: 'light-fa-lower',
+      scope: 'src/lib/foo.mjs',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    write('.gantry/specs/light-fa-lower/proposal.md', '# proposal 预置\n');
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_upgraded/);
+    assert.match(r.stdout, /forbidden-artifact/);
+    assert.match(r.stdout, /proposal\.md/);
+  });
+
+  it('预置 symlink PROPOSAL.md → forbidden-artifact 升档', () => {
+    initGitRepo();
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id: 'light-fa-link',
+      scope: 'src/lib/foo.mjs',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    const changeDir = join(tmpDir, '.gantry/specs/light-fa-link');
+    symlinkSync(join(changeDir, 'EXECUTION.md'), join(changeDir, 'PROPOSAL.md'));
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_upgraded/);
+    assert.match(r.stdout, /forbidden-artifact/);
+    assert.match(r.stdout, /PROPOSAL\.md/);
+  });
+});
+
+// --- D29 / F-15 · 归档留痕 ---
+
+describe('D29 · 自动归档写 archive-trace（F-15）', () => {
+  it('归档目录 EXECUTION.md 含 light.json sha256 + headSha + ISO 时间', () => {
+    initGitRepo();
+    run(['install', '--tool', 'claude']);
+    startLight({
+      id: 'light-trace',
+      scope: 'src/lib/foo.mjs',
+      verify: 'node -e "process.exit(0)"',
+      desc: '输出格式微调',
+    });
+    write('src/lib/foo.mjs', 'export const a = 1;\n');
+
+    const r = runResult(['advance']);
+    assert.equal(r.status, 0);
+    assert.match(r.stdout, /code: light_archived/);
+
+    const exec = readFileSync(join(tmpDir, '.gantry/specs/_archive/light-trace/EXECUTION.md'), 'utf-8');
+    assert.match(exec, /## archive-trace/);
+    assert.match(exec, /- light\.json sha256: [0-9a-f]{64}/);
+    assert.match(exec, /- headSha: [0-9a-f]{7,}/);
+    assert.match(exec, /- at: \d{4}-\d{2}-\d{2}T/);
   });
 });

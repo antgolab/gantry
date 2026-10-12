@@ -45,6 +45,8 @@ import { upgradeToFull } from './lib/light-upgrade.mjs';
 // light 入口 / 出口门的 IO 与编排（DESIGN D22 · REVIEW F-06）；cli.mjs 只留参数解析与调用
 import {
   isGitRepo, writeLightEntry, renderTierDecision, runLightExitGate, resetStateToIdle, removeLightAnchor,
+  resolveHeadSha,
+  LIGHT_ANCHOR_FILE,
 } from './lib/light-gate.mjs';
 import { knowledge } from './commands/knowledge.mjs';
 import { getEvents as frictionGetEvents, getScore as frictionGetScore } from './lib/friction.mjs';
@@ -333,7 +335,7 @@ async function change(args, opts = {}) {
     accept = parseAcceptArg(getFlag(args, '--accept'), description);
     verify = getFlag(args, '--verify');
 
-    // 预检顺序：非 git → 描述红线 → 意图范围（第一个失败即回落）
+    // 预检顺序：非 git → 描述红线 → 意图范围 → HEAD 可解析（第一个失败即回落）
     if (!isGitRepo(projectRoot)) {
       lightFallbackReason = 'non-git';
     } else {
@@ -342,6 +344,9 @@ async function change(args, opts = {}) {
         lightFallbackReason = hit.ruleIds.join(', ');
       } else if (!validateIntentScope(scope).ok) {
         lightFallbackReason = 'intent-scope-invalid';
+      } else if (!resolveHeadSha(projectRoot)) {
+        // D25：仓库尚无提交 → HEAD 无法锚定，守卫采集面无基准可依，回落 full@change
+        lightFallbackReason = 'no-head-commit';
       }
     }
   }
@@ -1409,16 +1414,33 @@ async function archiveChange(projectRoot, changeId, { keepHistory = false, quiet
 }
 
 /**
- * D19 / B1+B2：判定「未升档的 light change」——change 目录有 light.json，
- * 且 EXECUTION.md 没有 `## upgrade` 段（升档时会追加，见 light-upgrade.mjs）。
+ * D19 / B1+B2 / D28：判定「未升档的 light change」——change 目录有 light.json 时，
+ * 只有**同时**满足两点才算已升档（可归档）：
+ *   ① EXECUTION.md 有 `## upgrade` 段（升档时会追加，见 light-upgrade.mjs）；
+ *   ② `.gantry/planning/light-anchor.json` 不属于本 change（不存在，或 changeId ≠ 本 change）。
+ * 单看 ① 不够（N5）：手写一行 `## upgrade` 就能伪造。真实升档——出口门自动升档
+ * （light-gate.mjs）与手工 `gantry pipeline full`（cli.mjs pipeline）——都会调用
+ * removeLightAnchor 清掉锚定，所以「锚定仍在」是伪造的第二个证据。锚定文件存在但
+ * 不可解析 → fail-closed，判为未升档。
  * 不以 STATE 的 pipeline / stage 为判据：readState 会把「手改成 integration 的 light」
  * 归一化成 full@integration（B2），只看 STATE 会漏判。
  */
-function isUnupgradedLightChange(changeDir) {
+function isUnupgradedLightChange(changeDir, projectRoot, changeId) {
   if (!existsSync(join(changeDir, 'light.json'))) return false;
   const execution = resolveArtifactPath(changeDir, 'execution');
   const content = execution && existsSync(execution.path) ? readFileSync(execution.path, 'utf-8') : '';
-  return !/^##\s+upgrade\b/m.test(content);
+  if (!/^##\s+upgrade\b/m.test(content)) return true;
+
+  const anchorPath = join(projectRoot, LIGHT_ANCHOR_FILE);
+  if (!existsSync(anchorPath)) return false;
+  let anchor;
+  try {
+    anchor = JSON.parse(readFileSync(anchorPath, 'utf-8'));
+  } catch {
+    return true; // fail-closed：锚定不可解析
+  }
+  if (!anchor || typeof anchor !== 'object') return true;
+  return anchor.changeId === changeId;
 }
 
 /**
@@ -1443,11 +1465,11 @@ async function archive(args, opts = {}) {
 
   const finishedChange = state.activeChange;
 
-  // D19：light change 无人工关卡，收尾只能经 `gantry advance` 出口门（AC-7）。
-  // 该检查先于 --force / 阶段判定，且不看 STATE 里的 stage，堵住 B1（--force）
-  // 与 B2（手改 STATE 到 integration）两条绕过路径。出口门内部的自动归档直接调用
-  // archiveChange（cli.mjs → runLightExitGate 注入），不经过本函数，故不受影响。
-  if (isUnupgradedLightChange(join(projectRoot, SPECS_DIR, finishedChange))) {
+  // D19 / D28：light change 无人工关卡，收尾只能经 `gantry advance` 出口门（AC-7）。
+  // 该检查先于 --force / 阶段判定，且不看 STATE 里的 stage，堵住 B1（--force）、
+  // B2（手改 STATE 到 integration）与 N5（手写 `## upgrade`）三条绕过路径。出口门内部的
+  // 自动归档直接调用 archiveChange（cli.mjs → runLightExitGate 注入），不经过本函数，故不受影响。
+  if (isUnupgradedLightChange(join(projectRoot, SPECS_DIR, finishedChange), projectRoot, finishedChange)) {
     console.error('✗ light change 只能经 gantry advance 出口门收尾（archive 不适用，--force 也不放行）');
     process.exit(1);
   }

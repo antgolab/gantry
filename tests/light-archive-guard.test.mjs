@@ -122,6 +122,68 @@ describe('升档后的 change 按 full 规则归档', () => {
   });
 });
 
+describe('N5 · 手写 `## upgrade` 不能换来归档（D28）', () => {
+  it('EXECUTION 只剩伪造的 `## upgrade`、锚定仍在 → archive --force 仍被拒', () => {
+    startLight('light-forge');
+    const execPath = join(changeDir('light-forge'), 'EXECUTION.md');
+    writeFileSync(
+      execPath,
+      `${readFileSync(execPath, 'utf-8')}\n## upgrade\n- source: manual\n`,
+      'utf-8',
+    );
+    assert.match(readFileSync(execPath, 'utf-8'), /^## upgrade$/m, '前置：EXECUTION 已含手写的 `## upgrade`');
+    assert.ok(
+      existsSync(join(tmpDir, '.gantry/planning/light-anchor.json')),
+      '前置：light 入口应写锚定文件',
+    );
+
+    const r = runResult(['archive', '--force']);
+
+    assert.notEqual(r.status, 0, '伪造 `## upgrade` 不能换来归档');
+    assert.match(r.stderr, /light change 只能经 gantry advance 出口门收尾/);
+    assert.ok(existsSync(changeDir('light-forge')), 'change 目录应仍在原地');
+    assert.equal(archived('light-forge'), false);
+    assert.equal(changelog(), '');
+  });
+
+  it('锚定文件损坏 + 伪造 `## upgrade` → fail-closed 拒绝', () => {
+    startLight('light-corrupt');
+    const execPath = join(changeDir('light-corrupt'), 'EXECUTION.md');
+    writeFileSync(
+      execPath,
+      `${readFileSync(execPath, 'utf-8')}\n## upgrade\n- source: manual\n`,
+      'utf-8',
+    );
+    writeFileSync(join(tmpDir, '.gantry/planning/light-anchor.json'), '{ "changeId": ', 'utf-8');
+
+    const r = runResult(['archive', '--force']);
+
+    assert.notEqual(r.status, 0, '锚定不可解析时必须拒绝（fail-closed）');
+    assert.match(r.stderr, /light change 只能经 gantry advance 出口门收尾/);
+    assert.equal(archived('light-corrupt'), false);
+  });
+
+  it('锚定属于别的 change（changeId 不同）时不算未升档 → 放行', () => {
+    startLight('light-other-anchor');
+    const execPath = join(changeDir('light-other-anchor'), 'EXECUTION.md');
+    writeFileSync(
+      execPath,
+      `${readFileSync(execPath, 'utf-8')}\n## upgrade\n- source: manual\n`,
+      'utf-8',
+    );
+    writeFileSync(
+      join(tmpDir, '.gantry/planning/light-anchor.json'),
+      `${JSON.stringify({ changeId: 'some-previous-change', sha256: 'x', createdAt: '2026-01-01T00:00:00.000Z' }, null, 2)}\n`,
+      'utf-8',
+    );
+
+    const r = runResult(['archive', '--force']);
+
+    assert.equal(r.status, 0, `锚定不属于本 change 时应放行，stderr=${r.stderr}`);
+    assert.equal(archived('light-other-anchor'), true);
+  });
+});
+
 describe('回归 · full change 的 archive --force 行为不变', () => {
   it('普通 full change 仍能用 --force 直接收尾', () => {
     run(['change', '--id', 'full-1', 'fix: README typo']);
