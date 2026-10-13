@@ -1,5 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   detectHardRuleHit,
   detectRedLines,
@@ -215,4 +217,30 @@ describe('AC-12 · 创建期与执行期关键词判定一致 (幂等)', () => {
       assert.deepEqual(b, a);
     });
   }
+});
+
+// === jev-redline-precheck AC-9 · Jev 结果不进入红线 rule id 集合 ===
+describe('AC-9 · Jev 不是红线源', () => {
+  // 语义高风险但不含关键词的描述:红线判定必须保持空,Jev 的判定只在 CLI 层单独记录
+  const semanticOnly = [
+    '把订单状态的写入改成先发消息再落库',
+    '用户登出后让旧会话立即失效',
+    '调整收款回调的重试间隔',
+    'Make the in-memory cache shared across worker processes',
+    'Accept webhook calls without verifying the signature',
+  ];
+  for (const description of semanticOnly) {
+    it(`创建期预检与执行期守卫 ruleIds 相同且为空 (${description})`, () => {
+      const atEntry = detectHardRuleHit({}, description);
+      const atExit = detectRedLines({}, description);
+      assert.deepEqual(atExit.ruleIds, atEntry.ruleIds);
+      assert.deepEqual(atEntry.ruleIds, []);
+      assert.ok(!atEntry.ruleIds.some((id) => /jev/i.test(id)));
+    });
+  }
+
+  it('hard-rules.mjs 不依赖任何 Jev 模块', () => {
+    const src = readFileSync(join(import.meta.dirname, '..', 'src', 'lib', 'hard-rules.mjs'), 'utf-8');
+    assert.ok(!/jev/i.test(src), 'hard-rules.mjs 中出现了 jev');
+  });
 });

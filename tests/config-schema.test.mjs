@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   validateLearningsConfig,
+  validateJevConfig,
   DEFAULT_LEARNINGS_CONFIG,
   ConfigError,
 } from '../src/lib/config-schema.mjs';
@@ -121,4 +122,39 @@ test('ConfigError 携带具体 key 路径 errors', () => {
   assert.ok(err instanceof Error);
   assert.equal(err.name, 'ConfigError');
   assert.deepEqual(err.errors, ['learnings.unknownTop 不是已知配置项']);
+});
+
+// === jev-redline-precheck AC-8 · jev 配置 fail-closed ===
+
+test('AC-8 jev 缺省 → ok=true', () => {
+  assert.deepEqual(validateJevConfig(undefined), { ok: true, errors: [] });
+});
+
+test('AC-8 jev.enabled 为 boolean → ok=true', () => {
+  assert.deepEqual(validateJevConfig({ enabled: true }), { ok: true, errors: [] });
+  assert.deepEqual(validateJevConfig({ enabled: false }), { ok: true, errors: [] });
+  assert.deepEqual(validateJevConfig({}), { ok: true, errors: [] });
+});
+
+test('AC-8 jev 不是普通对象 → 「jev 必须为对象」', () => {
+  for (const bad of [null, true, 'on', 1, ['enabled']]) {
+    const r = validateJevConfig(bad);
+    assert.equal(r.ok, false, `应拒绝 ${JSON.stringify(bad)}`);
+    assert.deepEqual(r.errors, ['jev 必须为对象']);
+  }
+});
+
+test('AC-8 jev 下的 apiKey / key 按未知键拒绝(key 不进配置)', () => {
+  const r = validateJevConfig({ enabled: true, apiKey: 'sk-x', key: 'sk-y' });
+  assert.equal(r.ok, false);
+  assert.ok(r.errors.includes('jev.apiKey 不是已知配置项'));
+  assert.ok(r.errors.includes('jev.key 不是已知配置项'));
+});
+
+test('AC-8 jev.enabled 非 boolean → 「jev.enabled 必须为 boolean」', () => {
+  for (const bad of ['true', 1, null]) {
+    const r = validateJevConfig({ enabled: bad });
+    assert.equal(r.ok, false, `应拒绝 enabled=${JSON.stringify(bad)}`);
+    assert.deepEqual(r.errors, ['jev.enabled 必须为 boolean']);
+  }
 });

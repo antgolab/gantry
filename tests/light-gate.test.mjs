@@ -44,6 +44,7 @@ import {
   checkRefsMoved,
   matchesRedLinePath,
   collectIgnoredRedLineBaseline,
+  renderTierDecision,
 } from '../src/lib/light-gate.mjs';
 
 const CLI = join(import.meta.dirname, '..', 'src', 'cli.mjs');
@@ -992,5 +993,23 @@ describe('F-10 · 正常 light 收尾不打印假的 pipeline 迁移提示', () 
     // D16：收敛信号仍要写进 fence，loop 驱动停下
     const lp = runCli(['loop-next']);
     assert.equal(lp.stdout.trim(), 'done');
+  });
+});
+
+// === jev-redline-precheck D7 · renderTierDecision 可选 jev 行 ===
+describe('renderTierDecision · jevLine (jev-redline-precheck D7)', () => {
+  it('不传 jevLine 时输出与原来逐字节一致', () => {
+    assert.equal(
+      renderTierDecision({ tier: 'full', source: 'light-fallback', reason: 'non-git' }),
+      '## tier-decision\ntier: full\nsource: light-fallback\nreason: non-git',
+    );
+    assert.equal(renderTierDecision({ tier: 'light', source: 'override' }), '## tier-decision\ntier: light\nsource: override');
+  });
+
+  it('传入 jevLine 时追加为最后一行', () => {
+    assert.equal(
+      renderTierDecision({ tier: 'full', source: 'light-fallback', reason: 'jev-semantic', jevLine: 'jev: p=0.94 category=auth model=jev-1.13.0' }),
+      '## tier-decision\ntier: full\nsource: light-fallback\nreason: jev-semantic\njev: p=0.94 category=auth model=jev-1.13.0',
+    );
   });
 });

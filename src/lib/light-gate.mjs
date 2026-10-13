@@ -266,7 +266,7 @@ export function collectBaseline(projectRoot, io = defaultIo) {
  * @param {object} [io]
  * @returns {object} 写盘的 lightJson（含 intent / baseline / createdAt）
  */
-export function writeLightEntry(projectRoot, { changeId, executionPath, intent }, io = defaultIo) {
+export function writeLightEntry(projectRoot, { changeId, executionPath, intent, jevLine = null }, io = defaultIo) {
   const lightJson = {
     intent,
     baseline: collectBaseline(projectRoot, io),
@@ -292,7 +292,7 @@ export function writeLightEntry(projectRoot, { changeId, executionPath, intent }
   );
   writeFileSync(
     executionPath,
-    `# EXECUTION: ${changeId}\n\n${renderLightIntent(lightJson)}\n\n${renderTierDecision({ tier: 'light', source: 'override' })}\n`,
+    `# EXECUTION: ${changeId}\n\n${renderLightIntent(lightJson)}\n\n${renderTierDecision({ tier: 'light', source: 'override', jevLine })}\n`,
     'utf-8',
   );
   return lightJson;
@@ -316,9 +316,11 @@ export function renderLightIntent(lightJson) {
 /**
  * 渲染 tier-decision 段（无 score / hits / auto 行）。
  */
-export function renderTierDecision({ tier, source, reason = null }) {
+export function renderTierDecision({ tier, source, reason = null, jevLine = null }) {
   const lines = ['## tier-decision', `tier: ${tier}`, `source: ${source}`];
   if (reason) lines.push(`reason: ${reason}`);
+  // jev-redline-precheck D7：只有实际调用了 Jev 才有这一行，开关关闭时输出逐字节不变
+  if (jevLine) lines.push(jevLine);
   return lines.join('\n');
 }
 

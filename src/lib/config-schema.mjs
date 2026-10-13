@@ -130,6 +130,32 @@ export function validateLearningsConfig(cfg = {}) {
   return { ok: errors.length === 0, errors, merged };
 }
 
+/**
+ * jev 子树已知 key (jev-redline-precheck DESIGN D9)。只有 enabled;
+ * apiKey / key 等一律按未知键拒绝,顺带落实「key 只从环境变量读,不进配置文件」。
+ */
+export const JEV_KNOWN_KEYS = {
+  enabled: true,
+};
+
+/**
+ * 校验 jev 配置,返回 { ok, errors }。缺省(undefined)视为合法,等价于关闭。
+ * @param {object} [cfg] - config.jev
+ * @returns {{ok: boolean, errors: string[]}}
+ */
+export function validateJevConfig(cfg) {
+  if (cfg === undefined) return { ok: true, errors: [] };
+  if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) {
+    return { ok: false, errors: ['jev 必须为对象'] };
+  }
+
+  const errors = walkUnknownKeys(cfg, JEV_KNOWN_KEYS, 'jev');
+  if ('enabled' in cfg && typeof cfg.enabled !== 'boolean') {
+    errors.push('jev.enabled 必须为 boolean');
+  }
+  return { ok: errors.length === 0, errors };
+}
+
 function mergeWithDefaults(src) {
   const d = DEFAULT_LEARNINGS_CONFIG;
   return {

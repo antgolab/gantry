@@ -52,7 +52,8 @@ import { knowledge } from './commands/knowledge.mjs';
 import { getEvents as frictionGetEvents, getScore as frictionGetScore } from './lib/friction.mjs';
 import { proposeLearning } from './lib/curator.mjs';
 import { write as writeLearning } from './lib/learnings/index.mjs';
-import { validateLearningsConfig, ConfigError } from './lib/config-schema.mjs';
+import { validateLearningsConfig, validateJevConfig, ConfigError } from './lib/config-schema.mjs';
+import { shouldUseJev, runJevPrecheck, renderJevLine } from './lib/jev-precheck.mjs';
 import { buildManagedEntries } from './lib/install-helpers.mjs';
 import { extractProposalSummary, collectLessonsIds, appendChangelogLine } from './lib/archive-helpers.mjs';
 import { createInterface } from 'node:readline/promises';
@@ -122,9 +123,12 @@ if (!command || command === '--help' || command === '-h') {
 } else if (commands[command]) {
   try {
     // AC-1 fail-closed: 任一命令运行前先校验 learnings 配置, 未知 key 立即退出非零
-    const _cfg = readConfig(process.cwd()).learnings;
-    const _vr = validateLearningsConfig(_cfg);
+    const _all = readConfig(process.cwd());
+    const _vr = validateLearningsConfig(_all.learnings);
     if (!_vr.ok) throw new ConfigError(_vr.errors);
+    // jev-redline-precheck AC-8: jev 配置同样 fail-closed(apiKey 等按未知键拒绝)
+    const _jv = validateJevConfig(_all.jev);
+    if (!_jv.ok) throw new ConfigError(_jv.errors);
 
     const _r = commands[command](args);
     if (_r && typeof _r.then === 'function') _r.catch(handleCliError);
@@ -351,6 +355,23 @@ async function change(args, opts = {}) {
     }
   }
 
+  // Jev 语义预检（jev-redline-precheck · DESIGN D1/D2/D6）：排在预检链最末，只在确定要进 light
+  // 时才可能外发。只升不降：命中回落 full，失败按关键词结果继续；结果不进 ruleIds（AC-9）。
+  let jevLine = null;
+  if (requestedTier === 'light' && !lightFallbackReason) {
+    const jev = shouldUseJev(readConfig(projectRoot), process.env);
+    if (jev.warn) console.error(jev.warn);
+    if (jev.use) {
+      const result = await runJevPrecheck(description, { apiKey: jev.apiKey, baseURL: jev.baseURL });
+      jevLine = renderJevLine(result);
+      if (!result.ok) {
+        console.error(`⚠ Jev 预检失败（${result.error}），已按关键词结果继续`);
+      } else if (result.hit) {
+        lightFallbackReason = 'jev-semantic';
+      }
+    }
+  }
+
   const isLight = requestedTier === 'light' && !lightFallbackReason;
   const effectiveTier = isLight ? 'light' : 'full';
   const tierSource = isLight
@@ -360,6 +381,7 @@ async function change(args, opts = {}) {
   if (isDryRun) {
     const result = { tier: effectiveTier, pipeline: effectiveTier, code: 'tier_dry_run' };
     if (lightFallbackReason) result.reason = lightFallbackReason;
+    if (jevLine) result.jev = jevLine;
     console.log(JSON.stringify(result));
     return;
   }
@@ -377,6 +399,7 @@ async function change(args, opts = {}) {
       changeId,
       executionPath,
       intent: { goal: description, accept, scope, ...(verify ? { verify } : {}) },
+      jevLine,
     });
 
     updateState(projectRoot, {
@@ -404,7 +427,7 @@ async function change(args, opts = {}) {
   // ── full（默认 / 显式覆写 / light 回落）──
   writeFileSync(
     executionPath,
-    `# EXECUTION: ${changeId}\n\n${renderTierDecision({ tier: 'full', source: tierSource, reason: lightFallbackReason })}\n`,
+    `# EXECUTION: ${changeId}\n\n${renderTierDecision({ tier: 'full', source: tierSource, reason: lightFallbackReason, jevLine })}\n`,
     'utf-8',
   );
 
