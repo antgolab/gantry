@@ -103,12 +103,16 @@ export async function runJevPrecheck(description, { apiKey, baseURL, fetchImpl =
         method: 'POST',
         headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
         body,
+        // 重定向一律按失败处理，避免 Authorization 头跟随重定向发往别的地址（REVIEW F-07）
+        redirect: 'error',
         signal: controller.signal,
       });
     } catch {
       return { ok: false, error: controller.signal.aborted ? 'timeout' : 'network' };
     }
 
+    // 兑现「不抛错」：注入的 fetch 返回非 Response 时按 bad-response 处理（REVIEW F-02）
+    if (!res || typeof res.ok !== 'boolean') return { ok: false, error: 'bad-response' };
     if (!res.ok) return { ok: false, error: `http ${res.status}` };
 
     let data;

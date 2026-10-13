@@ -134,6 +134,13 @@ describe('runJevPrecheck · 失败归类,不抛错、不重试 (AC-6)', () => {
     assert.deepEqual(r, { ok: false, error: 'network' });
   });
 
+  it('fetch 返回 undefined / null / 无 boolean ok 的对象 → bad-response，不抛错 (REVIEW F-02)', async () => {
+    for (const res of [undefined, null, {}, { ok: 'yes', status: 200 }]) {
+      const r = await runJevPrecheck(DESC, { apiKey: KEY, baseURL: 'http://x', fetchImpl: async () => res });
+      assert.deepEqual(r, { ok: false, error: 'bad-response' }, `fetch 返回 ${JSON.stringify(res)}`);
+    }
+  });
+
   it('响应不是 JSON / 缺 answers.risky.noul → bad-response', async () => {
     const notJson = { ok: true, status: 200, json: async () => { throw new SyntaxError('Unexpected token'); } };
     for (const res of [notJson, jsonResponse(200, {}), jsonResponse(200, answer('0.9'))]) {
@@ -161,6 +168,7 @@ describe('runJevPrecheck · 外发内容 (AC-7)', () => {
     assert.equal(init.method, 'POST');
     assert.equal(init.headers.authorization, `Bearer ${KEY}`);
     assert.equal(init.headers['content-type'], 'application/json');
+    assert.equal(init.redirect, 'error', '重定向必须按失败处理 (REVIEW F-07)');
 
     const body = JSON.parse(init.body);
     assert.deepEqual(Object.keys(body).sort(), ['model', 'questions', 'state']);

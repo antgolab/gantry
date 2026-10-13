@@ -46,6 +46,7 @@ import {
   collectIgnoredRedLineBaseline,
   renderTierDecision,
 } from '../src/lib/light-gate.mjs';
+import { cliEnv } from './support/cli-env.mjs';
 
 const CLI = join(import.meta.dirname, '..', 'src', 'cli.mjs');
 const sha1 = (value) => createHash('sha1').update(value).digest('hex');
@@ -962,7 +963,7 @@ describe('F-10 · 正常 light 收尾不打印假的 pipeline 迁移提示', () 
   }
 
   const runCli = (args) =>
-    spawnSync(process.execPath, [CLI, ...args], { cwd: tmpDir, encoding: 'utf-8', timeout: 30000 });
+    spawnSync(process.execPath, [CLI, ...args], { cwd: tmpDir, env: cliEnv(), encoding: 'utf-8', timeout: 30000 });
 
   it('advance 收尾：code: light_archived，stderr/stdout 均无「pipeline 迁移」', () => {
     initGitRepo();

@@ -14,15 +14,16 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { readState } from '../src/lib/state.mjs';
 import { requiresApproval } from '../src/lib/phases.mjs';
+import { cliEnv } from './support/cli-env.mjs';
 
 const CLI = join(import.meta.dirname, '..', 'src', 'cli.mjs');
 let tmpDir;
 
 const run = (args) =>
-  execFileSync(process.execPath, [CLI, ...args], { cwd: tmpDir, encoding: 'utf-8', timeout: 30000 });
+  execFileSync(process.execPath, [CLI, ...args], { cwd: tmpDir, env: cliEnv(), encoding: 'utf-8', timeout: 30000 });
 
 const runResult = (args) =>
-  spawnSync(process.execPath, [CLI, ...args], { cwd: tmpDir, encoding: 'utf-8', timeout: 30000 });
+  spawnSync(process.execPath, [CLI, ...args], { cwd: tmpDir, env: cliEnv(), encoding: 'utf-8', timeout: 30000 });
 
 function state() {
   return readState(tmpDir);

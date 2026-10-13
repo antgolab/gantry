@@ -29,6 +29,7 @@ let server;
 let baseURL;
 let mode = 'miss';
 let requests = [];
+let redirectTarget = null;
 
 function jevAnswer(noul, choice) {
   return { model: 'jev-1.13.0', answers: { risky: { type: 'noul', noul }, category: { type: 'choice', choice } } };
@@ -53,6 +54,10 @@ before(async () => {
       }
       if (mode === 'http401') return send(401, { error: 'unauthorized' });
       if (mode === 'http500') return send(500, { error: 'boom' });
+      if (mode === 'redirect') {
+        res.writeHead(302, { location: redirectTarget });
+        return res.end();
+      }
       return send(500, { error: `unknown mode ${mode}` });
     });
   });
@@ -318,6 +323,32 @@ describe('AC-10 · Jev 只在 light 入口调用', () => {
     writeFileSync(join(tmpDir, 'src', 'order.mjs'), 'export const v = 1;\n');
     await cli(['advance'], withKey());
     assert.equal(requests.length, 0, '出口门不得发起网络请求');
+  });
+});
+
+describe('REVIEW F-07 · 重定向按失败处理', () => {
+  it('302 → 进入 light，jev: error network，重定向目标收到 0 个请求', async () => {
+    let targetHits = 0;
+    const target = createServer((req, res) => {
+      targetHits += 1;
+      req.resume();
+      res.end('{}');
+    });
+    await new Promise((resolve) => target.listen(0, '127.0.0.1', resolve));
+    redirectTarget = `http://127.0.0.1:${target.address().port}/v1/systemone`;
+    try {
+      setup();
+      setJevConfig({ enabled: true });
+      mode = 'redirect';
+      const r = await cli(lightArgs('fix07'), withKey());
+      assert.equal(r.code, 0, r.stderr);
+      assert.equal(requests.length, 1);
+      assert.equal(targetHits, 0, 'Authorization 头不得跟随重定向');
+      assertStage('light', 'fast');
+      assert.match(execText('fix07'), /^jev: error network$/m);
+    } finally {
+      await new Promise((resolve) => target.close(resolve));
+    }
   });
 });
 

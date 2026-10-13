@@ -7,15 +7,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { checkGate } from '../src/lib/phases.mjs';
 import { readState } from '../src/lib/state.mjs';
+import { cliEnv } from './support/cli-env.mjs';
 
 const CLI = join(import.meta.dirname, '..', 'src', 'cli.mjs');
 let tmpDir;
 
 const run = (args) =>
-  execFileSync(process.execPath, [CLI, ...args], { cwd: tmpDir, encoding: 'utf-8', timeout: 20000 });
+  execFileSync(process.execPath, [CLI, ...args], { cwd: tmpDir, env: cliEnv(), encoding: 'utf-8', timeout: 20000 });
 
 const runResult = (args) =>
-  spawnSync(process.execPath, [CLI, ...args], { cwd: tmpDir, encoding: 'utf-8', timeout: 20000 });
+  spawnSync(process.execPath, [CLI, ...args], { cwd: tmpDir, env: cliEnv(), encoding: 'utf-8', timeout: 20000 });
 
 function state() {
   return readFileSync(join(tmpDir, '.gantry/planning/STATE.md'), 'utf-8');
