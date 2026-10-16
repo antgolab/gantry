@@ -1,0 +1,32 @@
+# .gantry/loop/test-commands.yml — verify 命令表 + AC 覆盖映射
+#
+# 本文件由 `gantry install` 首次生成,之后归你所有:install 绝不覆盖已存在的文件。
+#
+# ⚠ 这是 integration 门禁的硬性输入(fail-closed,2026-10-12 起):
+#    只要 SPEC.md 里有 `## AC-N` / `### AC-N` 编号,进入 integration 前就要求
+#    每个编号都被某个命令的 covers 覆盖。本文件缺失、条目为空、或漏覆盖,
+#    都会**阻塞** advance(门禁 reason 会直接点名缺哪个 AC)。
+#
+# 结构(解析器只认这套最小语法,实现见 src/lib/test-commands.mjs):
+#   <key>:
+#     cmd: <shell 命令>
+#     covers: [AC 编号数组, 或 ['*'] 通配]
+#
+# covers 语义:
+#   ['*']        → 该命令覆盖全部 AC(适合"整仓库测试"这类命令)
+#   [AC-1, AC-3] → 只声明这几个编号
+#
+# 下面是一份可直接改用的示例。取消注释并替换成你项目的真实命令即可 ——
+# 在此之前文件解析为空,integration 门禁会按上面的规则阻塞。
+#
+# unit:
+#   cmd: npm test
+#   covers: ['*']
+#
+# integration:
+#   cmd: npm run e2e
+#   covers: [AC-5, AC-6]
+#
+# lint:
+#   cmd: npm run lint
+#   covers: [AC-1]

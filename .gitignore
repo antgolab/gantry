@@ -32,3 +32,9 @@ dist/
 .agents
 .context
 .omc
+
+
+# learnings 运行时产物（私有 + 归档，不跟踪）
+.gantry/learnings/private/
+.gantry/learnings/_archive/
+node_modules

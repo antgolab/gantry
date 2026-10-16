@@ -1,5 +1,11 @@
 #!/usr/bin/env node
 
+const [nodeMajor] = process.versions.node.split('.').map(Number);
+if (nodeMajor < 18) {
+  console.error('gantry requires Node.js >= 18 (current: ' + process.versions.node + ')');
+  process.exit(2);
+}
+
 /**
  * gantry CLI — 阶段驱动编排器
  * 零依赖，纯 Node.js
@@ -7,21 +13,50 @@
  * Usage: gantry <command> [options]
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync, cpSync, readdirSync, rmSync, unlinkSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync, mkdirSync, cpSync, readdirSync, rmSync, unlinkSync, renameSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
-import { readState, writeState, updateState, transitionStage } from './lib/state.mjs';
-import { STAGES, getNextStage, checkGate, PHASE_FILES } from './lib/phases.mjs';
+import {
+  readState, writeState, updateState, transitionStage,
+  readFence, writeFence, writeFenceBlockedReason,
+} from './lib/state.mjs';
+import { STAGES, getNextStage, checkGate, PHASE_FILES, countOpenQuestions, requiresApproval } from './lib/phases.mjs';
+import { computeNextStep, WHITELIST } from './lib/loop.mjs';
+import { checkLoopGuard } from './lib/loop-guard.mjs';
+import {
+  appendHealAttempt,
+  readHealLog,
+  shouldStopHealing,
+} from './lib/self-heal.mjs';
 import { PLANNING_DIR, SPECS_DIR, specsPath } from './lib/paths.mjs';
+import { mergeSettingsJson, unmergeSettingsJson, readManaged, writeManaged } from './lib/settings-merge.mjs';
 import { parseTasks, getProgress, scheduleWaves } from './lib/tasks.mjs';
-import { runHook, listHooks } from './lib/hooks.mjs';
+import { runHook, listHooks, checkHook } from './lib/hooks.mjs';
 import { writeContextPack, readContextPack, PACK_PATH } from './lib/context-pack.mjs';
 import { getPreferredArtifactName, resolveArtifactPath } from './lib/artifacts.mjs';
 import { readConfig } from './lib/config.mjs';
-import { assessLightEligibility, normalizePipeline, proposalHasUiImpact } from './lib/pipeline-policy.mjs';
+import { normalizePipeline } from './lib/pipeline-policy.mjs';
+import { detectHardRuleHit } from './lib/hard-rules.mjs';
+import { validateIntentScope } from './lib/light-guard.mjs';
+import { upgradeToFull } from './lib/light-upgrade.mjs';
+// light 入口 / 出口门的 IO 与编排（DESIGN D22 · REVIEW F-06）；cli.mjs 只留参数解析与调用
+import {
+  isGitRepo, writeLightEntry, renderTierDecision, runLightExitGate, resetStateToIdle, removeLightAnchor,
+  resolveHeadSha,
+  LIGHT_ANCHOR_FILE,
+} from './lib/light-gate.mjs';
+import { knowledge } from './commands/knowledge.mjs';
+import { getEvents as frictionGetEvents, getScore as frictionGetScore } from './lib/friction.mjs';
+import { proposeLearning } from './lib/curator.mjs';
+import { write as writeLearning } from './lib/learnings/index.mjs';
+import { validateLearningsConfig, validateJevConfig, ConfigError } from './lib/config-schema.mjs';
+import { shouldUseJev, runJevPrecheck, renderJevLine } from './lib/jev-precheck.mjs';
+import { buildManagedEntries } from './lib/install-helpers.mjs';
+import { extractProposalSummary, collectLessonsIds, appendChangelogLine } from './lib/archive-helpers.mjs';
+import { createInterface } from 'node:readline/promises';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -59,23 +94,47 @@ const [,, command, ...args] = process.argv;
 
 const commands = {
   status, change, pipeline, auto, dispatch, advance, context, done, hook, install, uninstall, archive, unarchive, metrics, version,
-  help,
+  help, knowledge, loop,
+  'loop-next': loopNext,
+  'heal': heal,
 };
 
 // IDE-only skills：AI 驱动的阶段 / 动作命令，只在 IDE 中以 /gantry-<name> 执行，
 // 不是 CLI 子命令(CLI 只做机械操作)。用户误在 CLI 里敲这些时，给出精准引导，
 // 而非笼统的「未知命令」——避免把人引向不存在的 gantry help 死路。
 const IDE_ONLY_SKILLS = new Set([
-  'next', 'exec', 'adjust', 'resume', 'review', 'health', 'knowledge', 'debug', 'fast',
+  'next', 'exec', 'adjust', 'resume', 'review', 'health', 'debug', 'fast',
 ]);
+
+function handleCliError(err) {
+  if (err instanceof ConfigError) {
+    for (const line of err.errors) console.error(line);
+    console.error('修正后重试或删除该键');
+    process.exit(1);
+  }
+  console.error(err.message || String(err));
+  process.exit(1);
+}
 
 if (!command || command === '--help' || command === '-h') {
   help();
 } else if (command === '--version' || command === '-v' || command === '-V') {
   version();
 } else if (commands[command]) {
-  const _r = commands[command](args);
-  if (_r && typeof _r.then === 'function') _r.catch(err => { console.error(err.message || String(err)); process.exit(1); });
+  try {
+    // AC-1 fail-closed: 任一命令运行前先校验 learnings 配置, 未知 key 立即退出非零
+    const _all = readConfig(process.cwd());
+    const _vr = validateLearningsConfig(_all.learnings);
+    if (!_vr.ok) throw new ConfigError(_vr.errors);
+    // jev-redline-precheck AC-8: jev 配置同样 fail-closed(apiKey 等按未知键拒绝)
+    const _jv = validateJevConfig(_all.jev);
+    if (!_jv.ok) throw new ConfigError(_jv.errors);
+
+    const _r = commands[command](args);
+    if (_r && typeof _r.then === 'function') _r.catch(handleCliError);
+  } catch (err) {
+    handleCliError(err);
+  }
 } else if (IDE_ONLY_SKILLS.has(command)) {
   console.error(`\`${command}\` 是 IDE skill，不是 CLI 命令。`);
   console.error(`  请在 IDE(Claude Code 等)中运行: /gantry-${command}`);
@@ -131,7 +190,7 @@ function status(args) {
   const cfg = readConfig(projectRoot);
   if (state.currentStage !== 'idle'
       && requiresApproval(state.currentStage)) {
-    console.log(`\n⏸  当前阶段 ${state.currentStage} 需人工确认：审阅本阶段产物后运行 /gantry-next 继续。`);
+    console.log(`\n⏸  当前阶段 ${state.currentStage} 需人工确认：审阅本阶段产物后运行 /gantry-auto 继续（或 /gantry-next 单步）。`);
   }
 
   // 任务进度（dev 阶段且有 TASKS.md 时显示）
@@ -154,7 +213,6 @@ function status(args) {
     const nextSt = getNextStage(state.currentStage, {
       ...cfg,
       pipeline: state.pipeline,
-      _uiImpact: readProposalUiImpact(projectRoot, state.activeChange),
     });
     if (nextSt) {
       console.log(`\n下一步: /gantry-next  →  执行 ${state.currentStage} 并推进到 ${nextSt}`);
@@ -205,94 +263,427 @@ function formatContextSignal(contextUsage = {}) {
 
 /**
  * gantry change — 启动新变更
+ *
+ * 管线默认 full（ADR-006：创建期不再软打分，tier-router 已删除）。
+ * --tier light 显式进入 light 无人工关卡入口（需 --scope）；
+ * --tier <light|full> 覆写默认值，--pipeline 作为 deprecated alias（同取值），
+ * --tier 与 --pipeline 同时给出时 --tier 优先。
+ * light 入口预检（顺序）：非 git 项目 → 描述命中红线 → 意图范围非法。
+ * 任一命中即回落 full@change，原因写入 EXECUTION 的 tier-decision 段。
+ * --dry-run 只打印决策 JSON (tier/pipeline/code，回落时附加 reason)，不落 STATE、不建目录。
  */
-function change(args) {
+async function change(args, opts = {}) {
   const projectRoot = process.cwd();
-  ensureInit(projectRoot);
+  const isDryRun = args.includes('--dry-run');
 
-  // 提取描述：跳过 --flag 及其值
-  const description = stripFlags(args, ['--pipeline', '--tool', '--id']).join(' ');
+  // 提取描述：跳过 --flag 及其值（含 light 入口参数）
+  const description = stripFlags(
+    args,
+    ['--pipeline', '--tool', '--id', '--tier', '--scope', '--accept', '--verify'],
+  ).join(' ');
   if (!description) {
     console.error('用法: gantry change "<变更描述>"');
     process.exit(1);
   }
 
-  const state = readState(projectRoot);
-  if (state.activeChange) {
-    console.error(`已有活跃变更: ${state.activeChange}`);
-    console.error('请先完成或归档当前变更 (gantry archive)');
-    process.exit(1);
-  }
-
-  const flagPipeline = getFlag(args, '--pipeline');
-  const pipeline = normalizePipeline(flagPipeline || 'full');
-  if (pipeline === 'light') {
-    const eligibility = assessLightEligibility(description);
-    if (!eligibility.eligible) {
-      console.error(`light 不允许高风险变更: ${eligibility.risks.join(', ')}`);
-      console.error('请改用: gantry change --pipeline full "<描述>"');
+  // tier 覆写解析（纯参数校验，先于项目初始化）：--tier 优先于 deprecated --pipeline
+  const rawTier = getFlag(args, '--tier');
+  const rawPipeline = getFlag(args, '--pipeline');
+  let tierOverride = null;
+  if (rawTier != null) {
+    tierOverride = normalizeTierValue(rawTier);
+    if (!tierOverride) {
+      console.error('无效的 --tier（可选 light|full）');
       process.exit(1);
     }
+    if (rawPipeline != null) {
+      console.error(`⚠ --tier 与 --pipeline 同时给出，--tier 优先，忽略 --pipeline ${rawPipeline}`);
+    }
+  } else if (rawPipeline != null) {
+    tierOverride = normalizeTierValue(rawPipeline);
+    if (!tierOverride) {
+      console.error('无效的 --pipeline（可选 light|full，建议改用 --tier）');
+      process.exit(1);
+    }
+  }
+
+  if (!isDryRun) {
+    ensureInit(projectRoot);
+
+    const state = readState(projectRoot);
+    if (state.activeChange) {
+      console.error(`已有活跃变更: ${state.activeChange}`);
+      console.error('请先完成或归档当前变更 (gantry archive)');
+      process.exit(1);
+    }
+
+    // before:change hook — 触发点在状态写入前,失败即拒绝新建变更(退出 2)
+    const cfg = readConfig(projectRoot);
+    const hookResult = await runHook(cfg, 'before:change', projectRoot);
+    if (!hookResult.ok) {
+      console.error('✗ before:change hook 阻断,变更未创建');
+      process.exit(2);
+    }
+  }
+
+  // 默认 full；--tier light 显式进入 light 入口（CREATION 期只做描述/范围预检，不做软打分）
+  const requestedTier = tierOverride ?? 'full';
+
+  let lightFallbackReason = null;
+  let scope = [];
+  let accept = [];
+  let verify = null;
+  if (requestedTier === 'light') {
+    scope = parseScopeArg(getFlag(args, '--scope'));
+    accept = parseAcceptArg(getFlag(args, '--accept'), description);
+    verify = getFlag(args, '--verify');
+
+    // 预检顺序：非 git → 描述红线 → 意图范围 → HEAD 可解析（第一个失败即回落）
+    if (!isGitRepo(projectRoot)) {
+      lightFallbackReason = 'non-git';
+    } else {
+      const hit = detectHardRuleHit({ modifiedFiles: [], newFiles: [], pkgJsonDepsDelta: [] }, description);
+      if (hit.hit) {
+        lightFallbackReason = hit.ruleIds.join(', ');
+      } else if (!validateIntentScope(scope).ok) {
+        lightFallbackReason = 'intent-scope-invalid';
+      } else if (!resolveHeadSha(projectRoot)) {
+        // D25：仓库尚无提交 → HEAD 无法锚定，守卫采集面无基准可依，回落 full@change
+        lightFallbackReason = 'no-head-commit';
+      }
+    }
+  }
+
+  // Jev 语义预检（jev-redline-precheck · DESIGN D1/D2/D6）：排在预检链最末，只在确定要进 light
+  // 时才可能外发。只升不降：命中回落 full，失败按关键词结果继续；结果不进 ruleIds（AC-9）。
+  let jevLine = null;
+  if (requestedTier === 'light' && !lightFallbackReason) {
+    const jev = shouldUseJev(readConfig(projectRoot), process.env);
+    if (jev.warn) console.error(jev.warn);
+    if (jev.use) {
+      const result = await runJevPrecheck(description, { apiKey: jev.apiKey, baseURL: jev.baseURL });
+      jevLine = renderJevLine(result);
+      if (!result.ok) {
+        console.error(`⚠ Jev 预检失败（${result.error}），已按关键词结果继续`);
+      } else if (result.hit) {
+        lightFallbackReason = 'jev-semantic';
+      }
+    }
+  }
+
+  const isLight = requestedTier === 'light' && !lightFallbackReason;
+  const effectiveTier = isLight ? 'light' : 'full';
+  const tierSource = isLight
+    ? 'override'
+    : (lightFallbackReason ? 'light-fallback' : (tierOverride ? 'override' : 'default'));
+
+  if (isDryRun) {
+    const result = { tier: effectiveTier, pipeline: effectiveTier, code: 'tier_dry_run' };
+    if (lightFallbackReason) result.reason = lightFallbackReason;
+    if (jevLine) result.jev = jevLine;
+    console.log(JSON.stringify(result));
+    return;
   }
 
   // 生成 change-id
   const changeId = generateChangeId(description, projectRoot, getFlag(args, '--id'));
   const specsDir = join(projectRoot, SPECS_DIR, changeId);
   mkdirSync(specsDir, { recursive: true });
+  const executionPath = join(specsDir, getPreferredArtifactName('execution'));
 
-  // 更新状态
+  // ── light 入口：固化意图 + 工作区基线，STATE 直接进 fast ──
+  //    IO（baseline 采集、light.json / 意图头写入）在 light-gate（DESIGN D22）
+  if (isLight) {
+    writeLightEntry(projectRoot, {
+      changeId,
+      executionPath,
+      intent: { goal: description, accept, scope, ...(verify ? { verify } : {}) },
+      jevLine,
+    });
+
+    updateState(projectRoot, {
+      pipeline: 'light',
+      activeChange: changeId,
+      currentStage: 'fast',
+      activeAgent: 'executor',
+    });
+
+    // 写一次 pack,让 skill 立刻有可消费的上下文
+    try { writeContextPack(projectRoot); } catch { /* non-blocking */ }
+
+    console.log(`✓ 变更已创建: ${changeId}`);
+    console.log('  管线: light');
+    console.log('  code: light_entered');
+    console.log(`  意图: ${specsPath(changeId, 'light.json')}`);
+    console.log(`  工件目录: ${specsPath(changeId)}/`);
+    console.log('  当前阶段: fast (快速闭环)');
+    console.log(`  上下文: ${PACK_PATH}`);
+    console.log('\n请在声明的「允许改动范围」内实施改动，完成后运行:');
+    console.log('  gantry advance');
+    return;
+  }
+
+  // ── full（默认 / 显式覆写 / light 回落）──
+  writeFileSync(
+    executionPath,
+    `# EXECUTION: ${changeId}\n\n${renderTierDecision({ tier: 'full', source: tierSource, reason: lightFallbackReason, jevLine })}\n`,
+    'utf-8',
+  );
+
   updateState(projectRoot, {
-    pipeline,
+    pipeline: 'full',
     activeChange: changeId,
     currentStage: 'change',
     activeAgent: 'planner',
   });
 
-  // 写一次 pack,让 skill 立刻有可消费的上下文
   try { writeContextPack(projectRoot); } catch { /* non-blocking */ }
 
+  const code = lightFallbackReason
+    ? 'light_fallback'
+    : (tierOverride ? 'tier_override_recorded' : 'tier_decided');
   console.log(`✓ 变更已创建: ${changeId}`);
-  console.log(`  管线: ${pipeline}`);
+  if (lightFallbackReason) {
+    console.log(`  ⚠ light 入口被拒绝（${lightFallbackReason}），已回落 full`);
+  }
+  console.log('  管线: full');
+  console.log(`  code: ${code}`);
   console.log(`  工件目录: ${specsPath(changeId)}/`);
-  console.log(`  当前阶段: change (变更提案)`);
+  console.log('  当前阶段: change (变更提案)');
   console.log(`  上下文: ${PACK_PATH}`);
   console.log(`\n请执行阶段 0 (CHANGE):`);
   console.log(`  加载 .gantry/core/phases/0-change.md 并产出 ${specsPath(changeId, getPreferredArtifactName('proposal'))}`);
 }
 
 /**
- * gantry pipeline full — 显式将当前 change 从 light 提升为 full。
+ * gantry loop-next — 只读:输出下一步白名单 token。
+ *
+ * pdlc S4 契约:stdout 恰好一行,匹配 ^(gantry-[a-z]+|done|blocked)$;
+ *              stderr 空或仅 [loop-next warn] 前缀;
+ *              exit 0 (推进 / done) / exit 2 (blocked)。
+ *
+ * 供 P2 driver 消费。本身不推进状态,不写任何文件。
+ */
+function loopNext() {
+  const projectRoot = process.cwd();
+  let state, fence;
+  try {
+    state = readState(projectRoot);
+    fence = readFence(projectRoot);
+  } catch (err) {
+    process.stderr.write(`[loop-next warn] state 读取失败: ${err.message}\n`);
+    process.stdout.write('blocked\n');
+    process.exit(2);
+  }
+
+  // 合并散文区(pipeline/currentStage/currentWave)与 fence(nextStep/lastStageResult/previousWave)
+  const merged = {
+    pipeline: state.pipeline,
+    currentStage: state.currentStage,
+    currentWave: state.currentWave,
+    previousWave: fence.previousWave,
+    nextStep: fence.nextStep,
+    lastStageResult: fence.lastStageResult,
+  };
+
+  const token = computeNextStep(merged);
+  if (!WHITELIST.includes(token)) {
+    process.stderr.write(`[loop-next warn] computeNextStep 输出非白名单: ${token}\n`);
+    process.stdout.write('blocked\n');
+    process.exit(2);
+  }
+
+  process.stdout.write(`${token}\n`);
+  if (token === 'blocked') process.exit(2);
+  process.exit(0);
+}
+
+/**
+ * P4 命令折叠(2026-09-16):`loop-guard` 已合入 `advance` 入口;`ac-gate` 已完全删除,
+ * AC 覆盖硬闸继续由 integration 门禁末端 `checkAcGate` 承担(src/lib/phases.mjs)。
+ * 需要在 review 阶段自检 AC 覆盖 → 跑一次 `gantry advance` 直到 integration。
+ *
+ * 保留 `checkLoopGuard` / `checkAcCoverage` 纯函数,供 advance 与 phases 内联使用。
+ */
+
+/**
+ * 在 advance 入口前置的上下文/步数熔断检查(原 gantry loop-guard 命令折叠而来)。
+ *
+ * 熔断契约(与旧命令一致):
+ *   - stderr `[advance warn] <reason>`,exit 2
+ *   - fence.lastStageResult.blockedReason 非覆盖式写入
+ *
+ * 未熔断 → 静默 return,advance 继续走门禁与阶段推进。
+ */
+function preAdvanceLoopGuard(projectRoot) {
+  let state, config;
+  try {
+    state = readState(projectRoot);
+    config = readConfig(projectRoot);
+  } catch (err) {
+    process.stderr.write(`[advance warn] loop-guard state 读取失败: ${err.message}\n`);
+    process.exit(2);
+  }
+  const verdict = checkLoopGuard(state, config);
+  if (!verdict.tripped) return;
+
+  const reason = `loop-guard: ${verdict.reason}`;
+  const r = writeFenceBlockedReason(projectRoot, reason);
+  if (r.error) {
+    process.stderr.write(`[advance warn] writeFence 失败: ${r.error}\n`);
+  }
+  process.stderr.write(`[advance warn] ${verdict.reason}\n`);
+  process.exit(2);
+}
+
+/**
+ * gantry heal <taskId> — 记录一次 dev verify 失败(SPEC AC-4)。
+ * gantry heal --check <taskId> — 查询 R2.5 上限(SPEC AC-5)。
+ *
+ * 记录模式:
+ *   heal <taskId> --reason X [--command Y] [--stderr Z|-]
+ *   → stdout `recorded #<n>`, exit 0
+ *
+ * 查询模式(--check):
+ *   heal --check <taskId>
+ *   → K<3: stdout `ok · attempts=K/3`, exit 0
+ *   → K>=3: stdout `blocked · attempts=K/3`, exit 2 + 写 fence.blockedReason(不覆盖)
+ */
+function heal(args) {
+  const projectRoot = process.cwd();
+  const parsed = parseHealArgs(args);
+  const state = safeReadState(projectRoot);
+  if (!state?.activeChange) {
+    process.stderr.write('[heal] no active change\n');
+    process.exit(1);
+  }
+  const execPath = resolveArtifactPath(
+    join(projectRoot, SPECS_DIR, state.activeChange),
+    'execution',
+  )?.path;
+  if (!execPath || !existsSync(execPath)) {
+    process.stderr.write('[heal] execution file missing\n');
+    process.exit(1);
+  }
+
+  if (parsed.check) {
+    const log = readHealLog(execPath);
+    const { stop, count, limit } = shouldStopHealing(log, parsed.taskId);
+    if (!stop) {
+      process.stdout.write(`ok · attempts=${count}/${limit}\n`);
+      process.exit(0);
+    }
+    // 熔断:写 fence.blockedReason(不覆盖非空,与 loop-guard 一致)。
+    // T-FIX-03:走 writeFenceBlockedReason helper,消除与 loop-guard 的重复。
+    const r = writeFenceBlockedReason(
+      projectRoot,
+      `heal: limit exceeded task=${parsed.taskId}`,
+    );
+    if (r.error) {
+      process.stderr.write(`[heal warn] writeFence 失败: ${r.error}\n`);
+    }
+    process.stderr.write(`[heal] limit exceeded, task=${parsed.taskId}\n`);
+    process.stdout.write(`blocked · attempts=${count}/${limit}\n`);
+    process.exit(2);
+  }
+
+  if (!parsed.reason) {
+    process.stderr.write('[heal] --reason required\n');
+    process.exit(1);
+  }
+
+  let stderrText = parsed.stderr;
+  if (stderrText === '-') {
+    try { stderrText = readFileSync(0, 'utf-8'); }
+    catch { stderrText = ''; }
+  }
+
+  try {
+    const n = appendHealAttempt(execPath, {
+      taskId: parsed.taskId,
+      reason: parsed.reason,
+      command: parsed.command,
+      stderr: stderrText,
+    });
+    process.stdout.write(`recorded #${n}\n`);
+    process.exit(0);
+  } catch (err) {
+    process.stderr.write(`[heal] ${err.message}\n`);
+    process.exit(1);
+  }
+}
+
+function parseHealArgs(args) {
+  const out = { taskId: null, reason: null, command: null, stderr: null, check: false };
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === '--check') out.check = true;
+    else if (a === '--reason') out.reason = args[++i];
+    else if (a === '--command') out.command = args[++i];
+    else if (a === '--stderr') out.stderr = args[++i];
+    else if (!a.startsWith('--') && out.taskId == null) out.taskId = a;
+  }
+  if (!out.taskId) {
+    process.stderr.write('[heal] taskId required\n');
+    process.exit(1);
+  }
+  return out;
+}
+
+function safeReadState(root) {
+  try { return readState(root); } catch { return null; }
+}
+
+// ac-gate CLI 已删除(2026-09-16 P4 命令折叠):
+// AC 覆盖硬闸由 integration 门禁末端 checkAcGate 承担(src/lib/phases.mjs)。
+// 手动自检可直接 `gantry advance` 到 integration 观察门禁结果。
+
+/**
+ * gantry pipeline full — 显式将当前 light change 提升为 full（AC-13）。
+ *
+ * light 单向升档：任意 light 阶段都可升到 full@change，工作区代码原样保留，
+ * 落一份 PROPOSAL 初稿交 full 的 change 硬锁接管。已是 full 或没有活跃 change
+ * 时非零退出；`pipeline light` 是禁止的降档方向。
  */
 function pipeline(args) {
   const projectRoot = process.cwd();
   ensureInit(projectRoot);
   const target = args[0];
-  if (target !== 'full') {
-    console.error('用法: gantry pipeline full（只允许 light → full）');
+
+  if (target === 'light') {
+    console.error('不支持降档 (full → light)');
     process.exit(1);
   }
+  if (target !== 'full') {
+    console.error('用法: gantry pipeline full（light → full 单向升档）');
+    process.exit(1);
+  }
+
   const state = readState(projectRoot);
   if (!state.activeChange) {
     console.error('当前没有活跃 change');
     process.exit(1);
   }
-  if (state.pipeline !== 'light') {
-    console.error(`当前 pipeline 已是 ${state.pipeline}，无需提升`);
+  if (state.pipeline === 'full') {
+    console.error(`当前 pipeline 已是 full，无需提升`);
     process.exit(1);
   }
-  if (!['change', 'fast'].includes(state.currentStage)) {
-    console.error(`当前阶段 ${state.currentStage} 不允许切换 pipeline`);
+
+  let result;
+  try {
+    result = upgradeToFull(projectRoot, { source: 'manual', hits: [] });
+  } catch (err) {
+    console.error(`升档失败: ${err.message}`);
     process.exit(1);
   }
-  updateState(projectRoot, {
-    pipeline: 'full',
-    currentStage: state.currentStage === 'fast' ? 'change' : state.currentStage,
-    activeAgent: state.currentStage === 'fast' ? 'planner' : state.activeAgent,
-    pauseReason: null,
-    retries: 0,
-  });
-  writeContextPack(projectRoot);
+
+  try { writeContextPack(projectRoot); } catch { /* non-blocking */ }
+  // 与自动升档路径一致：升档后清理意图锚定，避免残留锚定干扰后续 change。
+  removeLightAnchor(projectRoot);
+
   console.log('✓ pipeline: light → full');
+  console.log(`  PROPOSAL 初稿: ${result.proposalPath}`);
+  console.log(`  当前状态: full@change`);
 }
 
 
@@ -322,13 +713,17 @@ function pipeline(args) {
  *   失败 → retries+=1，连续 > maxRetries 拒推
  *   --skip → 不阻塞
  */
-function advance(args) {
+async function advance(args) {
   const projectRoot = process.cwd();
   ensureInit(projectRoot);
 
+  // 命令折叠(2026-09-16):原 gantry loop-guard 内联到 advance 入口。
+  // 上下文 / 步数熔断时:exit 2 + 写 fence.blockedReason(非覆盖)。
+  preAdvanceLoopGuard(projectRoot);
+
   // advance 是「机械推进」入口：推进一步即停。多阶段自主推进用 gantry auto。
   const isSkip = args.includes('--skip');
-  const result = nextOnce(projectRoot, { isSkip });
+  const result = await nextOnce(projectRoot, { isSkip });
   if (result.stop && result.exitCode) process.exit(result.exitCode);
   if (result.reachedEnd) {
     console.log(`  管线已到达 ${result.reachedEnd}`);
@@ -340,7 +735,7 @@ function advance(args) {
  *   按 autonomous.maxStagesPerRun 自动推进,遇门禁阻塞或终态即停。
  *   单次推进步数由配置 autonomous.maxStagesPerRun 决定(不接受命令行覆盖)。
  */
-function auto(args) {
+async function auto(args) {
   const projectRoot = process.cwd();
   ensureInit(projectRoot);
 
@@ -364,7 +759,7 @@ function auto(args) {
   console.log(`自主模式: 最多推进 ${maxStages} 个阶段`);
 
   for (let step = 0; step < maxSteps; step++) {
-    const result = nextOnce(projectRoot);
+    const result = await nextOnce(projectRoot);
     if (result.stop) {
       console.log(`  自动推进在 ${step}/${maxSteps} 步停止`);
       if (result.exitCode) process.exit(result.exitCode);
@@ -376,7 +771,7 @@ function auto(args) {
     }
     updateState(projectRoot, { stagesRun: step + 1, maxStages });
     if (result.pausedForApproval) {
-      console.log(`⏸  已进入 ${result.pausedForApproval}（需人工确认）。审阅后运行 /gantry-next 继续。`);
+      console.log(`⏸  已进入 ${result.pausedForApproval}（需人工确认）。审阅后运行 /gantry-auto 继续（或 /gantry-next 单步）。`);
       return;
     }
   }
@@ -490,7 +885,7 @@ function dispatch(args) {
 /**
  * 单步推进。返回 { stop, reachedEnd, exitCode }
  */
-function nextOnce(projectRoot, { isSkip = false } = {}) {
+async function nextOnce(projectRoot, { isSkip = false } = {}) {
   const state = readState(projectRoot);
 
   if (state.currentStage === 'idle') {
@@ -502,12 +897,19 @@ function nextOnce(projectRoot, { isSkip = false } = {}) {
     return { reachedEnd: 'integration' };
   }
 
+  // light@fast 走独立的出口门（DESIGN D7/D8/D14；SPEC AC-6/7/8/11）：
+  // 不经过 full 的阶段图与 change/design/integration 硬锁，由 CLI 执行 verify
+  // + diff 守卫，全通过自动收尾，命中自动升档。readState 已保证 light@fast
+  // 必然持有 light.json（否则归一化为 full）。
+  if (state.pipeline === 'light' && state.currentStage === 'fast') {
+    return await runLightExitGate(projectRoot, state, { isSkip, archiveChange });
+  }
+
   const config = readConfig(projectRoot);
   const specsDir = join(projectRoot, SPECS_DIR, state.activeChange);
   const effectiveConfig = {
     ...config,
     pipeline: state.pipeline || config.pipeline,
-    _uiImpact: readProposalUiImpact(projectRoot, state.activeChange),
   };
   const nextStage = getNextStage(state.currentStage, effectiveConfig);
   if (!nextStage) {
@@ -515,7 +917,9 @@ function nextOnce(projectRoot, { isSkip = false } = {}) {
   }
 
   // === Gate ===
-  const gateResult = checkGate(nextStage, specsDir, effectiveConfig, state);
+  // T-FIX-02(REVIEW Round 2 · R2):显式传 projectRoot,integration ac-gate
+  // 不再用 `../../..` 反推;测试路径不受影响(缺省沿 SPECS_DIR 语义反推)。
+  const gateResult = checkGate(nextStage, specsDir, effectiveConfig, state, projectRoot);
 
   if (!gateResult.passed) {
     if (gateResult.hard) {
@@ -540,6 +944,16 @@ function nextOnce(projectRoot, { isSkip = false } = {}) {
       const hint = gateRecoveryHint(gateResult.reason);
       if (hint) console.error(hint);
       return { stop: true, exitCode: 1 };
+    }
+  }
+
+  // before:dev hook — 门禁已过、状态还未推进时触发。失败即拒绝进入 dev(退出 2)
+  if (nextStage === 'dev') {
+    const hookResult = await runHook(effectiveConfig, 'before:dev', projectRoot);
+    if (!hookResult.ok) {
+      updateState(projectRoot, { pauseReason: 'before:dev hook failed' });
+      console.error('✗ before:dev hook 阻断,未进入 dev 阶段');
+      return { stop: true, exitCode: 2 };
     }
   }
 
@@ -568,21 +982,12 @@ function nextOnce(projectRoot, { isSkip = false } = {}) {
   // 进入 Change / Design / Integration 后，把控制权交还给人。
   // 人审阅后再执行 /gantry-next 继续。
   // 单步 gantry advance 不受影响——它推进这一步后本就停下等下一次调用。
-  if (requiresApproval(nextStage)) {
+  // specsDir 已在函数首部由 state.activeChange 派生;change 关卡的内容驱动
+  // hard-lock 通过 requiresApproval 读该目录下的 PROPOSAL。
+  if (requiresApproval(nextStage, specsDir)) {
     return { stop: false, pausedForApproval: nextStage };
   }
   return { stop: false };
-}
-
-function requiresApproval(stage) {
-  return ['change', 'design', 'integration'].includes(stage);
-}
-
-function readProposalUiImpact(projectRoot, changeId) {
-  if (!changeId) return false;
-  const proposal = resolveArtifactPath(join(projectRoot, SPECS_DIR, changeId), 'proposal');
-  if (!proposal || !existsSync(proposal.path)) return false;
-  return proposalHasUiImpact(readFileSync(proposal.path, 'utf-8'));
 }
 
 /**
@@ -757,13 +1162,30 @@ async function hook(args) {
       console.log('未配置任何 hook');
       console.log(`  在 ${PLANNING_DIR}/config.json 的 hooks 字段添加，例如:`);
       console.log(`  "hooks": { "before:dev": "npm run lint" }`);
+      console.log(`  支持事件: before:change / after:change / before:dev / after:integration`);
       return;
     }
+    let hasError = false;
     for (const key of keys) {
       const def = hooks[key];
       const cmd = typeof def === 'string' ? def : def.cmd;
-      console.log(`  ${key.padEnd(22)} → ${cmd}`);
+      const check = checkHook(def, projectRoot);
+      // ✓ 校验通过 / ✗ 配置有问题(阻塞)/ ⚠ 无法离线校验,运行时才知(pending)
+      let mark = '✓';
+      let suffix = '';
+      if (!check.ok) {
+        mark = '✗';
+        suffix = ` (${check.reason})`;
+        hasError = true;
+      } else if (check.pending) {
+        mark = '⚠';
+        suffix = ` (${check.type},运行时校验)`;
+      } else {
+        suffix = ` (${check.type})`;
+      }
+      console.log(`  ${mark} ${key.padEnd(22)} → ${cmd}${suffix}`);
     }
+    if (hasError) process.exit(1);
     return;
   }
 
@@ -831,6 +1253,9 @@ async function install(args) {
     console.log(`  状态: ${PLANNING_DIR}/ 已存在，保留当前状态`);
   }
   if (result.items.length > 1) console.log(`  总文件: ${result.total} 个`);
+  if (initResult?.testCommandsSeeded) {
+    console.log(`  AC 覆盖模板: .gantry/loop/test-commands.yml（integration 门禁的输入，需填写 covers）`);
+  }
   if (!globalMode) {
     console.log(`\n下一步: gantry change "<描述你的变更>"`);
   }
@@ -843,6 +1268,8 @@ function initializeProject(projectRoot, { pipeline, tool, primaryAgent }) {
 
   installCorePhases(projectRoot);
   installCoreAgents(projectRoot);
+  // 与 planningDir 是否新建无关:模板按文件粒度判断,已存在不覆盖。
+  const testCommandsSeeded = installTestCommandsTemplate(projectRoot);
 
   if (!created) return { created };
 
@@ -855,7 +1282,6 @@ function initializeProject(projectRoot, { pipeline, tool, primaryAgent }) {
       change:       { enabled: true, requiresApproval: true },
       requirement:  { enabled: true },
       design:       { enabled: true, requiresApproval: true },
-      'ui-design':  { enabled: 'auto', condition: 'ui-impact' },
       task:         { enabled: true },
       dev:          { enabled: true },
       fast:         { enabled: true },
@@ -888,7 +1314,7 @@ function initializeProject(projectRoot, { pipeline, tool, primaryAgent }) {
     pauseReason: null,
   });
 
-  return { created, config };
+  return { created, config, testCommandsSeeded };
 }
 
 async function installToolsToTarget({ projectRoot, installTools, globalMode }) {
@@ -903,25 +1329,26 @@ async function installToolsToTarget({ projectRoot, installTools, globalMode }) {
     const renderer = await import(`../tools/renderers/${installTool.renderer}.mjs`);
     const files = renderer.render(core, cmds, agents);
     const target = globalMode ? globalInstallRoot(installTool.name) : projectRoot;
-
-    if (!globalMode) {
-      addCorePhaseFiles(files, core.phases);
-      addCoreAgentFiles(files, agents);
-    }
-
+    if (!globalMode) { addCorePhaseFiles(files, core.phases); addCoreAgentFiles(files, agents); }
     let count = 0;
     for (const [relPath, content] of Object.entries(files)) {
-      const outputPath = globalMode ? globalRelPath(installTool.name, relPath) : relPath;
-      const full = join(target, outputPath);
+      if (relPath.startsWith('__merge__/')) {
+        const realRel = relPath.slice('__merge__/'.length);
+        const settingsPath = join(target, globalMode ? globalRelPath(installTool.name, realRel) : realRel);
+        mkdirSync(dirname(settingsPath), { recursive: true });
+        const added = mergeSettingsJson(settingsPath, { 'permissions.allow': content.addToAllow });
+        const sideFile = globalMode ? join(globalInstallRoot(installTool.name), 'gantry-managed-permissions.json') : join(projectRoot, PLANNING_DIR, 'managed-permissions.json');
+        writeManaged(sideFile, buildManagedEntries(content));
+        console.log(`  已合并 ${(added['permissions.allow'] || []).length} 条 permission 到 ${settingsPath}${globalMode ? '（影响所有 Claude Code 会话）' : ''}`);
+        count++;
+        continue;
+      }
+      const full = join(target, globalMode ? globalRelPath(installTool.name, relPath) : relPath);
       mkdirSync(dirname(full), { recursive: true });
       if (SECTION_FILES.includes(relPath)) {
         injectSection(full, content);
       } else {
-        const skipBanner = isPromptEntry(relPath);
-        const finalContent = skipBanner
-          ? content
-          : insertBanner(content, bannerFor(installTool.name, relPath, content));
-        writeFileSync(full, finalContent);
+        writeFileSync(full, isPromptEntry(relPath) ? content : insertBanner(content, bannerFor(installTool.name, relPath, content)));
       }
       count++;
     }
@@ -941,6 +1368,7 @@ function installCorePhases(projectRoot) {
   }
 
   for (const [relPath, content] of Object.entries(files)) {
+    if (relPath.startsWith('__merge__/')) continue;
     const full = join(projectRoot, relPath);
     mkdirSync(dirname(full), { recursive: true });
     writeFileSync(full, insertBanner(content, bannerFor('core', relPath, content)), 'utf-8');
@@ -955,10 +1383,32 @@ function installCoreAgents(projectRoot) {
   }
 
   for (const [relPath, content] of Object.entries(files)) {
+    if (relPath.startsWith('__merge__/')) continue;
     const full = join(projectRoot, relPath);
     mkdirSync(dirname(full), { recursive: true });
     writeFileSync(full, insertBanner(content, bannerFor('core', relPath, content)), 'utf-8');
   }
+}
+
+/**
+ * 铺一份 `<project>/.gantry/loop/test-commands.yml` 模板(2026-10-12)。
+ *
+ * 背景:该文件是 integration AC 覆盖硬闸的输入,而此前谁都不生成它 —— 门禁于是
+ * 在 fail-open 下静默放行,等于不存在。门禁收紧为 fail-closed 后,必须让用户
+ * 知道该文件存在、放哪、什么格式,否则新项目一进 integration 就被挡且无从下手。
+ *
+ * **绝不覆盖**:已存在即原样保留(包括用户改过的)。
+ *
+ * @returns {boolean} 是否新写入(用于 install 输出)
+ */
+function installTestCommandsTemplate(projectRoot) {
+  const dest = join(projectRoot, '.gantry', 'loop', 'test-commands.yml');
+  if (existsSync(dest)) return false;
+  const tpl = join(GANTRY_ROOT, 'src', 'loop', 'test-commands.template.yml');
+  if (!existsSync(tpl)) return false;
+  mkdirSync(dirname(dest), { recursive: true });
+  writeFileSync(dest, readFileSync(tpl, 'utf-8'), 'utf-8');
+  return true;
 }
 
 function addCorePhaseFiles(files, phases) {
@@ -1003,6 +1453,19 @@ function uninstall(args) {
     for (const rel of SECTION_FILES) {
       const full = join(target.root, target.tool ? globalRelPath(target.tool, rel) : rel);
       if (removeSection(full)) sectionCount++;
+    }
+
+    // 合并回滚：仅 claude（或项目模式默认 claude）有 settings.json 合并
+    if (target.tool === null || target.tool === 'claude') {
+      const settingsPath = target.tool
+        ? join(target.root, globalRelPath(target.tool, '.claude/settings.json'))
+        : join(target.root, '.claude/settings.json');
+      const sideFile = target.tool
+        ? join(target.root, 'gantry-managed-permissions.json')
+        : join(target.root, PLANNING_DIR, 'managed-permissions.json');
+      const entries = readManaged(sideFile);
+      unmergeSettingsJson(settingsPath, entries);
+      if (existsSync(sideFile)) unlinkSync(sideFile);
     }
 
     if (generated.length > 0 || sectionCount > 0) foundAny = true;
@@ -1054,11 +1517,34 @@ function uninstall(args) {
 
 
 
-function archiveChange(projectRoot, changeId, { keepHistory = false, quiet = false } = {}) {
+async function archiveChange(projectRoot, changeId, { keepHistory = false, quiet = false, summary: summaryOverride = '' } = {}) {
   const sourceDir = join(projectRoot, SPECS_DIR, changeId);
   if (!existsSync(sourceDir)) {
     throw new Error(`未找到 change 目录: ${sourceDir}`);
   }
+
+  // CHANGELOG 写入 (T09): 必须在移动 change 目录之前完成, appendChangelogLine 抛错则整次归档中止。
+  const proposalPath = join(sourceDir, getPreferredArtifactName('proposal'));
+  const proposalContent = existsSync(proposalPath) ? readFileSync(proposalPath, 'utf8') : '';
+  let summary = summaryOverride || extractProposalSummary(proposalContent);
+  if (!summary) {
+    summary = changeId;
+    console.error('⚠ 摘要提取失败, 建议下次用 --summary 覆写');
+  }
+  const lessonsIds = await collectLessonsIds(join(projectRoot, '.gantry', 'learnings', 'team'), changeId);
+  const changelogPath = join(projectRoot, SPECS_DIR, 'CHANGELOG.md');
+  // 若尚未初始化 CHANGELOG,先写入标准表头骨架;父目录只读等真实故障会在此或 appendChangelogLine 抛错 (AC-7)。
+  if (!existsSync(changelogPath)) {
+    writeFileSync(changelogPath, '# CHANGELOG\n\n| 日期 | Change ID | 摘要 | PR | LESSONS |\n|---|---|---|---|---|\n');
+  }
+  await appendChangelogLine(changelogPath, {
+    date: new Date().toISOString().slice(0, 10),
+    id: changeId,
+    summary,
+    pr: '—',
+    lessons: lessonsIds.length ? lessonsIds.join(', ') : '无',
+  });
+  console.log('已写入 CHANGELOG.md');
 
   const archiveBase = join(projectRoot, SPECS_DIR, '_archive');
   if (!existsSync(archiveBase)) mkdirSync(archiveBase, { recursive: true });
@@ -1094,12 +1580,42 @@ function archiveChange(projectRoot, changeId, { keepHistory = false, quiet = fal
 }
 
 /**
+ * D19 / B1+B2 / D28：判定「未升档的 light change」——change 目录有 light.json 时，
+ * 只有**同时**满足两点才算已升档（可归档）：
+ *   ① EXECUTION.md 有 `## upgrade` 段（升档时会追加，见 light-upgrade.mjs）；
+ *   ② `.gantry/planning/light-anchor.json` 不属于本 change（不存在，或 changeId ≠ 本 change）。
+ * 单看 ① 不够（N5）：手写一行 `## upgrade` 就能伪造。真实升档——出口门自动升档
+ * （light-gate.mjs）与手工 `gantry pipeline full`（cli.mjs pipeline）——都会调用
+ * removeLightAnchor 清掉锚定，所以「锚定仍在」是伪造的第二个证据。锚定文件存在但
+ * 不可解析 → fail-closed，判为未升档。
+ * 不以 STATE 的 pipeline / stage 为判据：readState 会把「手改成 integration 的 light」
+ * 归一化成 full@integration（B2），只看 STATE 会漏判。
+ */
+function isUnupgradedLightChange(changeDir, projectRoot, changeId) {
+  if (!existsSync(join(changeDir, 'light.json'))) return false;
+  const execution = resolveArtifactPath(changeDir, 'execution');
+  const content = execution && existsSync(execution.path) ? readFileSync(execution.path, 'utf-8') : '';
+  if (!/^##\s+upgrade\b/m.test(content)) return true;
+
+  const anchorPath = join(projectRoot, LIGHT_ANCHOR_FILE);
+  if (!existsSync(anchorPath)) return false;
+  let anchor;
+  try {
+    anchor = JSON.parse(readFileSync(anchorPath, 'utf-8'));
+  } catch {
+    return true; // fail-closed：锚定不可解析
+  }
+  if (!anchor || typeof anchor !== 'object') return true;
+  return anchor.changeId === changeId;
+}
+
+/**
  * gantry archive — 收尾并归档当前 change
  */
-function archive(args) {
-  const positional = args.filter(a => !a.startsWith('--'));
+async function archive(args, opts = {}) {
+  const positional = stripFlags(args, ['--summary']);
   if (positional.length > 0) {
-    console.error('用法: gantry archive [--force] [--keep-history]');
+    console.error('用法: gantry archive [--force] [--keep-history] [--skip-learning] [--summary <摘要>]');
     process.exit(1);
   }
 
@@ -1113,6 +1629,17 @@ function archive(args) {
     process.exit(1);
   }
 
+  const finishedChange = state.activeChange;
+
+  // D19 / D28：light change 无人工关卡，收尾只能经 `gantry advance` 出口门（AC-7）。
+  // 该检查先于 --force / 阶段判定，且不看 STATE 里的 stage，堵住 B1（--force）、
+  // B2（手改 STATE 到 integration）与 N5（手写 `## upgrade`）三条绕过路径。出口门内部的
+  // 自动归档直接调用 archiveChange（cli.mjs → runLightExitGate 注入），不经过本函数，故不受影响。
+  if (isUnupgradedLightChange(join(projectRoot, SPECS_DIR, finishedChange), projectRoot, finishedChange)) {
+    console.error('✗ light change 只能经 gantry advance 出口门收尾（archive 不适用，--force 也不放行）');
+    process.exit(1);
+  }
+
   if (state.currentStage !== 'integration' && !args.includes('--force')) {
     console.log(`当前阶段: ${state.currentStage}`);
     console.log('通常在 integration 阶段执行 archive。');
@@ -1120,12 +1647,25 @@ function archive(args) {
     return;
   }
 
-  const finishedChange = state.activeChange;
+  const skipLearning = args.includes('--skip-learning');
+
+  // friction 汇总 hook (T15): 采集必须在 archiveChange 移动 change 目录之前完成,否则 getEvents 读不到事件。
+  let frictionEvents = null;
+  if (!skipLearning) {
+    const _lv = validateLearningsConfig(readConfig(projectRoot).learnings);
+    if (!_lv.ok) throw new ConfigError(_lv.errors);
+    const learningsCfg = _lv.merged;
+    const { threshold, weights } = learningsCfg.friction;
+    if (frictionGetScore(finishedChange, weights) >= threshold) {
+      frictionEvents = frictionGetEvents(finishedChange);
+    }
+  }
 
   let archiveResult;
   try {
-    archiveResult = archiveChange(projectRoot, finishedChange, {
+    archiveResult = await archiveChange(projectRoot, finishedChange, {
       keepHistory: args.includes('--keep-history'),
+      summary: getFlag(args, '--summary'),
       quiet: true,
     });
   } catch (error) {
@@ -1133,24 +1673,71 @@ function archive(args) {
     process.exit(1);
   }
 
-  updateState(projectRoot, {
-    activeChange: null,
-    currentStage: 'idle',
-    currentWave: null,
-    currentTask: null,
-    activeAgent: null,
-    autonomous: false,
-    stagesRun: 0,
-    retries: 0,
-    pauseReason: null,
-    pipeline: 'full',
-    contextUsage: { tokens: null, windowPercent: null },
-  });
+  // archive 收尾一律关闭自主模式，避免 auto / dispatch 置位的 autonomous 残留到下一个 change
+  resetStateToIdle(projectRoot, { ...state, autonomous: false });
+
+  if (frictionEvents) {
+    await summarizeFrictionLearning(projectRoot, finishedChange, frictionEvents, opts);
+  }
 
   console.log(`✓ 变更已收尾: ${finishedChange}`);
   console.log(`  状态已重置为 idle`);
   console.log(`  已归档到 ${specsPath('_archive', archiveResult.archiveName)}/`);
   console.log(`  恢复: gantry unarchive ${finishedChange}`);
+}
+
+/**
+ * friction 汇总 → 候选 learning → y/n/edit 决策 → 落盘 team/。
+ * autoConfirmChoice 由 opts 或 GANTRY_AUTO_CONFIRM 环境变量注入(测试用),跳过 stdin 交互。
+ */
+async function summarizeFrictionLearning(projectRoot, changeId, events, opts) {
+  const candidate = proposeLearning(changeId, events, {});
+  const auto = opts.autoConfirmChoice ?? process.env.GANTRY_AUTO_CONFIRM;
+  const choice = ['y', 'n', 'edit'].includes(auto) ? auto : await promptYNE(candidate);
+
+  if (choice === 'y') {
+    await writeLearning('team', candidate);
+    console.log(`  学习已写入 .gantry/learnings/team/${candidate.id}.md`);
+  } else if (choice === 'edit') {
+    await editAndWriteLearning(projectRoot, candidate);
+    console.log(`  学习已写入 .gantry/learnings/team/${candidate.id}.md`);
+  } else {
+    console.log(`  已跳过 friction 学习`);
+  }
+}
+
+async function promptYNE(candidate) {
+  console.log('\n检测到摩擦事件,生成 learning 候选:');
+  console.log(`  id: ${candidate.id}`);
+  console.log(`  标签: ${candidate.tags.join(', ')}`);
+  console.log(candidate.body);
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    for (;;) {
+      const answer = (await rl.question('\n采纳为 team learning? [y/n/edit] ')).trim().toLowerCase();
+      if (answer === 'y' || answer === 'n' || answer === 'edit') return answer;
+      console.log('请输入 y / n / edit');
+    }
+  } finally {
+    rl.close();
+  }
+}
+
+async function editAndWriteLearning(projectRoot, candidate) {
+  const editor = process.env.EDITOR || process.env.VISUAL || 'vi';
+  const learningsDir = join(projectRoot, '.gantry', 'learnings');
+  mkdirSync(learningsDir, { recursive: true });
+  const draftPath = join(learningsDir, `.draft-${candidate.id}-${process.pid}.md`);
+  writeFileSync(draftPath, candidate.body, 'utf-8');
+  try {
+    const r = spawnSync(editor, [draftPath], { stdio: 'inherit' });
+    if (r.error) throw r.error;
+    if (r.status !== 0) throw new Error(`编辑器退出码 ${r.status}`);
+    const editedBody = readFileSync(draftPath, 'utf-8');
+    await writeLearning('team', { ...candidate, body: editedBody });
+  } finally {
+    if (existsSync(draftPath)) unlinkSync(draftPath);
+  }
 }
 
 /**
@@ -1217,6 +1804,66 @@ function metrics(args) {
 }
 
 /**
+ * gantry loop [claude|codex] — 无监督收敛 driver 的终端入口。
+ *
+ * 把 src/loop/loop.sh 包成 subcommand:
+ *   - 脚本从 gantry 包根(GANTRY_ROOT)读,不依赖用户项目有没有 loop.sh
+ *     2026-10-12:driver 从 .gantry/loop/ 迁到 src/loop/。.gantry/ 只放运行时产物,
+ *     仓库逻辑不得依赖其下的文件;搬迁后用户项目里的 .gantry/loop/ 纯粹是日志目录。
+ *   - 用户项目 cwd 由 spawn 的 cwd 透传;dispatcher 用环境变量 PROJECT_ROOT 读
+ *   - 退出码原样透传(0=done / 2=blocked / 3=max-steps / 4=dispatch-fail / 5=stuck / 64=usage)
+ *
+ * 环境变量透传:GANTRY_BIN(默认 "gantry") / GANTRY_LOOP_MAX_STEPS / LOOP_STUCK_LIMIT /
+ *              GANTRY_LOOP_RETRIES / GANTRY_LOOP_BACKOFF / GANTRY_LOOP_DISPATCHER。
+ *
+ * 2026-10-12:client 之后的参数原样透传给 loop.sh(--quiet / --verbose / -h),
+ * 不再静默吞掉——此前 `gantry loop claude --verbose` 的 flag 会被丢弃。
+ */
+function loop(args) {
+  const client = args[0];
+  const passthrough = args.slice(1);
+  if (!client || ['-h', '--help'].includes(client)) {
+    console.log(`gantry loop <client> [--quiet] — 无监督收敛 driver
+
+用法: gantry loop <client> [--quiet]
+  client        claude | codex(明确指定,不做自动探测)
+  --quiet, -q   只打每步一行摘要,dispatch/advance 输出落日志
+  --verbose,-v  兼容别名(默认已全显示),接受但不改变行为
+
+默认全显示:每步打印头行 + 流式转发 dispatch 输出。
+遇到 dispatch / advance 失败会带诊断退避重试(上限取 config.autonomous.maxRetries)。
+
+环境变量:
+  GANTRY_BIN              CLI 入口,默认 "gantry"(全局可执行)
+  GANTRY_LOOP_MAX_STEPS   步数上限,默认 40
+  LOOP_STUCK_LIMIT        同 token 连续次数上限,默认 2
+  GANTRY_LOOP_RETRIES     失败重试上限,默认取 config.autonomous.maxRetries(3)
+  GANTRY_LOOP_BACKOFF     退避基数秒,默认 1
+
+退出码: 0=done  2=blocked  3=达步数上限  4=dispatch 失败  5=stuck  64=用法错`);
+    if (!client) process.exit(64);
+    return;
+  }
+
+  const loopScript = join(GANTRY_ROOT, 'src', 'loop', 'loop.sh');
+  if (!existsSync(loopScript)) {
+    console.error(`未找到 loop 脚本: ${loopScript}`);
+    console.error(`gantry 包安装不完整——请重装(npm i -g gantry)。`);
+    process.exit(1);
+  }
+
+  const r = spawnSync('bash', [loopScript, client, ...passthrough], {
+    stdio: 'inherit',
+    cwd: process.cwd(),
+  });
+  if (r.error) {
+    console.error(`启动 loop 失败: ${r.error.message}`);
+    process.exit(1);
+  }
+  process.exit(r.status ?? 1);
+}
+
+/**
  * gantry version — 显示版本号
  */
 function version() {
@@ -1224,8 +1871,35 @@ function version() {
   console.log(`gantry v${pkg.version}`);
 }
 
-function help() {
+function help(args = []) {
+  if (args.includes('--all')) return helpAll();
+
   console.log(`gantry — 阶段驱动编排器
+
+日常在 IDE 里用 skill 推进,CLI 只做机械操作:
+  /gantry-change  /gantry-next  /gantry-archive  /gantry-auto  /gantry-review
+
+人工敲的:
+  install              初始化项目 / 全局安装
+  status               查看当前状态       [--json]
+  archive              归档当前变更
+  hook <list|run>      查看 / 执行阶段 hook
+
+自动化 / 脚本用:
+  change "<描述>"      开新变更           [--tier light|full]
+  pipeline full        将 light change 单向升档为 full
+  advance              单步推进           [--skip]
+  auto                 多阶段自动推进
+  loop <claude|codex>  无监督收敛 driver(headless)  [--quiet]
+  loop-next            无监督 driver 消费的 token
+  heal                 dev 阶段 self-heal
+
+详细命令表: gantry help --all
+文档 / 版本: docs/  |  gantry --version`);
+}
+
+function helpAll() {
+  console.log(`gantry — 完整命令参考
 
 用法: gantry <command> [options]
 
@@ -1236,14 +1910,34 @@ function help() {
 
   change "<描述>"     开始新变更（默认 full）
     --id <id>           显式指定 change-id（否则从业务主题自动生成）
-    --pipeline light    显式选择低风险快速路径
-  pipeline full       将当前活跃 change 从 light 单向提升为 full
+    --tier <T>          显式指定管线: light|full（默认 full）
+    --pipeline <T>      --tier 的 deprecated alias（同取值 light|full）
+    --scope <paths>     light 入口: 允许改动的相对路径，逗号分隔（light 必填）
+    --accept "<a;b>"    light 入口: 验收线，分号分隔（默认取描述）
+    --verify "<cmd>"    light 入口: 出口门要执行的 verify 命令（可选）
+  pipeline full       将当前活跃 change 从 light 单向提升为 full（任意 light 阶段可升；已是 full 报错）
+  pipeline light      非零退出：不支持降档（full → light）
   /gantry-next        在客户端中执行当前阶段产物并推进（不是 CLI 命令）
+
+  advance             单步推进（供 loop driver / 手动调用）
+    --skip              跳过软门禁失败继续推进
 
   auto                自动多阶段推进（步数取 config.autonomous.maxStagesPerRun），遇门禁失败 / 人工确认关卡 / 终态即停
 
   dispatch            DEV 自动模式选择下一个 canonical wave，并刷新首个 task 的 context pack
     --json              输出 { status, waveId?, taskIds? }
+
+  loop <claude|codex> 无监督收敛 driver(headless)——包装 src/loop/loop.sh
+                      [--quiet] 只打每步摘要;默认全显示并流式转发 dispatch 输出
+                      dispatch/advance 失败带诊断退避重试(上限 config.autonomous.maxRetries)
+                      退出码: 0=done  2=blocked  3=max-steps  4=dispatch 失败  5=stuck  64=用法错
+                      环境变量: GANTRY_BIN(默认 gantry) / GANTRY_LOOP_MAX_STEPS / LOOP_STUCK_LIMIT
+                                / GANTRY_LOOP_RETRIES / GANTRY_LOOP_BACKOFF
+
+  loop-next           只读输出下一步 loop token（供无监督 driver 消费）
+                      白名单单 token,stdout 单行;exit 0=推进/done,exit 2=blocked
+
+  heal                dev 阶段 verify 失败时的 self-heal 缓冲（R2.5 上限触发时写 fence.blockedReason）
 
   status              查看当前状态、待确认关卡
     --json              输出 JSON 格式
@@ -1251,6 +1945,7 @@ function help() {
   archive             收尾并归档当前 change（仅 integration 阶段可用）
     --force             跳过阶段检查强制收尾
     --keep-history      保留旧归档，新归档加版本后缀
+    --skip-learning     跳过 friction 汇总 learning 生成
 
 安装 / 分发:
   install -g          安装 gantry 到各工具全局目录（不初始化当前项目）
@@ -1269,8 +1964,10 @@ function help() {
 
   done <task-id>      标记任务完成 + 落 EXECUTION.md 执行日志
 
-  hook run <event>    执行已配置的阶段 hook（before:dev / after:test 等）
-  hook list           列出全部已配置的 hook
+  hook run <event>    执行已配置的阶段 hook（before:change / before:dev 等）
+  hook list           列出全部已配置的 hook 及状态标记
+
+  knowledge <sub>     non-change 知识库管理（研究、决策记录等）
 
   unarchive <id>      从归档恢复并重新激活 change
     --from <name>       指定归档版本名（默认同 change-id）
@@ -1281,7 +1978,8 @@ function help() {
     --out <dir>         报告输出目录（默认 .gantry/specs/metrics）
 
   version             显示版本号
-  help                显示本帮助`);
+  help                显示简版帮助
+  help --all          显示本完整表`);
 }
 
 // --- install/uninstall 辅助 ---
@@ -1470,10 +2168,16 @@ function cleanSkillDirs(base) {
 
 function removePlanning(target) {
   const planningDir = join(target, PLANNING_DIR);
-  if (existsSync(planningDir)) {
-    rmSync(planningDir, { recursive: true, force: true });
-    console.log(`  删除: ${PLANNING_DIR}/`);
-  }
+  if (!existsSync(planningDir)) return;
+  // 软删：rename 到 .gantry/.trash/planning-<ts>/，避免 unlink 不可逆
+  // 用户若反悔可直接 mv 回来；需要彻底清理再手动 rm .gantry/.trash
+  const ts = new Date().toISOString().replace(/[:.]/g, '-');
+  const trashDir = join(target, '.gantry', '.trash');
+  if (!existsSync(trashDir)) mkdirSync(trashDir, { recursive: true });
+  const dest = join(trashDir, `planning-${ts}`);
+  renameSync(planningDir, dest);
+  console.log(`  软删: ${PLANNING_DIR}/ → .gantry/.trash/planning-${ts}/`);
+  console.log(`  恢复: mv "${dest}" "${planningDir}"`);
 }
 
 function injectSection(filePath, content) {
@@ -1552,6 +2256,32 @@ function stripFlags(args, flagsWithValue = []) {
 
 
 
+
+/**
+ * 归一化 tier 覆写值 (light|full)，非法值返回 null。
+ */
+function normalizeTierValue(value) {
+  if (value === 'light' || value === 'full') return value;
+  return null;
+}
+
+/**
+ * 解析 light 入口的 --scope 值（逗号分隔）为数组；缺省 → 空数组。
+ * 空数组会由 validateIntentScope 判为 intent-scope-invalid。
+ */
+function parseScopeArg(raw) {
+  if (raw == null) return [];
+  return raw.split(',').map((s) => s.trim());
+}
+
+/**
+ * 解析 --accept：分号分隔，去空；缺省或全空 → [description]。
+ */
+function parseAcceptArg(raw, description) {
+  if (raw == null) return [description];
+  const items = raw.split(';').map((s) => s.trim()).filter(Boolean);
+  return items.length > 0 ? items : [description];
+}
 
 function generateChangeId(description, projectRoot, explicitId = null) {
   const source = explicitId || extractChangeSubject(description);

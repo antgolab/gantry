@@ -116,7 +116,7 @@ PROPOSAL → SPEC → DESIGN → [UI-DESIGN] → TASKS
 | **上下文边界** | DEV 每个任务独立会话，靠 .md 传状态 | 上下文崩溃：50k+ token 后的失效 |
 | **文件声明约束** | task 声明 write_files，提交前 diff 验边界 | 范围侵蚀：越界改动 |
 | **破坏性变更协议** | 删 5+ 行 / 改公共接口强制 grep 引用图 + 反问 | 范围侵蚀：隐性破坏调用链 |
-| **知识库 + 月度维护** | LESSONS.md UAT 失败提名，`/gantry-knowledge curate` 月度整理 + 过期检测 | 知识流失：踩坑经验无法复用 |
+| **知识库 + 月度维护** | LESSONS.md UAT 失败提名，`/gantry-context knowledge curate` 月度整理 + 过期检测 | 知识流失：踩坑经验无法复用 |
 | **约定漂移检测** | CONVENTIONS 模板 + 季度 diff 检查实际代码 | 知识流失：团队规范与实现偏离 |
 | **入场扫描护栏** | `/gantry-context scan` 生成 CONTEXT.md，DESIGN 强制对齐既有架构 | 范围侵蚀：新代码破坏既有抽象 |
 
@@ -181,7 +181,6 @@ gantry install --tool claude   # 可选: claude / codex / cursor / copilot / all
 ```
 /gantry-change "给订单列表增加导出功能"
 /gantry-next
-/gantry-exec
 /gantry-archive
 ```
 
@@ -189,15 +188,19 @@ gantry install --tool claude   # 可选: claude / codex / cursor / copilot / all
 
 | 类别 | 命令 | 用途 |
 |---|---|---|
-| 核心状态机 | `/gantry-change`、`/gantry-next`、`/gantry-exec`、`/gantry-archive` | 标准 change 流程 |
+| 核心状态机 | `/gantry-change`、`/gantry-next`、`/gantry-archive` | 标准 change 流程(dev 阶段任务自动执行)|
+| 自动驾驶 | `/gantry-auto` | 多步自主推进(保留人工确认关卡)|
 | 状态与恢复 | `/gantry-status`、`/gantry-resume`、`/gantry-adjust`、`/gantry-unarchive` | 查状态、断点恢复、变更补丁、恢复归档 |
-| 自动化 | `/gantry-auto` | 在 人工确认关卡下自主推进 |
 | 审查 | `/gantry-review`、`/gantry-review --requirement`、`/gantry-review --adversarial` | 代码审查、需求门禁、对抗性审查 |
-| 项目上下文 | `/gantry-context scan`、`/gantry-context architect`、`/gantry-context evolve` | 入场扫描、架构梳理、架构沉淀同步 |
-| 知识库 | `/gantry-knowledge capture`、`/gantry-knowledge curate` | 捕获知识、月度 / 季度维护 |
-| 诊断与快修 | `/gantry-health`、`/gantry-debug`、`/gantry-fast` | 代码库巡检、系统化调试、快速路径 |
+| 项目上下文 | `/gantry-context scan`、`/gantry-context architect`、`/gantry-context evolve`、`/gantry-context knowledge <capture|curate>` | 入场扫描、架构梳理、架构沉淀同步、知识库捕获与维护 |
+| 诊断 | `/gantry-health`、`/gantry-debug` | 代码库巡检、系统化调试 |
 
-> `scan` / `architect` / `evolve` / `curator` / `check-req` / `doubt` 不再作为独立公开命令暴露；对应能力已收敛到 `context`、`knowledge`、`review` 三个入口下。
+> `scan` / `architect` / `evolve` / `curator` / `check-req` / `doubt` 不再作为独立公开命令暴露；对应能力已收敛到 `context`、`review` 两个入口下。
+>
+> 已内部化(不再作为用户命令入口):
+> - `exec`:`/gantry-next` / `/gantry-auto` 到 dev 阶段自动触发
+> - `fast`：light 管线的唯一阶段，由 `gantry change --tier light --scope …` 直接进入
+> - `knowledge`:capture / curate 并入 `/gantry-context knowledge <sub>`
 
 ### 统一入口 GO.md
 
@@ -213,13 +216,30 @@ docs/GO.md
 
 ### 终端 CLI
 
-适合脚本、CI 或不用 IDE 的场景。CLI 只负责状态机、安装、归档等机械操作；`exec`、`adjust`、`context`、`knowledge` 等由 IDE skills 或 `docs/GO.md` 执行。
+适合脚本、CI 或不用 IDE 的场景。CLI 负责状态机、安装、归档等机械操作,以及无人值守收敛引擎；`exec`、`adjust`、`context`、`knowledge` 等由 IDE skills 或 `docs/GO.md` 执行。
 
 ```bash
 gantry change "给订单列表增加导出功能"
 gantry status
 gantry archive
+
+# 无人值守收敛引擎(P1–P4,详见 docs/loop.md)
+gantry loop-next                     # 只读:输出下一步白名单 token
+gantry advance                       # 推进一步;入口内联 loop-guard 熔断
+gantry heal T02 --reason "..."       # 记录一次 DEV verify 失败到 EXECUTION.md
+gantry heal --check T02              # 查询 R2.5 3 次上限
+# AC 覆盖硬闸随 integration 门禁自动触发(2026-10-12 起 fail-closed:SPEC 的每个 AC
+# 都必须被 .gantry/loop/test-commands.yml 的 covers 覆盖;该文件由 gantry install 铺
+# 注释模板),不再有独立 ac-gate 命令
 ```
+
+### 无人值守收敛引擎
+
+`gantry loop` 是基于状态机的自驱收敛引擎。`gantry loop <client> [--quiet]`(client ∈ `claude` | `codex`)读 `STATE.md`、每轮通过 `dispatch-<client>.sh` 派发到 headless AI 产阶段产物、再调 `gantry advance`,遇到 `done` / `blocked` / stuck 后停下。默认全显示并流式转发 dispatch 输出,`--quiet` 只打每步一行摘要;dispatch / advance 失败会带失败上下文退避重试(上限取 `config.autonomous.maxRetries`),`advance rc=2` 属硬停不重试:
+
+- [`docs/loop.md`](docs/loop.md) — driver 契约、白名单 token、fence 结构、`state-must-advance` 断言、输出纪律与重试语义
+- [`docs/loop-guard.md`](docs/loop-guard.md) — 上下文 / 步数熔断(现内联到 `gantry advance` 入口)
+- [`docs/self-heal.md`](docs/self-heal.md) — `EXECUTION.md ## Self-Heal Log` 缓冲、R2.5 上限、integration 门禁末端 AC 强校验
 
 ### 手动 @引用
 
@@ -245,12 +265,8 @@ PROPOSAL → SPEC → DESIGN → [UI-DESIGN] → TASKS → DEV → TEST → REVI
 
 ```bash
 gantry change "描述需求"   # → PROPOSAL.md
-/gantry-next               # → SPEC.md
-/gantry-next               # → DESIGN.md
-/gantry-next               # → TASKS.md
-/gantry-exec              # → DEV（在 IDE skill 中逐任务循环）
-/gantry-next               # → TEST
-/gantry-next               # → REVIEW
+/gantry-auto               # → SPEC.md → DESIGN.md（停在 design 关卡）
+/gantry-auto               # → TASKS.md → DEV → TEST → REVIEW（停在 integration 关卡）
 gantry archive             # → INTEGRATION + 归档
 ```
 
@@ -259,22 +275,20 @@ gantry archive             # → INTEGRATION + 归档
 只有文档、配置、文案或局部 bug 等低风险变更可显式选择 light：
 
 ```bash
-gantry change --pipeline light "描述需求"
-/gantry-next  # Change 确认后进入 Fast
-gantry archive
+gantry change --tier light --scope <p,...> "描述需求"
+gantry advance   # 出口门：CLI 执行 verify + diff 守卫
 ```
 
 ### MVP 模式（light 管线，当天跑通）
 
-light 只走 `change → fast → integration`；Fast 内合并范围锁定、实现、测试和自审：
+light 不走 `change` / `integration`，是无人工关卡的 `fast` 单阶段闭环：范围锁定、实现、测试和自审都在 fast 内完成，出口是 `gantry advance`：
 
 ```bash
-gantry change --pipeline light "描述需求"
-/gantry-next
-/gantry-next
+gantry change --tier light --scope <p,...> "描述需求"
+gantry advance
 ```
 
-产物：`PROPOSAL.md` + `EXECUTION.md`。命中高风险边界会拒绝 light，需改走 full。
+产物：`light.json` + `EXECUTION.md`，无 `PROPOSAL.md`。出口门命中范围越界 / 红线 / 测试弱化会自动升档 `full@change`（代码保留，转人工确认）。
 
 ---
 
@@ -296,8 +310,7 @@ gantry change --pipeline light "描述需求"
 |---|---|---|---|
 | `phases/0-change.md` | 把模糊想法**反问澄清**成变更提案（自动生成 change-id）| ✅ 完全独立 | 任何"我想做点什么但讲不清"的时刻；产品经理整理需求 |
 | `phases/1-requirement.md` | 把变更提案变成可执行需求 + 验收准则 + CONTEXT 候选 patch | ✅ 完全独立 | 写需求文档；把口头需求变成 PRD；提取但不直接固化项目上下文 |
-| `phases/2-design.md` | 把需求变成技术设计 + ADR + 风险矩阵 | ✅ 完全独立 | 架构评审；技术选型对比；写设计文档 |
-| `phases/2a-ui-design.md` | UI 美学方向决策 + design tokens + 反 AI-slop 自检（仅前端项目）| ✅ 完全独立 | 任何前端项目开工前；redesign；从设计稿提取 design system |
+| `phases/2-design.md` | 把需求变成技术设计 + ADR + 风险矩阵；PROPOSAL uiImpact=true 时展开 § 8 前端 UI 设计（美学方向决策 + design tokens + 反 AI-slop 自检）产出 UI-DESIGN.md | ✅ 完全独立 | 架构评审；技术选型对比；写设计文档；前端项目视觉规约 |
 | `phases/3-task.md` | 把设计拆成可并行的原子任务 + verify 命令 | ✅ 完全独立 | 工作分解；冲刺规划；把大功能拆给团队 |
 | `phases/4-dev.md` | 每 wave 新建子 Agent，并在 wave 内逐任务刷新 context pack（含 TDD + 提交 + 断点恢复 + UI anti-pattern 扫描）| ⚠️ 半独立 | 严格依赖 `TASKS.md` 中的 `verify` 字段 |
 | `phases/5-test.md` | 从验收准则派生测试矩阵 + UAT 脚本 | ✅ 完全独立 | 给已有功能补测试；写 QA 脚本；做覆盖率审计 |
@@ -313,7 +326,7 @@ gantry change --pipeline light "描述需求"
 | `/gantry-context scan` | `phases/I-intel-scan.md` | 老项目入场扫描：检测 AI 上下文文档 + 扫代码，生成 / 更新 `CONTEXT.md` | Brownfield 项目首次使用 Gantry；老项目架构偏移后重扫 |
 | `/gantry-context architect` | `phases/A-architect.md` | 项目级架构梳理：建立 / 重构 `ARCHITECTURE.md`，含模块图 + ADR 列表 + 跨模块契约 | 里程碑后架构梳理；接手陌生项目；ADR 定期重审 |
 | `/gantry-context evolve` | `phases/A-evolve.md` | 上下文增量同步：扫近期归档 change 的 SPEC 候选 patch + DESIGN §9，逐项 review 后 patch CONTEXT / ARCHITECTURE | 每月 / 每季批量同步；里程碑发布后凝固架构决策 |
-| `/gantry-knowledge curate` | `phases/C-curator.md` | 知识库维护 + 团队健康巡检：LESSONS 状态整理 / knowledge 过期检测 / CONVENTIONS 漂移检测 | 月度知识库维护；季度规则 retro；事故后知识沉淀 |
+| `/gantry-context knowledge curate` | `phases/C-curator.md` | 知识库维护 + 团队健康巡检：LESSONS 状态整理 / knowledge 过期检测 / CONVENTIONS 漂移检测 | 月度知识库维护；季度规则 retro；事故后知识沉淀 |
 | `/gantry-health` | `phases/M-health.md` | 代码库周期性巡检：6+6 维衰退诊断 / 技术债优先级 + 冗余扫描 | 月度 / 季度体检；里程碑前估价；接手陌生项目首周 |
 
 ### 制品模板（14 个）
@@ -351,8 +364,8 @@ gantry change --pipeline light "描述需求"
 |---|---|---|---|
 | [`brooks-lint`](https://github.com/hyhmrright/brooks-lint) | **代码质量** | `4-dev` self-review · `5-test` · `6-review` · `M-health` | 想要带书本引用的结构化 review 报告；周期性体检代码库 |
 | `jscpd` + `knip` / `vulture` / `staticcheck` 等 | **字面冗余 + 死代码** | `M-health` 步骤 2.5 | 找重复代码块；清理未用导出 / 依赖 / 死分支 |
-| [`ui-ux-pro-max`](https://uupm.cc) | **UI 广度** | `2a-ui-design` 字体 / 颜色 / 图表选择 | 想从更大候选池里挑；做数据可视化 |
-| [`impeccable`](https://impeccable.style) | **UI 深度** | `2a-ui-design` design tokens · `4-dev` · `6-review` 第三轮 | 想把 design system 抠到组件级 |
+| [`ui-ux-pro-max`](https://uupm.cc) | **UI 广度** | `2-design` § 8 字体 / 颜色 / 图表选择 | 想从更大候选池里挑；做数据可视化 |
+| [`impeccable`](https://impeccable.style) | **UI 深度** | `2-design` § 8 design tokens · `4-dev` · `6-review` 第三轮 | 想把 design system 抠到组件级 |
 
 **都没装 Gantry 也能跑**——`reference/*` 作为基线，代码诊断 / 测试诊断 / 调性 / 反 AI-slop 都有内置回退。装上后质量明显提升。
 
@@ -400,8 +413,8 @@ gantry change --pipeline light "描述需求"
 | 只想做 code review | `phases/6-review.md` + `templates/REVIEW.md` | 其他都不要 |
 | 只想做 UI 视觉 audit | `phases/6-review.md` 第三轮 + `reference/ui-anti-patterns.md` | 其他都不要 |
 | 只想做代码库体检 | `/gantry-health`（内部读取 `phases/M-health.md`）| 其他都不要 |
-| 只想整理知识库 | `/gantry-knowledge curate`（内部读取 `phases/C-curator.md`）| 其他都不要 |
-| 只想给前端立 design system | `phases/2a-ui-design.md` + `templates/UI-DESIGN.md` + `reference/ui-aesthetics.md` | 其他都不要 |
+| 只想整理知识库 | `/gantry-context knowledge curate`（内部读取 `phases/C-curator.md`）| 其他都不要 |
+| 只想给前端立 design system | `phases/2-design.md` § 8 前端 UI 设计 + `templates/UI-DESIGN.md` + `reference/ui-aesthetics.md` | 其他都不要 |
 | 只想沉淀失败教训 | `templates/LESSONS.md` | 其他都不要 |
 | 给 AI 一个项目级"小抄" | `/gantry-context scan` 生成 `CONTEXT.md`，后续用 `/gantry-context evolve` 增量同步 | 不要用单个 change 的术语/决策直接凑薄 CONTEXT |
 | 想跑完整闭环 | 全套 | — |
@@ -419,7 +432,7 @@ gantry change --pipeline light "描述需求"
 | `0-change.md` | ~6k – 8k | PROPOSAL.md |
 | `1-requirement.md` | ~6k – 9k | SPEC.md（AC 完备）|
 | `2-design.md` | ~10k – 15k | DESIGN.md（含技术栈卡片）|
-| `2a-ui-design.md` | ~12k – 18k | UI-DESIGN.md（含调性 + tokens）|
+| `2-design.md` § 8 前端 UI 设计（uiImpact=true 时展开）| ~12k – 18k | UI-DESIGN.md（含调性 + tokens）|
 | `3-task.md` | ~8k – 12k | TASKS.md（N 个任务）|
 | `4-dev.md` × 单个 task | ~25k – 60k | 实现代码 + 测试 + EXECUTION（必要时补 SUMMARY） |
 | `5-test.md` | ~30k – 80k | TEST.md（5 轮 + 真跑测试输出）|
@@ -504,8 +517,9 @@ Gantry 的演进方向是**从工程过程管理，向 AI 协作智能体基础�
 - [x] 9 阶段 pipeline + CLI 状态机
 - [x] Claude Code / Cursor / Codex / Copilot 四工具 IDE skills 分发
 - [x] Brownfield 安全护栏（CONTEXT + 破坏性变更协议）
-- [x] LESSONS.md 知识库 + `/gantry-knowledge curate` 月度维护
+- [x] LESSONS.md 知识库 + `/gantry-context knowledge curate` 月度维护
 - [x] CONVENTIONS.md 项目约定模板
+- [x] 无人值守收敛引擎（P1 `loop-next` · P2 driver + guard 内联 · P3 `heal` + integration AC 硬闸）
 - [ ] `gantry doctor`：环境自检命令，检测配置完整性和常见问题
 - [ ] 更完善的错误恢复和 人工确认系统
 - [ ] 测试覆盖率提升至 90%+

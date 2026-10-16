@@ -126,15 +126,17 @@ describe('gantry dispatch', () => {
 });
 
 describe('Codex auto skill', () => {
-  it('生成每 wave 一个新子 Agent 的编排协议', () => {
+  it('生成每 task 一个新子 Agent 的并发编排协议', () => {
     run('install', '--tool', 'codex');
     const skill = readFileSync(join(tmpDir, '.agents/skills/gantry-auto/SKILL.md'), 'utf-8');
 
     assert.match(skill, /gantry dispatch --json/);
     assert.match(skill, /spawn_agent/);
     assert.match(skill, /wait_agent/);
-    assert.match(skill, /每个 wave.*一个.*子 Agent/);
-    assert.match(skill, /wave 内.*逐.*task/);
+    assert.match(skill, /每个 task.*一个.*子 Agent/);
+    assert.match(skill, /context dev --task <id> --json/);
+    assert.match(skill, /不运行 `gantry done`/);
+    assert.doesNotMatch(skill, /任一时刻只运行一个/);
     assert.match(skill, /子 Agent 禁止执行 `gantry advance`/);
     assert.match(skill, /fallback_main/);
     assert.match(skill, /禁止调用 `spawn_agent` 或 `followup_task`/);
@@ -144,7 +146,7 @@ describe('Codex auto skill', () => {
 });
 
 describe('Claude Code auto skill', () => {
-  it('生成每 wave 一个新子 Agent 的编排协议', () => {
+  it('生成每 task 一个新子 Agent 的并发编排协议', () => {
     run('install', '--tool', 'claude');
     const skill = readFileSync(join(tmpDir, '.claude/skills/gantry-auto/SKILL.md'), 'utf-8');
 
@@ -152,7 +154,10 @@ describe('Claude Code auto skill', () => {
     assert.match(skill, /`Agent` 工具/);
     assert.match(skill, /subagent_type.*general-purpose/);
     assert.match(skill, /同步等待/);
-    assert.match(skill, /每个 wave.*一个.*子 Agent/);
+    assert.match(skill, /每个 task.*一个.*子 Agent/);
+    assert.match(skill, /同一条消息.*并发/);
+    assert.match(skill, /context dev --task <id> --json/);
+    assert.doesNotMatch(skill, /禁止使用并行 Agent 调用/);
     assert.match(skill, /子 Agent 禁止执行 `gantry advance`/);
     assert.match(skill, /fallback_main/);
     assert.match(skill, /禁止调用 `Agent` 工具或通过 resume/);

@@ -26,44 +26,62 @@ function teardown() {
 }
 
 describe('getNextStage · PIPELINES 跳过', () => {
-  it('只保留 full 和 light 两条管线', () => {
+  it('只保留 full/light 两条管线(ADR-006)', () => {
     assert.deepEqual(Object.keys(PIPELINES).sort(), ['full', 'light']);
   });
 
-  it('light pipeline: change → fast → integration', () => {
-    assert.equal(getNextStage('change', { pipeline: 'light' }), 'fast');
-    assert.equal(getNextStage('fast', { pipeline: 'light' }), 'integration');
+  it('light pipeline 只有 fast 一个阶段，无后继', () => {
+    assert.deepEqual(PIPELINES.light, ['fast']);
+    assert.equal(getNextStage('fast', { pipeline: 'light' }), null);
   });
 
-  it('full pipeline: UI 无影响时 design → task', () => {
-    assert.equal(getNextStage('design', { pipeline: 'full', _uiImpact: false,
-      stages: { 'ui-design': { enabled: 'auto', condition: 'ui-impact' } } }), 'task');
+  it('full pipeline: design → task(ui-design 已合入 design 阶段)', () => {
+    assert.equal(getNextStage('design', { pipeline: 'full' }), 'task');
   });
 
   it('未指定 pipeline: 退回默认 STAGES.next', () => {
     assert.equal(getNextStage('change', {}), 'requirement');
   });
 
-  it('integration 总是终态', () => {
-    assert.equal(getNextStage('integration', { pipeline: 'light' }), null);
+  it('full 的 integration 是终态', () => {
     assert.equal(getNextStage('integration', { pipeline: 'full' }), null);
   });
 });
 
+// 新 light 形态：意图由 CLI 固化在 <specsDir>/light.json（DESIGN D4 / AC-3）
+function writeLightJson(scope) {
+  writeFileSync(join(TMP, 'light.json'), JSON.stringify({
+    intent: { goal: '一句话目标', accept: [], scope },
+    baseline: {},
+    createdAt: new Date().toISOString(),
+  }));
+}
+
 describe('checkGate · pipeline-aware', () => {
-  it('light pipeline 进入 fast 需要低风险 PROPOSAL', () => {
+  it('light pipeline 进入 fast 需要合法的 light.json 意图', () => {
     setup();
-    writeFileSync(join(TMP, 'PROPOSAL.md'), '# PROPOSAL\n\n修复 README 拼写\n\n## 待澄清问题\n\n无\n');
+    writeLightJson(['src/lib/foo.mjs']);
     const r = checkGate('fast', TMP, { pipeline: 'light' });
-    assert.equal(r.passed, true);
+    assert.equal(r.passed, true, `应放行, 实际: ${r.reason}`);
     teardown();
   });
 
-  it('light pipeline 高风险 PROPOSAL 不能进入 fast', () => {
+  it('缺 light.json 时禁止进入 fast(hard block)', () => {
     setup();
-    writeFileSync(join(TMP, 'PROPOSAL.md'), '# PROPOSAL\n\n新增数据库 migration\n\n## 待澄清问题\n\n无\n');
     const r = checkGate('fast', TMP, { pipeline: 'light' });
     assert.equal(r.passed, false);
+    assert.equal(r.hard, true);
+    assert.match(r.reason, /light\.json/);
+    teardown();
+  });
+
+  it('light.json 范围含 ** 时禁止进入 fast(hard block)', () => {
+    setup();
+    writeLightJson(['src/**']);
+    const r = checkGate('fast', TMP, { pipeline: 'light' });
+    assert.equal(r.passed, false);
+    assert.equal(r.hard, true);
+    assert.match(r.reason, /intent-scope-invalid/);
     assert.match(r.reason, /full/);
     teardown();
   });
@@ -78,11 +96,12 @@ describe('checkGate · pipeline-aware', () => {
     teardown();
   });
 
-  it('light pipeline 进入 integration 需要 EXECUTION 证据', () => {
+  it('full pipeline 进入 dev 需要 TASKS.md（原 phases-micro.test.mjs 回归用例迁移）', () => {
     setup();
-    writeFileSync(join(TMP, 'EXECUTION.md'), '# EXECUTION\n\nverify: PASS\n');
-    const r = checkGate('integration', TMP, { pipeline: 'light' });
-    assert.equal(r.passed, true);
+    writeFileSync(join(TMP, 'PROPOSAL.md'), '# PROPOSAL\n');
+    assert.equal(checkGate('dev', TMP, { pipeline: 'full' }).passed, false);
+    writeFileSync(join(TMP, 'TASKS.md'), '<task id="T01" status="done">x</task>');
+    assert.equal(checkGate('dev', TMP, { pipeline: 'full' }).passed, true);
     teardown();
   });
 
@@ -105,9 +124,9 @@ describe('checkGate · pipeline-aware', () => {
   });
 
   it('禁用阶段被跳过', () => {
-    const r = checkGate('ui-design', TMP, {
+    const r = checkGate('review', TMP, {
       pipeline: 'full',
-      stages: { 'ui-design': { enabled: false } },
+      stages: { review: { enabled: false } },
     });
     assert.equal(r.passed, true);
   });
@@ -140,13 +159,14 @@ describe('checkGate · pipeline-aware', () => {
     teardown();
   });
 
-  it('light pipeline 进入 fast 同样受未决问题门禁约束', () => {
+  it('light pipeline 进入 fast 不读 PROPOSAL(light 无 PROPOSAL)', () => {
     setup();
+    // 放一份带未决问题的 PROPOSAL：新 light 不生成也不读它，门禁只看 light.json
     writeFileSync(join(TMP, 'PROPOSAL.md'),
       '# PROPOSAL\n\n## 待澄清问题\n\n- [ ] 还没问清\n\n---\n');
+    writeLightJson(['src/lib/foo.mjs']);
     const r = checkGate('fast', TMP, { pipeline: 'light' });
-    assert.equal(r.passed, false);
-    assert.match(r.reason, /unresolved question/);
+    assert.equal(r.passed, true, `light 门禁不应受 PROPOSAL 影响, 实际: ${r.reason}`);
     teardown();
   });
 });
@@ -201,10 +221,12 @@ describe('state · 解析 "N / M" 双值', () => {
 });
 
 describe('PIPELINES · 数据结构', () => {
-  it('每个 pipeline 都从 change 开始、以 integration 结束', () => {
-    for (const name of ['light', 'full']) {
-      assert.equal(PIPELINES[name][0], 'change');
-      assert.equal(PIPELINES[name][PIPELINES[name].length - 1], 'integration');
-    }
+  it('full 从 change 开始、以 integration 结束', () => {
+    assert.equal(PIPELINES.full[0], 'change');
+    assert.equal(PIPELINES.full[PIPELINES.full.length - 1], 'integration');
+  });
+
+  it('light 只有 fast 阶段(无 change / integration)', () => {
+    assert.deepEqual(PIPELINES.light, ['fast']);
   });
 });

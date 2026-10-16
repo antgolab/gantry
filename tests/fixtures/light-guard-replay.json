@@ -1,0 +1,158 @@
+{
+  "_comment": "AC-18 守卫红线回放样本集。每条样本以真实归档 change 的文件清单为素材（负例直接取自 .gantry/specs/_archive/*/EXECUTION.md 与 TASKS.md 的 write_files），红线正例因归档中不存在该类改动（本仓库代码全在 src/ 下，故 7/7 归档改动均无红线命中）而按 hard-rules.mjs 的路径 glob / 依赖增量 / 跨模块判据构造。回放只覆盖文件路径与依赖增量：runLightGuard 以 description='' 调 detectRedLines，描述关键词不参与本回放。",
+  "samples": [
+    {
+      "id": "migration-path",
+      "source": "synthetic",
+      "description": "新增数据库迁移脚本（migrations/ 路径命中 migration-change）",
+      "changedFiles": ["migrations/0007_create_orders_table.mjs"],
+      "expectRedLine": true,
+      "expectRuleIds": ["migration-change"]
+    },
+    {
+      "id": "sql-file",
+      "source": "synthetic",
+      "description": "分析库新增 *.sql 文件（命中 sql-change）",
+      "changedFiles": ["db/analytics/events.sql"],
+      "expectRedLine": true,
+      "expectRuleIds": ["sql-change"]
+    },
+    {
+      "id": "prisma-schema",
+      "source": "synthetic",
+      "description": "Prisma schema 改动（prisma/ 路径命中 schema-change）",
+      "changedFiles": ["prisma/schema.prisma"],
+      "expectRedLine": true,
+      "expectRuleIds": ["schema-change"]
+    },
+    {
+      "id": "schema-dir",
+      "source": "synthetic",
+      "description": "schema/ 目录下定义表结构（命中 schema-change）",
+      "changedFiles": ["schema/orders.js"],
+      "expectRedLine": true,
+      "expectRuleIds": ["schema-change"]
+    },
+    {
+      "id": "api-contract-ts",
+      "source": "synthetic",
+      "description": "公共 API 契约文件改动（api/*.ts 命中 contract-change）",
+      "changedFiles": ["api/orders.ts"],
+      "expectRedLine": true,
+      "expectRuleIds": ["contract-change"]
+    },
+    {
+      "id": "openapi-contract",
+      "source": "synthetic",
+      "description": "OpenAPI 描述文件改动（openapi.yaml 命中 contract-change）",
+      "changedFiles": ["openapi.yaml"],
+      "expectRedLine": true,
+      "expectRuleIds": ["contract-change"]
+    },
+    {
+      "id": "proto-contract",
+      "source": "synthetic",
+      "description": "gRPC proto 契约改动（proto/ 路径命中 contract-change）",
+      "changedFiles": ["proto/orders.proto"],
+      "expectRedLine": true,
+      "expectRuleIds": ["contract-change"]
+    },
+    {
+      "id": "dep-delta",
+      "source": "synthetic",
+      "description": "package.json 依赖增量非空（命中 dep-change）；文件清单取自已归档 change 的实现路径",
+      "changedFiles": ["src/cli.mjs", "package.json"],
+      "pkgJsonDepsDelta": ["dependencies.yaml: ^2.4.3"],
+      "expectRedLine": true,
+      "expectRuleIds": ["dep-change"]
+    },
+    {
+      "id": "cross-module-3-dirs",
+      "source": "synthetic",
+      "description": "跨 3 个顶层代码目录的改动（src/ + tools/ + examples/ 命中 cross-module-change）",
+      "changedFiles": [
+        "src/lib/loop.mjs",
+        "tools/lint.mjs",
+        "examples/demo/run.mjs"
+      ],
+      "expectRedLine": true,
+      "expectRuleIds": ["cross-module-change"]
+    },
+    {
+      "id": "docs-only",
+      "source": "omc-dev-gantry-auto",
+      "description": "仅文档改动（docs/ + *.md，D11 全部排除，不命中任何红线）",
+      "changedFiles": ["docs/RULES.md", "docs/USER-TOURS.md"],
+      "expectRedLine": false
+    },
+    {
+      "id": "single-module-code-tests-docs",
+      "source": "gantry-loop-p3-heal-gate",
+      "description": "单一代码模块 + 其测试 + 文档（D11 只统计非测试非文档路径，顶层仅 src/，不得命中 cross-module）",
+      "changedFiles": [
+        "src/lib/self-heal.mjs",
+        "src/lib/test-commands.mjs",
+        "tests/self-heal.test.mjs",
+        "docs/self-heal.md"
+      ],
+      "expectRedLine": false
+    },
+    {
+      "id": "test-only",
+      "source": "gantry-loop-p2-driver",
+      "description": "仅测试文件改动（全部为测试路径，不命中任何红线）",
+      "changedFiles": ["tests/loop-guard.test.mjs", "tests/loop-next.test.mjs"],
+      "expectRedLine": false
+    },
+    {
+      "id": "two-module-code-plus-tests",
+      "source": "install-claude-code-claude-settings",
+      "description": "跨 2 个顶层代码目录（src/ + tools/）+ 测试，低于阈值 3，不得命中 cross-module",
+      "changedFiles": [
+        "src/cli.mjs",
+        "src/lib/settings-merge.mjs",
+        "tools/renderers/claude-code.mjs",
+        "tests/settings-merge.test.mjs"
+      ],
+      "expectRedLine": false
+    },
+    {
+      "id": "wide-single-module-refactor",
+      "source": "review-backlog-sweep",
+      "description": "单模块大面积改动（10 个 src/lib 文件 + 测试），顶层仅 src/，不命中任何红线",
+      "changedFiles": [
+        "src/cli.mjs",
+        "src/lib/archive-helpers.mjs",
+        "src/lib/config-schema.mjs",
+        "src/lib/config.mjs",
+        "src/lib/context-pack.mjs",
+        "src/lib/friction.mjs",
+        "src/lib/install-helpers.mjs",
+        "src/lib/learnings/bm25.mjs",
+        "src/lib/learnings/store.mjs",
+        "src/lib/review-lane-guard.mjs",
+        "tests/archive-changelog.test.mjs",
+        "tests/config-schema.test.mjs",
+        "tests/friction-learning.test.mjs",
+        "tests/install-helpers.test.mjs",
+        "tests/learnings-store.test.mjs"
+      ],
+      "expectRedLine": false
+    },
+    {
+      "id": "agents-and-skills-markdown",
+      "source": "execution-reflection-loop",
+      "description": "agent / skill 说明文档改动（*.md 全部按文档排除，不命中任何红线）",
+      "changedFiles": ["src/agents/executor.md", "skills/auto.md"],
+      "expectRedLine": false
+    },
+    {
+      "id": "nested-migration",
+      "source": "synthetic",
+      "description": "嵌套目录下的迁移脚本（migrations/** 命中 migration-change，B7 回归样本）",
+      "changedFiles": ["migrations/2026/001_add.ts"],
+      "expectRedLine": true,
+      "expectRuleIds": ["migration-change"]
+    }
+  ]
+}

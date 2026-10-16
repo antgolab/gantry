@@ -1,4 +1,4 @@
-# 阶段 4 · DEV — 在 wave 子 Agent 中执行当前任务
+# 阶段 4 · DEV — 波次编排 + 在 fresh context 中执行单个任务
 
 ## Context Pack 优先
 
@@ -12,7 +12,11 @@
 
 ## 角色
 
-你是 Dev。每次进入本 prompt **只执行当前 context pack 指定的一个任务**。Auto 可让同一个 wave 子 Agent 顺序执行多个任务，但每个任务开始前必须运行 `gantry context dev --task <id>` 并重新读取 pack；禁止一次加载或实现整个 wave。
+你是 Dev。本 prompt 有**两层职责**：
+- **编排器层**（主 session）：消费 `TASKS.md` 的「波次划分」段 + `depends_on`，把同 wave 的独立 task 并发 fan-out 到多个 executor subagent（见「波次编排」段）。
+- **单任务执行层**（executor subagent）：在 fresh context 中执行单个 task（见「单任务执行」段）。每个 executor **只执行一个 task 的 context pack**；pack 由编排器在 fan-out 前逐个运行 `gantry context dev --task <id> --json` 生成并原样交给对应 executor，禁止一次加载或实现整个 wave。
+
+多任务请按波次并发 fan-out，不要逐个串行等待。
 
 ## Pre-hook（可选）
 
@@ -36,7 +40,39 @@ gantry hook run before:dev
 - `@.gantry/specs/LESSONS.md`（无 `.context/` 时的回退知识层）
 - 仅引用与本任务相关的文件，**不要加载整个项目**
 
-## 你的职责
+## 波次编排（编排器职责 · DEV 阶段主 session）
+
+> 消费 `TASKS.md` 的「波次划分」段 + 各 task 的 `depends_on`，把同 wave 的独立 task 并发 fan-out。单 task 内部执行见下方「单任务执行」。
+
+### 0.1 读波次划分
+
+从 `TASKS.md` 读「波次划分」段（task 阶段 3-task.md 已产出），得到 wave 分层：同 wave 的 task 两两无依赖可并行，跨 wave 按依赖顺序执行。
+
+### 0.2 同一 turn fan-out
+
+对当前 wave 的每个 pending task，在**同一条 assistant 消息里**并发 fan-out 多个 executor subagent（分层路由：haiku=查询/单点、sonnet=标准、opus=复杂）。独立 task 禁止串行等待。
+
+fan-out 前，编排器按 task 顺序**串行**运行 `gantry context dev --task <id> --json`，把每个 task 的 pack JSON 放进对应 executor 的 prompt。`.gantry/planning/context-pack.json` 是单文件，后一次生成会覆盖前一次，所以 executor 只认 prompt 里的 pack，不读这个文件。
+
+并发期间共享文件只由编排器写：executor 不运行 `gantry done`、不改 `TASKS.md` / `EXECUTION.md`。下方「单任务执行」里要求写入 `EXECUTION.md` 的内容（6 维自查、越界检查、verify 输出、微复盘等）一律放进 executor 的返回报告，由编排器在 0.3 落盘。
+
+### 0.3 wave checkpoint
+
+wave 内全部 executor 返回后，跑 typecheck + 受影响测试：
+- 绿 → 编排器按 task 顺序串行运行 `gantry done <task-id>`，把各 executor 返回报告里的执行记录与微复盘填进 `EXECUTION.md` 对应 task 段，进入下一 wave（回到 0.1）
+- 红 → 判定 `depends_on` 声明有漏（应串行的两个跑并发了），整波 revert 到 wave 前，把漏声明事件写入 `.gantry/learnings/team/`，重跑本 wave
+
+### 0.4 循环直到全部完成
+
+重复 0.1-0.3 直到所有 pending task done。
+
+### 0.5 DEV 末统一 commit
+
+所有 wave 完成后，由编排器产生 1 个 commit（格式 `<type>(<change-id>): dev 阶段概要`），覆盖全部代码变更 + `EXECUTION.md`。wave 边界不产 commit。
+
+---
+
+## 单任务执行（executor subagent 职责）
 
 ### 1. 读取任务
 
@@ -85,7 +121,7 @@ gantry hook run before:dev
 
 1. 任务 `action` 已写明正确路径（如「走 btsgen 生成缓存回源」）→ 按它执行，**不查 MANIFEST**。
 2. `read_files` 里若有黄金范例文件 → 打开它，**照结构改**（这是降阻力关键，优先于从零重写）。范例文件不存在 → 记一行「范例失效，按 action 原文实现」，不阻塞。
-3. `write_files` 边界已锁定正确路径产物；走错路会越界，提交前 R6.5 自动拦截。
+3. `write_files` 边界已锁定正确路径产物；走错路会越界，交接前 R6.5 自动拦截。
 
 **兜底路径(仅当任务未被锚定，即 `action` 无正确路径声明且项目有 `.context/`)**：
 
@@ -106,7 +142,7 @@ gantry hook run before:dev
 
 命中时，进入实现**之前**还必须：
 
-1. 加载 `@.gantry/specs/<id>/UI-DESIGN.md`（必须存在；不存在 → 停下来要求先跑 `phases/2a-ui-design.md`）
+1. 加载 `@.gantry/specs/<id>/UI-DESIGN.md`（必须存在；不存在 → 停下来要求先跑 `phases/2-design.md` 的 § 8 前端 UI 设计，仅 PROPOSAL uiImpact=true 时生成）
 2. 加载 `@gantry/reference/ui-anti-patterns.md`，按当前任务的关键词 grep 相关章节
 3. 加载 `@gantry/reference/frontend-engineer-rules.md`（**第 1 + 第 2 + 第 10 节必读**），其他节按输出类型按需读：
    - 任务是做交互原型 → 补读第 6.1
@@ -348,7 +384,7 @@ grep -rn "from.*old-helpers\|import.*old-helpers" src/ tests/
 
 `<verify>` 可以连接当前任务完成所必需的数据库或远程依赖；规则不是禁止真实依赖，而是不在 DEV 重复运行与当前 task 无关的全套测试。跨 AC 扩面留给 TEST，全量与端到端留给 INTEGRATION。
 
-### 4. 提交前 self-review（书本驱动 6 维 · 装了 brooks-lint 优先）
+### 4. 交接前 self-review（书本驱动 6 维 · 装了 brooks-lint 优先）
 
 > 这是把 6-review 阶段的代码质量轮**前置一部分**到 dev 自查，避免 review 阶段才发现明显问题。
 
@@ -356,14 +392,14 @@ grep -rn "from.*old-helpers\|import.*old-helpers" src/ tests/
 
 ##### 路径 A · 装了 brooks-lint（首选）
 
-提交前调用：
+交接前调用：
 
 ```
 /brooks-review            # 基于本次未提交 diff 跑诊断
 ```
 
 如果发现：
-- 🔴 Critical → **必须修后再提交**，不允许带病提交
+- 🔴 Critical → **必须修后再交付**，不允许带病交付
 - 🟡 Major → 修或在 `EXECUTION.md` 写明「已知接受 + 理由」
 - 🟢 Minor → 记入 `EXECUTION.md` 的「已知小问题」段，可不修
 
@@ -380,11 +416,11 @@ grep -rn "from.*old-helpers\|import.*old-helpers" src/ tests/
 - **R5 依赖混乱**：`from xxx import yyy` 反向（业务层 import 基础设施实现） → 倒置
 - **R6 领域扭曲**：变量名是技术词（data / info / item）而非领域词（order / driver） → 重命名
 
-发现问题先修，**不允许提交时心想"review 阶段再说"**。
+发现问题先修，**不允许交付时心想"review 阶段再说"**。
 
-### 5. 提交前 diff 边界 verify（强制 · 对应 R6.5 / B3 老项目护栏）
+### 5. 交接前 diff 边界 verify（强制 · 对应 R6.5 / B3 老项目护栏）
 
-> 防"AI 顺手改了别的"。提交前必须验证 diff 范围 ⊆ `TASKS.md` 的 `write_files`。
+> 防"AI 顺手改了别的"。交接前必须验证 diff 范围 ⊆ `TASKS.md` 的 `write_files`。
 
 #### 5.1 跑 diff 检查
 
@@ -444,15 +480,17 @@ git status --short                  # 含 untracked
 
 **禁止**："顺手修了个 bug" / "看到这里很丑就改了"——必须开新 task 或新 PROPOSAL。
 
-### 5.5 原子提交（R4.1）
+### 5.5 提交（R4.1 · stage 级）
+
+DEV 阶段末由编排器统一 1 个 commit（见「波次编排」§ 0.5），executor subagent **不自行 commit**。
 
 提交格式：
 ```
-<type>(<change-id>): <task-id> <subject>
+<type>(<change-id>): dev 阶段概要
 ```
-例：`feat(add-dark-mode): T03 add ThemeContext provider`
+例：`feat(add-dark-mode): dev 主题切换能力`
 
-代码 + 测试同次提交（或紧邻的下次提交）。
+代码 + 测试同次提交（DEV 末统一提交，覆盖全部 task）。
 
 ### 6. 写执行记录
 
@@ -513,27 +551,28 @@ PROGRESS 是临时文件，不归档。
 ## 约束（强制）
 
 - **R2.4**：verify 未通过禁止标记完成
+- **R2.5**：dev 阶段 verify 失败，每次自愈都要有新诊断（越界 / 依赖 / 断言 / import / 环境），最多自愈 3 次；第 4 次仍失败停下汇报，禁盲重试。light 管线不走本阶段，其自愈闭环见 `phases/F-fast.md`
 - **R3.2**：发现需求/设计有问题 → 不要自己改 `SPEC.md` / `DESIGN.md`，停下来开新 PROPOSAL
 - **R4.5**：Schema 变更必伴随迁移文件。只改 model 不生迁移就提交 → 违规，AI 自己回滚
 - **R4.6**：破坏性变更（删 ≥ 5 行 / 改公共接口）必走 1.8 协议：grep 引用图 + 反问用户 + 回归测试覆盖
 - **R6.4**：写代码前必 grep 同类抽象（见 1.4），找到了用，不另起炉灶
-- **R6.5**：提交前必跑 diff 边界 verify（见 5），越界必需回滚或扩范围
+- **R6.5**：交接前必跑 diff 边界 verify（见 5），越界必需回滚或扩范围
 - **R5.2**：禁止用 mock 屏蔽真实失败
 - **R6.3**：禁止"应该可以工作"——必须实际跑过 verify
 - **R7.1**：发现需要扩大范围 → 停下来要求更新 `TASKS.md`
-- **R1.4**：每个 wave 新建一个子 Agent；wave 内一次只处理一个 context pack，逐任务 verify / commit / done，禁止跨 task 混写
+- **R1.4**：每个 task 一个 fresh executor subagent，一次只处理一个 context pack；executor 不自行 commit、不跑 `gantry done`，禁止跨 task 混写
 - **R1.5 / R1.6 / R1.7**：清窗、恢复、反重复严格按上面"中途断点"小节执行
 
 ## 自检
 
 - [ ] verify 命令真的跑了，且输出已贴出
-- [ ] 测试与代码同次或紧邻提交
+- [ ] 本 task 改动已就绪（代码 + 测试），待编排器统一提交
 - [ ] **6 维 self-review 跑了**（生产代码改动必跑：`/brooks-review` 或内置 6 维快查），🔴 已修，🟡 已记，🟢 可省
 - [ ] **涉及 schema 变更的任务已生成迁移文件**（R4.5 / 1.7），且含 up + down；检测到凭据已反问用户、未检测到凭据已在 `EXECUTION.md` 里提醒手动跑
 - [ ] **前端任务走了 1.6**（命中时）：读了 UI-DESIGN.md + frontend-engineer-rules.md；交付前逐项过了 frontend-rules 第 10 节交付清单（console 无错 / 状态完备 / 无硬编码颜色 / 无 `const styles` / 无 `scrollIntoView`）
 - [ ] **沿用既有抽象 grep 跑了**（R6.4 / 1.4），结果贴入 `EXECUTION.md`；需要能力都已查过项目里有无
 - [ ] **破坏性变更走了 1.8 协议**（R4.6）：删代码 ≥ 5 行 / 改公共接口都 grep 了引用图、反问了用户、有回归测试覆盖。未命中跳则明示
-- [ ] **提交前 diff 边界 verify 跑了**（R6.5 / 5），结果贴入 `EXECUTION.md`；0 越界 ✅
+- [ ] **交接前 diff 边界 verify 跑了**（R6.5 / 5），结果贴入 `EXECUTION.md`；0 越界 ✅
 - [ ] `EXECUTION.md` 已更新，含「6 维自查」+「越界检查」段（有 schema 变更还要含「数据库迁移」、有破坏性变更还要含「破坏性变更」段）
 - [ ] 当前 task 微复盘已填写 `problem / cause / next`，EXECUTION 无残留 `TODO`；无经验时写 `none`，未凑数
 - [ ] 如属例外任务，`SUMMARY.md` 已补齐
@@ -549,6 +588,13 @@ gantry hook run after:dev
 ```
 - 退出码 0 或无配置 → 继续
 - 退出码非 0 → 停止并告知用户，等待指示
+
+## 自主模式自检（autonomous=true）
+
+本阶段末尾禁止向用户反问「是否继续 / 要不要先扫一眼 / 是否推进下一阶段」。按 R2.6：
+- 产物齐备、门禁通过 → 直接按「触发下一步」执行
+- 多选场景 → 取推荐项（无推荐则取列表第一项），把选择与理由写进本阶段产物
+- 仅三类允许停：① `requiresApproval` 硬锁的 change / design / integration；② R5 / R6 / R7 触发；③ R2.5 自愈 3 次仍失败
 
 ## 触发下一步
 

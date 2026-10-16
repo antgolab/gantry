@@ -20,7 +20,7 @@ Gantry 的文件分两类，**加载策略不同**：
 - ❌ 进入 2-design 阶段后直接 `read_file gantry/reference/tech-stacks.md` 整读 467 行
 - ✅ 正确：`grep_search` 查 `适用矩阵` 或 `read_file offset=??? limit=80` 只读所需那节
 
-- ❌ 进入 2a-ui-design 后同时读 `ui-aesthetics.md` 与 `ui-anti-patterns.md` 两全文
+- ❌ 进入 2-design § 8 前端 UI 设计后同时读 `ui-aesthetics.md` 与 `ui-anti-patterns.md` 两全文
 - ✅ 正确：`ui-anti-patterns.md` 75 行可整读；`ui-aesthetics.md` 只读「调性」一节
 
 **Token 预算**：进入任何阶段的首轮消息，加载的 reference 总行数 ≤ **150 行**。超过 → 拆到后面按需拉。
@@ -70,7 +70,7 @@ Gantry 的文件分两类，**加载策略不同**：
 
 | 因子 | 影响 |
 |---|---|
-| 前端项目 | +20%（多 2a-ui-design 阶段 + UI 第三轮）|
+| 前端项目 | +20%（多 2-design § 8 前端 UI 设计段 + UI 第三轮）|
 | 涉及 schema 变更 | +5~10%（多 1.7 段 + 5-test 4.2 验证）|
 | brooks-lint 已装 | +10%（多 4 个命令调用）|
 | 跨模型 spot-check 触发 | +30%（双模型走同样 review）|
@@ -82,7 +82,7 @@ Gantry 的文件分两类，**加载策略不同**：
 | 你的诉求 | 选 |
 |---|---|
 | 想要全套产物（PROPOSAL / SPEC / DESIGN / TASKS / EXECUTION / TEST / REVIEW） | 完整 |
-| 明确的低风险局部修复 | light（`change → fast → integration`）|
+| 明确的低风险局部修复 | light（`fast` 单阶段闭环，`gantry change --tier light --scope …`）|
 | 只想跑某一阶段（如只 review / 只 design / 只 体检）| 单点 · 见 README 决策表 |
 | 代码 < 50 行 · 一次性修补 · hackathon | 不走 Gantry，走 7 个原生 skill 更划算 |
 
@@ -120,8 +120,8 @@ Forge adapter: detected / not detected
 | `拆任务` / `plan tasks` / `分解` | `phases/3-task.md` | |
 | `设计` + `<已有需求>` / `架构` / `design` | `phases/2-design.md` | 当 REQUIREMENT 已存在时；后端项目 |
 | `选技术` / `选栈` / `选框架` / `tech stack` / `用什么开发` / `迁移评估` | `phases/2-design.md` 步骤 0 | 只需技术栈选型时入口 |
-| `UI` / `视觉` / `美学` / `theme` / `design system` / `design tokens` | `phases/2a-ui-design.md` | 前端项目，用户可见 UI |
-| `换调性` / `改风格` / `换风格` / `redesign` / `restyle` / `重做视觉` / `换皮` | `phases/0-change.md` | 纯视觉改版走普通 change + `2a-ui-design`（视觉变+功能变拆两个 change）|
+| `UI` / `视觉` / `美学` / `theme` / `design system` / `design tokens` | `phases/2-design.md` § 8 前端 UI 设计（PROPOSAL uiImpact=true 时展开）| 前端项目，用户可见 UI |
+| `换调性` / `改风格` / `换风格` / `redesign` / `restyle` / `重做视觉` / `换皮` | `phases/0-change.md` | 纯视觉改版走普通 change + `2-design.md` § 8（视觉变+功能变拆两个 change）|
 | `健康检查` / `health` / `体检` / `技术债扫描` / `巡检` / `brooks-health` / `brooks-sweep` / `brooks-audit` / `brooks-debt` / `扫冗余` / `找死代码` / `找重复` / `清未用导出` / `清未用依赖` / `dedupe` / `dead code` | `phases/M-health.md` | 代码库周期性巡检 + 冗余扫描（步骤 2.5），不属任何 change |
 | `扫描代码` / `scan` / `intel` / `入场扫描` / `给项目体检` / `老项目首次访问` | `phases/I-intel-scan.md` | 公开入口：`/gantry-context scan`。生成 / 更新 `CONTEXT.md`，brownfield 项目首次使用必跑 |
 | `同步架构` / `沉淀架构` / `evolve` / `架构演进` / `同步 CONTEXT` / `整理沉淀` | `phases/A-evolve.md` | 公开入口：`/gantry-context evolve`。扫近期归档 change 的 DESIGN § 9，批量 review + patch CONTEXT.md / ARCHITECTURE.md（不属任何 change）|
@@ -230,7 +230,7 @@ Gantry 后续阶段需要项目上下文给 AI 用。请选择：
 - **规则加载**：优先读 `.gantry/planning/context-pack.json` 并按 `loadOrder` 最小加载；`docs/RULES.md` / `docs/METHODOLOGY.md` 仅在解释规则或修改 Gantry 框架时按需回查
 - **检测外部扩展**（阶段 4/5/6/M 需要）：进入阶段前检查是否装了以下并在路由声明里表明走「外部路径」还是「内置回退」：
   - [`brooks-lint`](https://github.com/hyhmrright/brooks-lint)：4-dev self-review / 5-test 测试质量 / 6-review 代码质量 / M-health 巡检都会优先用
-  - [`ui-ux-pro-max`](https://uupm.cc) / [`impeccable`](https://impeccable.style)：2a-ui-design / 4-dev UI 任务会优先用
+  - [`ui-ux-pro-max`](https://uupm.cc) / [`impeccable`](https://impeccable.style)：2-design § 8 前端 UI 设计 / 4-dev UI 任务会优先用
 
 ### 加载工件（严格区分 必读 / 按需）
 

@@ -127,7 +127,6 @@ After `gantry install`, use:
 ```text
 /gantry-change "Add CSV export to the orders list"
 /gantry-next
-/gantry-exec
 /gantry-archive
 ```
 
@@ -135,28 +134,47 @@ Common commands:
 
 | Command | Purpose |
 |---|---|
-| `/gantry-change` | Start the default full change flow |
-| `/gantry-fast` | Start an explicit low-risk light flow |
-| `/gantry-next` | Advance to the next phase |
-| `/gantry-exec` | Execute tasks from `TASKS.md` |
+| `/gantry-change` | Start the default full change flow (for a low-risk change use `gantry change --tier light --scope …`, which enters the light fast loop directly) |
+| `/gantry-next` | Advance to the next phase (dev tasks execute automatically) |
+| `/gantry-auto` | Autopilot: advance multiple phases with human-approval gates preserved |
 | `/gantry-archive` | Integrate and archive a completed change |
 | `/gantry-status` | Show current state |
 | `/gantry-resume` | Resume interrupted work |
-| `/gantry-adjust` | Apply a change patch |
+| `/gantry-adjust` | Apply a change patch (open PATCH.md loop when things shift mid-flight) |
 | `/gantry-review` | Run code or requirement review |
-| `/gantry-context scan` | Scan an existing project and build context |
-| `/gantry-knowledge curate` | Maintain project knowledge |
+| `/gantry-debug` | Systematic debugging |
+| `/gantry-context <sub>` | Project context, architecture and knowledge base (`scan` / `architect` / `evolve` / `knowledge capture` / `knowledge curate`) |
 | `/gantry-health` | Run a codebase health check |
+| `/gantry-unarchive` | Restore an archived change |
+
+_Internalized (no longer surfaced as user entrypoints)_: `exec` (auto-triggered inside `/gantry-next` or `/gantry-auto` at dev stage), `fast` (the light pipeline's only stage, entered via `gantry change --tier light`), `knowledge` (folded into `/gantry-context knowledge <sub>`). Existing scripts still work through the CLI.
 
 ### Terminal CLI
 
-The CLI handles state-machine operations, installation, and archiving:
+The CLI handles state-machine operations, installation, archiving, and the unattended convergence loop:
 
 ```bash
 gantry change "Add CSV export to the orders list"
 gantry status
 gantry archive
+
+# Convergence engine (P1–P4, see docs/loop.md)
+gantry loop-next                     # read-only: prints the next whitelist token
+gantry advance                       # advance one step; entry inlines loop-guard breaker
+gantry heal T02 --reason "…"         # record a DEV verify failure into EXECUTION.md
+gantry heal --check T02              # query R2.5 3-attempt ceiling
+# AC coverage hard gate runs at the integration gate (fail-closed since 2026-10-12:
+# every SPEC AC must be covered by a `covers` entry in .gantry/loop/test-commands.yml,
+# which `gantry install` seeds as a commented template); no standalone ac-gate command
 ```
+
+### Unattended Convergence Loop
+
+`gantry loop` is a self-driving convergence engine built on the state machine. `gantry loop <client> [--quiet]` (client ∈ `claude` | `codex`) reads `STATE.md`, dispatches each phase to a headless AI via `dispatch-<client>.sh`, calls `gantry advance` per iteration, and stops on `done` / `blocked` / stuck detection. Output is fully streamed by default (`--quiet` collapses it to one summary line per step), and dispatch / advance failures are retried with backoff up to `config.autonomous.maxRetries`, carrying the failure context back into the AI prompt — `advance rc=2` is a hard stop and is never retried. See:
+
+- [`docs/loop.md`](docs/loop.md) — driver contract, whitelist tokens, fence layout, `state-must-advance`, output discipline and retry semantics
+- [`docs/loop-guard.md`](docs/loop-guard.md) — context / step-budget circuit breakers (now inlined into `gantry advance`)
+- [`docs/self-heal.md`](docs/self-heal.md) — `EXECUTION.md ## Self-Heal Log` buffer, R2.5 ceiling, integration AC gate
 
 ### Universal GO.md Entry
 
@@ -182,25 +200,23 @@ Typical flow:
 
 ```bash
 gantry change "Describe the requirement"   # -> PROPOSAL.md
-/gantry-next                               # -> SPEC.md
-/gantry-next                               # -> DESIGN.md
-/gantry-next                               # -> TASKS.md
-/gantry-exec                               # -> DEV
-/gantry-next                               # -> TEST
-/gantry-next                               # -> REVIEW
+/gantry-auto                               # -> SPEC.md -> DESIGN.md (pauses at design gate)
+/gantry-auto                               # -> TASKS.md -> DEV -> TEST -> REVIEW (pauses at integration gate)
 gantry archive                             # -> INTEGRATION + archive
 ```
 
 Lightweight MVP flow:
 
 ```bash
-gantry change --pipeline light "Describe a low-risk fix"
-/gantry-next  # confirm Change, then enter Fast
-/gantry-next  # verify and enter Integration
+gantry change --tier light --scope <p,...> "Describe a low-risk fix"
+gantry advance  # exit gate: CLI runs verify + diff guard
 ```
 
-This produces `PROPOSAL.md` and `EXECUTION.md`. Schema, public API, cross-module,
-dependency, security, concurrency, and destructive changes must use the default full flow.
+This produces `light.json` and `EXECUTION.md` — no `PROPOSAL.md` and no human gate.
+The exit gate auto-archives on success, or auto-upgrades to `full@change` (code kept)
+when it detects out-of-scope edits, red lines, or weakened tests. Schema, public API,
+cross-module, dependency, security, concurrency, and destructive changes must use the
+default full flow.
 
 ---
 
@@ -239,6 +255,9 @@ Core documents:
 |---|---|
 | `docs/METHODOLOGY.md` | Methodology overview and phase model |
 | `docs/RULES.md` | System-level rules for AI-assisted development |
+| `docs/loop.md` | Unattended convergence loop: driver contract, whitelist, fence, `state-must-advance` |
+| `docs/loop-guard.md` | Loop guard: context / step-budget breakers (inlined into `gantry advance`) |
+| `docs/self-heal.md` | DEV verify self-heal buffer + integration AC hard gate |
 | `README.md` | Installation and usage overview |
 
 Phase protocols:
@@ -247,8 +266,7 @@ Phase protocols:
 |---|---|
 | `phases/0-change.md` | Clarify a vague idea into a change proposal |
 | `phases/1-requirement.md` | Produce requirements, acceptance criteria, and CONTEXT candidate patches |
-| `phases/2-design.md` | Produce technical design and risk analysis |
-| `phases/2a-ui-design.md` | Produce UI direction and design tokens |
+| `phases/2-design.md` | Produce technical design, risk analysis, and § 8 UI direction/design tokens when PROPOSAL uiImpact=true |
 | `phases/3-task.md` | Split design into executable tasks |
 | `phases/4-dev.md` | Execute one task with verification |
 | `phases/5-test.md` | Derive test matrix and UAT scripts |
@@ -280,8 +298,9 @@ Templates:
 - [x] 9-phase pipeline and CLI state machine
 - [x] Claude Code / Cursor / Codex / Copilot command distribution
 - [x] Brownfield guardrails
-- [x] `LESSONS.md` knowledge base and `/gantry-knowledge curate`
+- [x] `LESSONS.md` knowledge base and `/gantry-context knowledge curate`
 - [x] project convention templates
+- [x] Unattended convergence loop (P1 `loop-next` · P2 driver + inlined guard · P3 `heal` + integration AC hard gate)
 - [ ] `gantry doctor`
 - [ ] stronger error recovery and 人工确认关卡 system
 - [ ] 90%+ test coverage

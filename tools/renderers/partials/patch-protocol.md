@@ -36,9 +36,9 @@
 
 ## 角色红线
 
-- Architect 不写实现代码
-- Dev 不改 `SPEC.md` / `DESIGN.md`（发现问题开新 `PROPOSAL`）
-- Reviewer 不修代码（只产报告 + 修复 task）
+- Architect lane 不写实现代码
+- Dev lane 不改 `SPEC.md` / `DESIGN.md`（发现问题开新 `PROPOSAL`）
+- Reviewer lane 不修代码（只产报告 + 修复 task）
 
 ---
 
@@ -48,18 +48,20 @@
 - **R1.2** 阶段切换时输出本阶段工件文件作为后续唯一上下文来源
 - **R1.3** 引用历史决策必须用 `@文件路径`，禁止粘贴正文
 - **R1.5 · 重启协议** 清窗前必须写 `<task-id>-PROGRESS.md`（已完成 / 当前 / 已排除方案）
-- **R1.8 · LESSONS 检查** DEV 前必须 grep `.gantry/specs/LESSONS.md`
+- **R1.8 · LESSONS 检查** DEV 前必须 grep `.gantry/learnings/team/`
 
 ## R2 · 阶段门
 
 - **R2.1** 没 `PROPOSAL.md` 不能进 `REQUIREMENT`
 - **R2.2** 没 `SPEC.md` 不能进 `DESIGN`
-- **R2.3** 没 `TASKS.md` 不能写代码；每任务必含可执行 `verify`
+- **R2.3** 没 `TASKS.md` 不能写代码；每任务必含可执行 `verify`。**例外 · light 管线**：light 不要求 `TASKS.md`，意图由 `light.json` 固化，越界 / 红线由 `gantry advance` 出口门的 diff 守卫兜底
 - **R2.4** verify 未通过禁止标记完成
+- **R2.5** DEV task verify 失败：每次自愈都要有新诊断（越界 / 依赖 / 断言 / import / 环境），最多自愈 3 次；第 4 次仍失败才停下汇报。禁盲重试。落地见 `phases/4-dev.md` § 8。
+- **R2.6** `autonomous: true` 时，phase prompt 里所有反问 / 多选 / 停下场景一律取推荐项（无推荐项则取列表第一项），选择与理由写进产物，闭环推进。**仅两类不覆盖**：① `requiresApproval` 硬锁的 change / design / integration 三关（`src/lib/phases.mjs#requiresApproval`）——这三关**只适用于 full 管线**，light 无任何人工关卡；② R5 / R6 / R7 硬规则触发（R2.5 到 3 次上限、mock 屏蔽真实失败、越界不可撤、悄悄扩大范围等安全护栏）。
 
 ## R4 · 提交与产物
 
-- **R4.1** DEV 每任务一次原子提交，格式 `<type>(<change-id>): <task-id> <subject>`
+- **R4.1** commit 单位 = stage。DEV 阶段末统一 1 个 commit（格式 `<type>(<change-id>): dev 阶段概要`），覆盖全部代码变更 + `EXECUTION.md`。wave 边界不产 commit。
 - **R4.2** 代码改动必须伴随测试改动
 
 ## R5 · 测试纪律
@@ -76,8 +78,8 @@
 
 ## R7 · 范围控制
 
-- **R7.1** 严禁悄悄扩大范围；超出 `TASKS.md`必须先停下
-- **R7.2** 同次提交不允许混入多个无关任务
+- **R7.1** 严禁悄悄扩大范围；超出 `TASKS.md` 必须先停下
+- **R7.2** 无关任务指跨 change 的任务；同 change 内多 task 允许打包进同一 stage commit
 
 ---
 

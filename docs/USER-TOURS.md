@@ -10,15 +10,14 @@
 ```
 ┌─ 核心状态机(主管线 · 一条 change 顺序走完) ───────────────────────┐
 │  PROPOSAL → SPEC → DESIGN → [UI-DESIGN] → TASKS → DEV → TEST → REVIEW → INTEGRATION │
-│  命令: /gantry-change · /gantry-next · /gantry-exec · /gantry-archive           │
+│  命令: /gantry-change · /gantry-next · /gantry-archive(dev 阶段任务自动执行)  │
 ├─ 状态与恢复 ──────────────────────────────────────────────────────┤
 │  /gantry-status(查状态) · /gantry-resume(断点恢复)                 │
 │  /gantry-adjust(变更补丁 PATCH) · /gantry-unarchive(恢复归档)      │
 ├─ 横向能力(按需调用 · 不推进主管线) ──────────────────────────────┤
-│  项目上下文: /gantry-context scan | architect | evolve              │
-│  知识库:     /gantry-knowledge capture | curate                     │
+│  项目上下文: /gantry-context scan | architect | evolve | knowledge <capture|curate> │
 │  审查:       /gantry-review [--requirement | --adversarial]         │
-│  诊断快修:   /gantry-health · /gantry-debug · /gantry-fast          │
+│  诊断:       /gantry-health · /gantry-debug                         │
 ├─ 自动化与统一入口 ────────────────────────────────────────────────┤
 │  /gantry-auto(人工确认关卡下自主推进)                           │
 │  docs/GO.md(自然语言统一入口,自动判断阶段)                        │
@@ -35,12 +34,8 @@
 
 ```
 gantry change "给订单列表加导出功能"
-/gantry-next         # → SPEC.md
-/gantry-next         # → DESIGN.md
-/gantry-next         # → TASKS.md
-/gantry-exec         # → DEV(每 wave 一个子 Agent，wave 内逐任务执行)
-/gantry-next         # → TEST
-/gantry-next         # → REVIEW
+/gantry-auto         # → SPEC.md → DESIGN.md（停在 design 关卡）
+/gantry-auto         # → TASKS.md → DEV → TEST → REVIEW（停在 integration 关卡）
 gantry archive       # → INTEGRATION + 归档
 ```
 
@@ -51,7 +46,7 @@ gantry archive       # → INTEGRATION + 归档
 ```
 gantry change "描述需求"
 /gantry-next   # 只到 SPEC + TASKS
-/gantry-exec
+/gantry-next   # 自动执行 DEV
 ```
 
 产物 SPEC.md + TASKS.md + EXECUTION.md,跑顺后再升级完整版。
@@ -80,12 +75,12 @@ gantry change "加功能"     # 之后正常走 Tour 1 / 2
 | 系统化调试 | `/gantry-debug` |
 | 只理顺一个想法 | `phases/0-change.md` |
 | 只沉淀失败教训 | 往 `.gantry/specs/LESSONS.md` 加一条 |
-| <50 行快速闭环 | `/gantry-fast` |
+| <50 行快速闭环 | `gantry change --tier light --scope <p,...>` |
 
 ### Tour 5 · 长期维护节奏(月度 / 季度)
 
 ```
-/gantry-knowledge curate       # 整理 LESSONS / knowledge:合入待审、状态迁移、去重
+/gantry-context knowledge curate  # 整理 LESSONS / knowledge:合入待审、状态迁移、去重
 /gantry-context evolve         # 扫近期 change 的 DESIGN §9,同步项目级架构沉淀
 ```
 

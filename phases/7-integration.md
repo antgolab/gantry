@@ -118,27 +118,20 @@ gantry hook run before:integration
 <下次具体改变什么 + 如何验证；无则 none>
 ```
 
-Keep / Problem / Next 没有有效内容时明确记录 `none`，不得凑数。只基于下面的提名条件和现有证据决定是否把经验写入 LESSONS，不维护复发次数或晋升状态机。
+Keep / Problem / Next 没有有效内容时明确记录 `none`，不得凑数。只基于现有证据归纳；其中可跨任务复用的经验在下一步 Curator 候选复核时参考，不再手工写入 `.gantry/specs/LESSONS.md`，不维护复发次数或晋升状态机。
 
-### 6. 提名与更新 LESSONS（在 ARCHIVE 之前必跑，对应 R1.8）
+### 6. 沉淀经验（自动 · friction + Curator，对应 R1.8）
 
-扫本次 change 的 `EXECUTION.md`、所有例外 `*-SUMMARY.md` 的「决策与偏离」段，以及任何遗留的 `*-PROGRESS.md`「已排除方案」段。
-按 `@gantry/templates/LESSONS.md` 末尾的「提名条件」筛选：
+DEV/TEST 阶段的 friction 事件已由 `src/lib/friction.mjs` 自动记录（verifyFail / sameFileEdit3+ / rollback 等）。ARCHIVE 前：
 
-- 调试 / 试错耗时 > 30 分钟 → 提名
-- 错因不局限于本任务、其它任务也会撞 → 提名
-- 6 个月内有合理概率被再次尝试 → 提名
-- 否则不入库（避免污染）
-
-把入选的失败或成功经验按 LESSONS.md 的条目格式追加到 `.gantry/specs/LESSONS.md`，编号续上 `L-NNN`，必须填齐关键词、状态、问题场景、原因、当前推荐做法和验证记录。
-若本次 EXECUTION 引用了现有 `L-NNN`，只根据真实证据追加「验证记录」或更新推荐做法；没有采用差异与验证结果时不修改条目。
-**复核**：扫一眼现有 active 条目，看是否有本次 change 让它们 `superseded` 或 `deprecated`，标注上。
+- 由 Curator（`src/lib/curator.mjs` 的 `proposeLearning`）汇总 friction 事件，自动生成候选 learning。
+- 人工复核候选（对照 `## Retrospective` 的 Problem / Next）后合入 `.gantry/learnings/team/`，不再手动提名、不再手工追加条目。
 
 ### 7. 收尾（CLOSE）— 归档由 archive 命令执行
 
 全部通过后：
 
-- 在 `.gantry/specs/CHANGELOG.md` 追加一行（日期 / change-id / 一句话摘要 / PR 链接 / 新增 LESSONS 条目编号）
+- 在 `.gantry/specs/CHANGELOG.md` 追加一行（日期 / change-id / 一句话摘要 / PR 链接 / 新增 learning 条目）
 - 运行 `gantry archive` 收尾（把 `.gantry/specs/<change-id>/` 整体**移动**到 `_archive/<change-id>/`，并重置 STATE 到 idle）；`unarchive <id>` 可从归档恢复
 
 #### 7.0 收尾与归档
@@ -213,6 +206,13 @@ gantry hook run after:integration
 ```
 - 退出码 0 或无配置 → 继续
 - 退出码非 0 → 停止并告知用户，等待指示
+
+## 自主模式自检（autonomous=true）
+
+本阶段末尾禁止向用户反问「是否继续 / 要不要先扫一眼 / 是否推进下一阶段」。按 R2.6：
+- 产物齐备、门禁通过 → 直接按「触发下一步」执行
+- 多选场景 → 取推荐项（无推荐则取列表第一项），把选择与理由写进本阶段产物
+- 仅三类允许停：① `requiresApproval` 硬锁的 change / design / integration；② R5 / R6 / R7 触发；③ R2.5 自愈 3 次仍失败
 
 ## 触发下一步
 

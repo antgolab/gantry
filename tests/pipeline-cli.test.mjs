@@ -1,90 +1,117 @@
+/**
+ * pipeline-cli.test.mjs — `gantry pipeline` 升档命令（AC-13）+ change 默认档位（AC-1/AC-2）。
+ *
+ * 本文件在「light 取代 micro」重构（change light-replaces-micro）中重写。原 7 个
+ * 用例全部断言旧 light（change→fast→integration）或 micro 流程，逐条处理如下：
+ *
+ *   ① 「change 无 --tier → micro」            drop — micro 档已删除；默认 full 由
+ *                                              tests/cli-change-tier.test.mjs 覆盖（replacement AC-1 / AC-2）
+ *   ② 「只有显式参数才创建 light change」      drop — light 入口参数校验由
+ *                                              tests/light-entry.test.mjs 覆盖（replacement AC-3）
+ *   ③ 「--tier light 覆写硬红线」              drop — 描述命中红线回落 full 由
+ *                                              tests/light-entry.test.mjs 覆盖（replacement AC-4）
+ *   ④ 「pipeline full 单向提升」               rewrite — 下方「AC-13」用例
+ *   ⑤ 「fast 提升回 change 边界」              rewrite — 下方「AC-13」用例
+ *   ⑥ 「light 完整执行 change→fast→integration」 drop — 旧 light 阶段流废弃；新出口门闭环由
+ *                                              tests/light-loop.test.mjs 覆盖（replacement AC-7）
+ *   ⑦ 「advance --skip 不能绕过」              rewrite — 下方「light 出口门不可跳过」用例
+ *
+ * 旧 standard 配置迁移用例已随 migrateLegacyPipelines 一并删除（main 9144749 删兼容）；
+ * 读路径上 standard → full 的内存归一仍由 state.mjs#normalizeLegacyPipeline 承担。
+ */
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { cliEnv } from './support/cli-env.mjs';
 
 const CLI = join(import.meta.dirname, '..', 'src', 'cli.mjs');
 let tmpDir;
 
-const run = (command) => execSync(`node ${CLI} ${command}`, {
-  cwd: tmpDir,
-  encoding: 'utf-8',
-  timeout: 15000,
-});
+const run = (args) =>
+  execFileSync(process.execPath, [CLI, ...args], { cwd: tmpDir, env: cliEnv(), encoding: 'utf-8', timeout: 20000 });
+
+const runResult = (args) =>
+  spawnSync(process.execPath, [CLI, ...args], { cwd: tmpDir, env: cliEnv(), encoding: 'utf-8', timeout: 20000 });
 
 function state() {
   return readFileSync(join(tmpDir, '.gantry/planning/STATE.md'), 'utf-8');
 }
 
-function writeArtifact(changeId, name, content) {
-  writeFileSync(join(tmpDir, '.gantry/specs', changeId, name), content, 'utf-8');
+function startLight(id) {
+  run(['change', '--tier', 'light', '--scope', 'src/lib/foo.mjs', '--id', id, '输出格式微调']);
 }
 
 beforeEach(() => {
-  tmpDir = join(import.meta.dirname, `.tmp-pipeline-cli-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-  mkdirSync(tmpDir, { recursive: true });
-  run('install --tool codex');
+  tmpDir = mkdtempSync(join(tmpdir(), 'pipeline-cli-'));
+  execFileSync('git', ['init', '-q'], { cwd: tmpDir });
+  writeFileSync(join(tmpDir, 'README.md'), '# base\n');
+  execFileSync('git', ['add', '.'], { cwd: tmpDir });
+  execFileSync('git', ['-c', 'user.email=t@e', '-c', 'user.name=t', 'commit', '-q', '-m', 'init'], { cwd: tmpDir });
+  run(['install', '--tool', 'claude']);
 });
 
 afterEach(() => {
   if (existsSync(tmpDir)) rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe('pipeline CLI', () => {
-  it('change 默认 full，不再根据 fix/bug 自动降级', () => {
-    const output = run('change --id fix-typo "fix README typo"');
-    assert.match(output, /管线: full/);
+describe('pipeline CLI（AC-13 · 手动升档 + 禁止降档）', () => {
+  it('light@fast → pipeline full：升到 full@change 并落 PROPOSAL 初稿', () => {
+    startLight('up-fast');
+    const out = run(['pipeline', 'full']);
+
+    assert.match(out, /pipeline: light → full/);
     assert.match(state(), /模式\*\*: `full`/);
-  });
-
-  it('只有显式参数才创建 light change', () => {
-    const output = run('change --pipeline light --id fix-typo "fix README typo"');
-    assert.match(output, /管线: light/);
-    assert.match(state(), /模式\*\*: `light`/);
-  });
-
-  it('显式 light 命中高风险时拒绝且不创建 change', () => {
-    assert.throws(
-      () => run('change --pipeline light --id risky "新增数据库 migration"'),
-      /light 不允许高风险变更/,
+    assert.match(state(), /当前阶段\*\*: `change`/);
+    assert.ok(
+      existsSync(join(tmpDir, '.gantry/specs/up-fast/PROPOSAL.md')),
+      '升档应生成 PROPOSAL 初稿',
     );
-    assert.match(state(), /活跃 Change\*\*: `无`/);
-    assert.equal(existsSync(join(tmpDir, '.gantry/specs/risky')), false);
   });
 
-  it('pipeline full 只允许活跃 change 从 light 单向提升', () => {
-    run('change --pipeline light --id fix-typo "fix README typo"');
-    assert.match(run('pipeline full'), /light → full/);
-    assert.match(state(), /模式\*\*: `full`/);
-    assert.throws(() => run('pipeline light'), /只允许 light → full/);
+  it('pipeline full 后清理 .gantry/planning/light-anchor.json（与自动升档一致）', () => {
+    startLight('anchor-clean');
+    const anchor = join(tmpDir, '.gantry/planning/light-anchor.json');
+    assert.ok(existsSync(anchor), 'light 入口应写锚定文件');
+
+    run(['pipeline', 'full']);
+
+    assert.ok(!existsSync(anchor), '手动升档应清理锚定文件');
   });
 
-  it('fast 中提升 full 时回到 change 边界，不能直接进入 integration', () => {
-    run('change --pipeline light --id fix-typo "fix README typo"');
-    writeArtifact('fix-typo', 'PROPOSAL.md',
-      '# PROPOSAL\n\n修复 README 拼写\n\n## 待澄清问题\n\n无\n');
-    run('advance');
+  it('pipeline light → 非零退出，提示不支持降档', () => {
+    startLight('down-1');
+    const r = runResult(['pipeline', 'light']);
+
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /不支持降档/);
+    assert.match(state(), /模式\*\*: `light`/, '拒绝后状态不变');
+  });
+
+  it('已是 full → 非零退出，提示已是 full', () => {
+    run(['change', '--id', 'full-1', 'fix: README typo']); // 默认 full@change
+    const r = runResult(['pipeline', 'full']);
+
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /已是 full/);
+  });
+
+  it('没有活跃 change → 非零退出', () => {
+    const r = runResult(['pipeline', 'full']);
+
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /没有活跃 change/);
+  });
+
+  it('light 出口门不可跳过：advance --skip 非零退出且状态保持 light', () => {
+    startLight('skip-1');
+    const r = runResult(['advance', '--skip']);
+
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /light 出口门不可跳过/);
+    assert.match(state(), /模式\*\*: `light`/);
     assert.match(state(), /当前阶段\*\*: `fast`/);
-    run('pipeline full');
-    assert.match(state(), /当前阶段\*\*: `change`/);
-    assert.match(run('advance'), /change → requirement/);
-  });
-
-  it('light 完整执行 change → fast → integration', () => {
-    run('change --pipeline light --id fix-typo "fix README typo"');
-    writeArtifact('fix-typo', 'PROPOSAL.md',
-      '# PROPOSAL\n\n- **uiImpact**: false\n\n修复 README 拼写\n\n## 待澄清问题\n\n无\n');
-    assert.match(run('advance'), /change → fast/);
-    writeArtifact('fix-typo', 'EXECUTION.md', '# EXECUTION\n\nverify: PASS\n');
-    assert.match(run('advance'), /fast → integration/);
-  });
-
-  it('Proposal 后发现高风险时 advance --skip 也不能绕过', () => {
-    run('change --pipeline light --id risky-later "调整订单逻辑"');
-    writeArtifact('risky-later', 'PROPOSAL.md',
-      '# PROPOSAL\n\n新增数据库 migration\n\n## 待澄清问题\n\n无\n');
-    assert.throws(() => run('advance --skip'), /light 不允许高风险变更/);
-    assert.match(state(), /当前阶段\*\*: `change`/);
   });
 });

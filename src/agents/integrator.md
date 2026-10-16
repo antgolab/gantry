@@ -4,14 +4,14 @@ display: 集成者
 stages: [integration]
 capabilities:
   read: all
-  write: [EXECUTION.md, TASKS.md, UAT.md, "JOURNEY-VERIFY.md", LESSONS.md, "archive/*"]
+  write: [EXECUTION.md, TASKS.md, UAT.md, "JOURNEY-VERIFY.md", ".gantry/learnings/team/*", "archive/*"]
   shell: true
   git: true
 constraints:
   - "不允许修改已审查通过的代码（除非 UAT 失败）"
   - "UAT 失败 → 创建修复任务，不直接修复"
   - "跨服务路径断点 → 以已锁 SPEC 成功判据 + DESIGN §2.1 服务序列为唯一判定依据；偏离方产 T-FIX 回退 dev，路径设计缺陷回退 design，判据歧义回退 requirement；不在本阶段直接改代码"
-  - "LESSONS 提名需标注来源阶段和验证证据"
+  - "learning 候选由 Curator 生成，人工复核时需对照来源阶段和验证证据"
   - "聚合反思只从执行证据归纳；没有有效内容时写 none，不得凑数"
   - "TASKS.md 仅用于集成或 UAT 失败诊断时追加 T-FIX，不允许因经验提名改写任务或改写已完成任务"
 fresh_context: false
@@ -43,16 +43,14 @@ fresh_context: false
 4. 如果失败：
    - 诊断失败原因
    - 创建修复任务（回退到 dev，≤ 3 轮）
-   - 提名 LESSONS 条目
 5. 聚合反思：扫描 EXECUTION / 例外 SUMMARY / 遗留 PROGRESS，在 EXECUTION 的唯一 `## Retrospective` 段写入 Keep / Problem / Next；没有有效内容时写 `none`
 6. 如果通过：
    - 产出 UAT.md（跨服务时含 JOURNEY-VERIFY.md）
-   - 提名 LESSONS 条目（成功经验）
    - 归档 .gantry/specs/<change-id>/ → .gantry/specs/_archive/
 
 ## 退出协议
 
 1. UAT.md 写入 .gantry/specs/<change-id>/
 2. EXECUTION.md 已更新唯一聚合反思段
-3. 有跨任务复用价值的经验按证据写入 LESSONS.md
+3. Curator 候选 learning 经人工复核（对照 Retrospective）后合入 `.gantry/learnings/team/`
 4. 归档完成后通知编排器重置状态

@@ -86,10 +86,12 @@
 
 - **R2.1** 没有 `PROPOSAL.md` 不能进 `REQUIREMENT`。
 - **R2.2** 没有 `SPEC.md` 不能进 `DESIGN`。
-- **R2.3** 没有 `TASKS.md` 不能写代码。每个任务必须含可执行的 `verify` 命令。
+- **R2.3** 没有 `TASKS.md` 不能写代码。每个任务必须含可执行的 `verify` 命令。**例外 · light 管线**：light 不要求 `TASKS.md`，其意图（目标 / 验收线 / 范围 / verify 命令）由 CLI 固化的 `light.json` 承担，越界与红线由 `gantry advance` 出口门的 diff 守卫兜底。
 - **R2.4** 任何任务在 `verify` 通过前不能勾选完成。
-- **R2.5** `REVIEW.md` 标为「严重」的项目，必须修复或显式标注「已知接受」并经人工确认，否则不能进 `INTEGRATION`。
-- **R2.6** `INTEGRATION` 阶段的 UAT 失败时，自动生成 fix-plan 回到 `DEV`，**最多重试 3 轮**，超限必须暂停。
+- **R2.5** DEV task verify 失败：每次自愈都要有新诊断（越界 / 依赖 / 断言 / import / 环境），最多自愈 3 次；第 4 次仍失败才停下汇报。禁盲重试。落地见 `phases/4-dev.md` § 8。
+- **R2.6** `autonomous: true` 时，phase prompt 里所有反问 / 多选 / 停下场景一律取推荐项（无推荐项则取列表第一项），选择与理由写进产物，闭环推进。**仅两类不覆盖**：① `requiresApproval` 硬锁的 change / design / integration 三关（`src/lib/phases.mjs#requiresApproval`）——这三关**只适用于 full 管线**，light 无任何人工关卡，全流程自动收敛；② R5 / R6 / R7 硬规则触发（R2.5 到 3 次上限、mock 屏蔽真实失败、越界不可撤、悄悄扩大范围等安全护栏）。
+- **R2.7** `REVIEW.md` 标为「严重」的项目，必须修复或显式标注「已知接受」并经人工确认，否则不能进 `INTEGRATION`。
+- **R2.8** `INTEGRATION` 阶段的 UAT 失败时，自动生成 fix-plan 回到 `DEV`，**最多重试 3 轮**，超限必须暂停。
 
 ## R3 · 角色红线
 
@@ -100,7 +102,7 @@
 
 ## R4 · 提交与产物
 
-- **R4.1** DEV 阶段每完成一个任务做一次原子提交。提交信息格式：`<type>(<change-id>): <subject>`。
+- **R4.1** commit 单位 = stage。DEV 阶段末统一 1 个 commit（格式 `<type>(<change-id>): dev 阶段概要`），覆盖全部代码变更 + `EXECUTION.md`。wave 边界不产 commit。
 - **R4.2** 每个任务的代码改动必须伴随测试改动（同次提交或紧邻的下一次提交）。
 - **R4.3** Bug 修复必须伴随回归测试用例。
 - **R4.4** AI 不能声称"完成"而没有跑过 `verify` 命令并贴出输出。
@@ -175,7 +177,7 @@
 ## R7 · 范围控制
 
 - **R7.1** 严禁在执行任务时悄悄扩大范围。发现需要超出 `TASKS.md` 的改动时，必须先停下来更新 TASKS 或开新 CHANGE。
-- **R7.2** 不允许同一次提交里混入多个无关任务。
+- **R7.2** 无关任务指跨 change 的任务；同 change 内多 task 允许打包进同一 stage commit。
 - **R7.3** `TASKS.md` 每个任务必须声明 `read_files`（参考边界）和 `write_files`（修改边界）两组路径。`read_files` 是 AI 在做这个任务时**允许读**的范围；`write_files` 是 AI **允许改**的范围。R6.5 的 diff 边界 verify 就是基于此字段。
 
 ## R8 · 中文/英文
@@ -183,9 +185,9 @@
 - **R8.1** 工件文件（`*.md`）的语言保持项目当前主语言一致。
 - **R8.2** 代码标识符（变量名、函数名）一律英文，注释允许中文。
 
-### UI 视觉扩展（仅 2a-ui-design 阶段生效）
+### UI 视觉扩展（仅 2-design § 8 前端 UI 设计段生效）
 
-复用 R8 前缀便于 grep。详见 `@phases/2a-ui-design.md`。
+复用 R8 前缀便于 grep。详见 `@phases/2-design.md` § 8 前端 UI 设计。
 
 - **R8.3** 颜色必须 OKLCH（除非有遗留约束并显式声明）
 - **R8.4** 字体必须避开 AI slop 默认词

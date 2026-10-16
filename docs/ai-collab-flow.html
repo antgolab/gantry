@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>产研协作流程</title>
+<style>
+  :root {
+    --bg: #eef1f4;
+    --surface: #ffffff;
+    --surface-2: #f4f6f8;
+    --ink: #16232e;
+    --ink-2: #435360;
+    --ink-3: #647582;
+    --line: #d7dee5;
+    --accent: #0b7263;
+    --accent-strong: #095b50;
+    --accent-soft: #dff0eb;
+    --blue: #2b6cb0;
+    --blue-soft: #e4eef8;
+    --amber: #b7791f;
+    --amber-soft: #f8eedb;
+    --red: #b23a34;
+    --red-soft: #f7e2e0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0d1216;
+      --surface: #141b21;
+      --surface-2: #1a2229;
+      --ink: #e4eaf0;
+      --ink-2: #a9b6c2;
+      --ink-3: #7c8a97;
+      --line: #29333d;
+      --accent: #3cc7a0;
+      --accent-strong: #6fdcbc;
+      --accent-soft: #12332a;
+      --blue: #5b9de0;
+      --blue-soft: #14283a;
+      --amber: #d99c3d;
+      --amber-soft: #332a18;
+      --red: #e06c5b;
+      --red-soft: #3a1e1b;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d1216;
+    --surface: #141b21;
+    --surface-2: #1a2229;
+    --ink: #e4eaf0;
+    --ink-2: #a9b6c2;
+    --ink-3: #7c8a97;
+    --line: #29333d;
+    --accent: #3cc7a0;
+    --accent-strong: #6fdcbc;
+    --accent-soft: #12332a;
+    --blue: #5b9de0;
+    --blue-soft: #14283a;
+    --amber: #d99c3d;
+    --amber-soft: #332a18;
+    --red: #e06c5b;
+    --red-soft: #3a1e1b;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 15.5px;
+    line-height: 1.7;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1000px; margin: 0 auto; padding: 0 26px; }
+
+  header.hero {
+    background: radial-gradient(1100px 460px at 85% -10%, var(--accent-soft), transparent 60%), var(--surface);
+    border-bottom: 1px solid var(--line);
+    padding: 52px 0 36px;
+  }
+  .eyebrow {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+    font-size: 12px;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 500;
+  }
+  h1 {
+    font-family: "Archivo", "IBM Plex Sans", sans-serif;
+    font-weight: 800;
+    font-size: clamp(1.9rem, 4vw, 2.6rem);
+    line-height: 1.08;
+    letter-spacing: -.02em;
+    margin: 14px 0 12px;
+    text-wrap: balance;
+  }
+  .lede { max-width: 64ch; color: var(--ink-2); font-size: 16.5px; margin: 0; }
+
+  nav.toc {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: color-mix(in srgb, var(--surface) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+  }
+  nav.toc .inner { display: flex; gap: 4px; overflow-x: auto; padding: 10px 0; }
+  nav.toc a {
+    font-size: 13px; color: var(--ink-2); text-decoration: none;
+    padding: 6px 13px; border-radius: 999px; white-space: nowrap;
+  }
+  nav.toc a:hover { background: var(--surface-2); color: var(--ink); }
+  nav.toc a b { color: var(--ink-3); font-weight: 500; margin-right: 5px; font-family: "IBM Plex Mono", monospace; }
+
+  main { padding: 44px 0 72px; }
+  section { margin-bottom: 56px; }
+  h2 {
+    font-family: "Archivo", "IBM Plex Sans", sans-serif;
+    font-weight: 700;
+    font-size: clamp(1.3rem, 2.4vw, 1.65rem);
+    letter-spacing: -.01em;
+    margin: 0 0 6px;
+    text-wrap: balance;
+  }
+  .sec-num { font-family: "IBM Plex Mono", monospace; color: var(--accent); font-size: 13px; font-weight: 600; letter-spacing: .06em; }
+  .sec-desc { color: var(--ink-2); max-width: 66ch; margin: 6px 0 24px; }
+
+  figure.diagram {
+    margin: 24px 0;
+    background: #fbfcfd;
+    border: 1px solid #dde4ea;
+    border-radius: 12px;
+    padding: 22px 20px 14px;
+    overflow: hidden;
+  }
+  figure.diagram .mermaid { display: flex; justify-content: center; overflow-x: auto; }
+  figure.diagram .mermaid svg { max-width: 100%; height: auto; }
+  figure.diagram figcaption {
+    font-size: 12.5px; color: #5b6b7a;
+    border-top: 1px solid #e7edf2; margin-top: 14px; padding-top: 11px;
+    text-align: center;
+    font-family: "IBM Plex Mono", ui-monospace, monospace; letter-spacing: .02em;
+  }
+
+  .table-scroll { overflow-x: auto; margin: 22px 0; }
+  table {
+    width: 100%; border-collapse: collapse; background: var(--surface);
+    border: 1px solid var(--line); border-radius: 10px; font-size: 14px; min-width: 620px;
+  }
+  thead th {
+    text-align: left; font-family: "IBM Plex Mono", monospace; font-size: 12px;
+    letter-spacing: .05em; text-transform: uppercase; color: var(--ink-3);
+    background: var(--surface-2); padding: 11px 14px; border-bottom: 1px solid var(--line);
+  }
+  tbody td { padding: 11px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: none; }
+  .role {
+    display: inline-block; font-family: "IBM Plex Mono", monospace; font-size: 12px; font-weight: 600;
+    padding: 2px 9px; border-radius: 999px; letter-spacing: .02em;
+  }
+  .role.pm { background: var(--accent-soft); color: var(--accent); }
+  .role.ds { background: var(--blue-soft); color: var(--blue); }
+  .role.tl { background: var(--amber-soft); color: var(--amber); }
+  .role.dev { background: var(--surface-2); color: var(--ink-2); border: 1px solid var(--line); }
+  .role.qa { background: var(--red-soft); color: var(--red); }
+
+  .callout {
+    background: var(--accent-soft);
+    border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+    border-radius: 10px; padding: 15px 20px; margin: 24px 0; font-size: 14px; color: var(--ink-2);
+  }
+  .callout b { color: var(--accent-strong); }
+
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 22px 0; }
+  @media (max-width: 640px) { .two-col { grid-template-columns: 1fr; } }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px 18px; }
+  .panel h3 { margin: 0 0 8px; font-family: "Archivo", "IBM Plex Sans", sans-serif; font-size: 1rem; }
+  .panel ul { margin: 0; padding-left: 18px; color: var(--ink-2); font-size: 14px; }
+  .panel li { margin: 4px 0; }
+
+  footer { border-top: 1px solid var(--line); padding: 26px 0 44px; color: var(--ink-3); font-size: 13px; }
+</style>
+</head>
+<body>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.9.1/mermaid.min.js"></script>
+<script>
+  mermaid.initialize({ startOnLoad: true, theme: 'default' });
+</script>
+
+<div class="wrap">
+  <header class="hero">
+    <div class="eyebrow">产研协作流程</div>
+    <h1>人做决策，AI 做工具</h1>
+    <p class="lede">一条需求从提出到上线，是产品、设计、研发、测试这些<b>人</b>之间的协作；AI 只是每个人手里的效率工具——写草稿、写代码、写用例、做 diff 审查建议。评审、决策、发布、担责，始终是人。</p>
+  </header>
+
+  <nav class="toc">
+    <div class="wrap inner">
+      <a href="#roles"><b>1</b>角色与职责</a>
+      <a href="#feature"><b>2</b>需求开发</a>
+      <a href="#bugfix"><b>3</b>Bug 修复</a>
+      <a href="#git"><b>4</b>Git 协作</a>
+      <a href="#ai"><b>5</b>AI 的位置</a>
+    </div>
+  </nav>
+
+  <main>
+    <!-- ============ 1 角色与职责 ============ -->
+    <section id="roles">
+      <span class="sec-num">01 · 角色与职责</span>
+      <h2>产研测的角色与职责</h2>
+      <p class="sec-desc">六个角色，都是人。每人有明确的职责与不可替代的部分，AI 只在「工具辅助」一列提供帮助。</p>
+      <div class="table-scroll">
+        <table>
+          <thead><tr><th>角色</th><th>职责</th><th>AI 工具辅助</th><th>人负责（不可替代）</th></tr></thead>
+          <tbody>
+            <tr><td><span class="role pm">产品 PM</span></td><td>需求洞察、PRD、需求评审、优先级、验收</td><td>写 PRD 草稿、竞品分析、用户故事整理</td><td>需求取舍、评审拍板</td></tr>
+            <tr><td><span class="role ds">设计</span></td><td>交互 / 视觉设计</td><td>出初稿、找灵感、切图</td><td>设计定稿、设计评审</td></tr>
+            <tr><td><span class="role tl">技术负责人</span></td><td>技术方案、架构、代码评审</td><td>技术调研、diff 审查建议</td><td>架构决策、评审结论</td></tr>
+            <tr><td><span class="role dev">开发</span></td><td>编码、自测、联调、修复</td><td>写代码、单测、debug、解释代码</td><td>代码质量、自测、联调</td></tr>
+            <tr><td><span class="role qa">测试 QA</span></td><td>测试用例、功能测试、回归、发布验收</td><td>生成用例草稿、测试数据、报告整理</td><td>用例设计、缺陷判定、验收</td></tr>
+            <tr><td><span class="role dev">发布 / 运维</span></td><td>发布、监控、回滚、告警</td><td>日志分析、告警摘要</td><td>发布决策、回滚拍板</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="callout"><b>关键：AI 帮助「备料」，不替代「拍板」。</b> 每个角色的 AI 工具只做提升效率的粗活，评审结论、需求取舍、发布决策这些不可逆的事，都由人对结果负责。</div>
+    </section>
+
+    <!-- ============ 2 需求开发 ============ -->
+    <section id="feature">
+      <span class="sec-num">02 · 需求开发</span>
+      <h2>需求开发：从 PRD 到上线</h2>
+      <p class="sec-desc">一条新需求，经过四道评审门（需求 / 设计 / 技术 / 发布），由不同角色接力完成。</p>
+      <figure class="diagram">
+        <pre class="mermaid">
+flowchart TD
+  A(["需求提出 · 产品 PM"]) --> B["PRD · 产品 PM"]
+  B --> C{"需求评审 · 产研测"}
+  C --> D["设计稿 · 设计"]
+  D --> E{"设计评审"}
+  E --> F["技术方案 · 技术负责人"]
+  F --> G{"技术评审"}
+  G --> H["开发 + 自测 · 开发"]
+  H --> I["提测 · 开发"]
+  I --> J["测试 + 回归 · 测试"]
+  J --> K{"发布评审 · 产研测"}
+  K --> L(["灰度发布 → 全量 → 监控复盘"])
+        </pre>
+        <figcaption>四道评审门：需求 / 设计 / 技术 / 发布，缺一不可</figcaption>
+      </figure>
+      <figure class="diagram">
+        <pre class="mermaid">
+sequenceDiagram
+  participant PM as 产品 PM
+  participant DS as 设计
+  participant TL as 技术负责人
+  participant DEV as 开发
+  participant QA as 测试
+  PM->>DS: 需求评审通过，交设计
+  DS->>TL: 设计评审通过，交技术方案
+  TL->>DEV: 技术评审通过，拆任务排期
+  DEV->>DEV: 编码 + 自测
+  DEV->>QA: 提测
+  QA->>DEV: 缺陷反馈
+  DEV->>QA: 修复后重提
+  QA->>TL: 回归通过，交发布评审
+  TL->>DEV: 灰度 → 全量发布
+        </pre>
+        <figcaption>各角色之间的交接：上一环节评审通过，才进入下一环节</figcaption>
+      </figure>
+    </section>
+
+    <!-- ============ 3 Bug 修复 ============ -->
+    <section id="bugfix">
+      <span class="sec-num">03 · Bug 修复</span>
+      <h2>Bug 修复：分级、定位、回归</h2>
+      <p class="sec-desc">bug 先由 PM 定级定优先级，高优先级走「定位根因 → 修复 → 评审 → 回归」闭环，严重 bug 最后做 RCA 复盘。</p>
+      <figure class="diagram">
+        <pre class="mermaid">
+flowchart TD
+  A(["发现 bug · 测试 / 线上告警"]) --> B["提 bug 单 · 测试"]
+  B --> C{"定级 + 优先级 · 产品 PM"}
+  C -->|"低优先级"| D["随下版本修复"]
+  C -->|"高 / 紧急"| E["定位根因 · 开发"]
+  E --> F["修复 + 自测 · 开发"]
+  F --> G["代码评审 · 技术负责人"]
+  G --> H["回归验证 · 测试"]
+  H --> I{"回归通过?"}
+  I -->|"否"| E
+  I -->|"是"| J["发布 hotfix / 随版本"]
+  D --> J
+  J --> K(["严重 bug 复盘 · RCA"])
+        </pre>
+        <figcaption>两个关键：先定级定优先级；修复后必须回归，回归不通过回到定位</figcaption>
+      </figure>
+    </section>
+
+    <!-- ============ 4 Git 协作 ============ -->
+    <section id="git">
+      <span class="sec-num">04 · Git 协作</span>
+      <h2>Git 协作：一个需求一个分支，一次评审一次合入</h2>
+      <p class="sec-desc">分支按需求 / 修复开，合入前必须过 CI 机器门禁和人工代码评审。</p>
+      <figure class="diagram">
+        <pre class="mermaid">
+flowchart LR
+  MAIN["main 主干"] --> F1["feature 分支"]
+  MAIN --> F2["fix 分支"]
+  F1 --> P1["PR · 代码评审"]
+  F2 --> P2["PR · 代码评审"]
+  P1 --> MAIN2["合入 main"]
+  P2 --> MAIN2
+  MAIN2 --> REL["发布 tag"]
+  REL --> HF["hotfix 紧急修复"]
+  HF --> MAIN2
+        </pre>
+        <figcaption>feature / fix 分支并行，评审通过后合入 main；紧急问题走 hotfix</figcaption>
+      </figure>
+      <figure class="diagram">
+        <pre class="mermaid">
+sequenceDiagram
+  participant DEV as 开发
+  participant CI as CI/CD
+  participant TL as 技术负责人
+  DEV->>DEV: 分支开发（一个需求一个分支）
+  DEV->>CI: push + 提 PR
+  CI->>CI: lint / test / build
+  DEV->>TL: 请求代码评审
+  TL->>DEV: 评审意见（AI 辅助 diff 审查）
+  DEV->>DEV: 修订
+  TL->>CI: 合入 main
+        </pre>
+        <figcaption>机器先过滤（CI），技术负责人评审拍板，开发修订后合入</figcaption>
+      </figure>
+    </section>
+
+    <!-- ============ 5 AI 的位置 ============ -->
+    <section id="ai">
+      <span class="sec-num">05 · AI 的位置</span>
+      <h2>AI 只是工具，不是流程里的角色</h2>
+      <p class="sec-desc">AI 不占据流程的任何一个阶段，也不充当任何一个角色。它像 IDE、像测试框架一样，是每个角色手里的工具。</p>
+      <div class="two-col">
+        <div class="panel">
+          <h3>AI 帮人做的（效率）</h3>
+          <ul>
+            <li>写 PRD / 设计稿 / 测试用例的草稿</li>
+            <li>写代码、写单测、debug</li>
+            <li>做 diff 审查建议、技术调研</li>
+            <li>整理信息、日志分析、报告</li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h3>AI 不碰的（决策与担责）</h3>
+          <ul>
+            <li>定需求优先级、定架构方向</li>
+            <li>在评审会上拍板</li>
+            <li>决定是否发布、是否回滚</li>
+            <li>对线上结果负责</li>
+          </ul>
+        </div>
+      </div>
+      <div class="callout"><b>一句话：</b> 流程是产研测的人跑出来的，AI 只是让每个人跑得更快。它产出的是「草稿」，人产出的是「决策」。</div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="wrap">产研协作流程 · 人为主体，AI 是工具 · 需求开发 / Bug 修复 / Git 协作三条主线</div>
+  </footer>
+</div>
+</body>
+</html>

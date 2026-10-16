@@ -72,21 +72,34 @@ function codexRoot(core, commands) {
 
 ## 核心 Skills
 
-- \`$gantry-status\`：查看当前状态
+日常骨架：
 - \`$gantry-change\`：启动新变更
 - \`$gantry-next\`：执行当前阶段并推进
-- \`$gantry-exec\`：执行当前任务 / wave
-- \`$gantry-resume\`：断点恢复
 - \`$gantry-archive\`：完成并归档
-- \`$gantry-auto\`：自主推进（保留人工确认关卡）
-- \`$gantry-review\`：审查入口（代码 / 需求 / 对抗）
-- \`$gantry-health\`：代码库健康检查
-- \`$gantry-context\`：上下文与架构治理
-- \`$gantry-knowledge\`：知识捕获与维护
-- \`$gantry-debug\`：系统化调试
-- \`$gantry-fast\`：快速路径
 
-公开 skills 位于 \`.agents/skills/\`；内部阶段协议由 \`gantry-next\` / \`gantry-exec\` / \`gantry-review\` 按需读取。
+自动驾驶：
+- \`$gantry-auto\`：多步自主推进（保留人工确认关卡）
+
+状态类：
+- \`$gantry-status\`：查看当前状态
+- \`$gantry-resume\`：断点恢复
+- \`$gantry-adjust\`：中途变化 → 打开 PATCH.md 闭环
+
+审查与排障：
+- \`$gantry-review\`：审查入口（代码 / 需求 / 对抗）
+- \`$gantry-debug\`：系统化调试
+
+维护：
+- \`$gantry-context\`：上下文与架构治理（scan / architect / evolve / knowledge）
+- \`$gantry-health\`：代码库健康检查
+- \`$gantry-unarchive\`：从归档恢复 change
+
+已内部化（不再作为用户命令入口）：
+- \`exec\`：\`$gantry-next\` 到 dev 阶段自动触发
+- \`fast\`：light 管线由 \`gantry change --tier light --scope\` 直接进入，无人工关卡
+- \`knowledge\`：capture / curate 并入 \`$gantry-context knowledge <sub>\`
+
+公开 skills 位于 \`.agents/skills/\`；内部阶段协议由 \`gantry-next\` 按需读取。
 `;
 }
 
@@ -126,7 +139,7 @@ ${body.trim()}
   - \`trigger === false && confidence === "high"\`:确定不用跑,跳过。
   - \`trigger === false && confidence === "low"\`:关键词判定可能漏,**据完整上下文复核**,涉及就补跑。
   - 只能把 low 的 false 上调为"跑",不得把 true 下调为"跳过"。
-- 仅当当前 skill 的编排协议要求推进时，才执行 \`next.onSuccess\` (失败走 \`next.onFailure\`)；明确要求停在人工确认关卡时禁止执行，等待后续 \`/gantry-next\`。
+- 仅当当前 skill 的编排协议要求推进时，才执行 \`next.onSuccess\` (失败走 \`next.onFailure\`)；明确要求停在人工确认关卡时禁止执行，等待后续 \`/gantry-auto\` 或 \`/gantry-next\`。
 - 不允许在 v2 schema 上自行发明字段。
 
 ## 阶段执行指令
@@ -156,14 +169,15 @@ ${cmdName === 'auto' ? codexAutoAdapter() : ''}
 function codexAutoAdapter() {
   return [
     '',
-    '## Codex wave 子 Agent 适配',
+    '## Codex 子 Agent 适配',
     '',
-    '- 每个 wave 使用一次 `spawn_agent` 创建一个新子 Agent，`agent_type="worker"`、`fork_turns="none"`；不得让子 Agent 继承 orchestrator 的长对话。',
-    '- message 必须包含 waveId、有序 taskIds，以及“你不是唯一在工作区工作的 Agent，不得撤销他人修改”。',
-    '- message 要求子 Agent 在 wave 内逐个 task 运行 `gantry context dev --task <id>`，读取 `.agents/skills/gantry-exec/SKILL.md` 和当前 context pack，完成 verify、提交、`gantry done <task-id>`；任一 task 失败立即停止。',
-    '- message 必须明确该 wave 子 Agent 是叶子执行者：禁止调用 `spawn_agent` 或 `followup_task` 创建、恢复或委派其他子 Agent，必须直接执行分配的 task。',
-    '- 子 Agent 禁止执行 `gantry advance`。调用 `wait_agent` 同步等待该 wave 子 Agent 完成；任一时刻只运行一个。',
-    '- wave 失败重试必须再次调用 `spawn_agent` 创建新子 Agent，不得对失败 Agent 使用 `followup_task` 继续实现。',
+    '- 每个 task 一个新子 Agent：为本 wave 的每个 taskId 各调用一次 `spawn_agent`，`agent_type="worker"`、`fork_turns="none"`，全部创建后再逐个 `wait_agent` 同步等待；不得让子 Agent 继承 orchestrator 的长对话。',
+    '- 本 wave 未全部返回前不得启动下一个 wave。',
+    '- message 必须包含 waveId、该子 Agent 的 taskId、orchestrator 预先用 `gantry context dev --task <id> --json` 生成的 pack 全文，以及“你不是唯一在工作区工作的 Agent，不得撤销他人修改”。',
+    '- message 要求子 Agent 读取 `.gantry/core/agents/executor.md` 与 `.gantry/core/phases/4-dev.md`「单任务执行」，只按 message 里的 pack 完成 TDD 和 verify；不读 `context-pack.json`，不 commit，不运行 `gantry done`，执行记录和微复盘写进返回报告。',
+    '- message 必须明确该子 Agent 是叶子执行者：禁止调用 `spawn_agent` 或 `followup_task` 创建、恢复或委派其他子 Agent，必须直接执行分配的 task。',
+    '- 子 Agent 禁止执行 `gantry advance`。',
+    '- 失败重试必须再次调用 `spawn_agent` 创建新子 Agent，不得对失败 Agent 使用 `followup_task` 继续实现。',
     '- `gantry dispatch --json` 返回 `fallback_main` 时停止创建子 Agent；主 Agent 在当前上下文按 taskIds 逐个刷新 context pack 并直接完成剩余 task，完成后重新 dispatch。',
     '',
   ].join('\n');

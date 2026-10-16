@@ -225,6 +225,7 @@ AI 自己逐个维度诊断 diff，输出上面同样的 4 要素格式，发现
 ## 约束（强制）
 
 - **R3.3**：禁止直接修改代码
+- **review-lane-guard**：review 阶段 context-pack 必须通过 `src/lib/review-lane-guard.mjs` 的隔离检查；命中 DEV 上下文泄漏（`review_context_leak`）时不得进入审查
 - **R2.5**：所有 Critical 必须修复或显式「已知接受」并经人工确认，否则禁止进 INTEGRATION
 - 不允许笼统结论（"代码写得不错"），每条结论必须有具体行号或文件引用
 
@@ -246,6 +247,13 @@ gantry hook run after:review
 ```
 - 退出码 0 或无配置 → 继续
 - 退出码非 0 → 停止并告知用户，等待指示
+
+## 自主模式自检（autonomous=true）
+
+本阶段末尾禁止向用户反问「是否继续 / 要不要先扫一眼 / 是否推进下一阶段」。按 R2.6：
+- 产物齐备、门禁通过 → 直接按「触发下一步」执行
+- 多选场景 → 取推荐项（无推荐则取列表第一项），把选择与理由写进本阶段产物
+- 仅三类允许停：① `requiresApproval` 硬锁的 change / design / integration；② R5 / R6 / R7 触发；③ R2.5 自愈 3 次仍失败
 
 ## 触发下一步
 

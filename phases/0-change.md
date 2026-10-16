@@ -112,7 +112,7 @@ gantry hook run before:change
       python3 src/ui-ux-pro-max/scripts/search.py "<项目关键词>" --domain product
       ```
       从 67 styles 里选出 **9 个最匹配项目类型**的，按下面的标准卡片格式呈现。
-      优势：后期 2a-ui-design 能联动调调色板（161 palettes）/ 字体（57 pairings）/ 图表（25 charts）。
+      优势：后期 2-design § 8 前端 UI 设计能联动调调色板（161 palettes）/ 字体（57 pairings）/ 图表（25 charts）。
    2. **没装 uipro** → 回退到 Gantry 内置基线：加载 `@gantry/reference/ui-aesthetics.md` 的「调性」一节，按其末尾的「给 AI 在 0-change 阶段展示用的标准模板」呈现 9 张调性卡片。
 
    ### 呈现要求（两条路径都适用）
@@ -130,7 +130,7 @@ gantry hook run before:change
    ### 选定后
 
    - 写入 `PROPOSAL.md` 的 `视觉调性` 字段（`uiImpact: true` 时必填）
-   - 会**继承到 2a-ui-design**，2a 不再让用户重选调性
+   - 会**继承到 2-design § 8 前端 UI 设计**，该段不再让用户重选调性
    - **进入步骤 1**（反问）
 
 1. **反问（强制前置门 · 不可跳过）**：用户选定调性后（或 `uiImpact: false` 跳过 0.6 后），用结构化提问把"为什么 / 给谁 / 解决什么 / 何时算完"问清楚。每轮最多 3 个问题，等用户回答再继续。
@@ -150,9 +150,9 @@ gantry hook run before:change
 4. **生成 PROPOSAL.md**：使用 `@gantry/templates/PROPOSAL.md` 模板，填好后保存到 `.gantry/specs/<change-id>/PROPOSAL.md`。
    - **硬约束**：`## 待澄清问题` 段必须为 `无`。若仍有未决问题，说明步骤 1 没走完——**回到步骤 1 继续反问，不要先生成文件**。带未勾选项（`- [ ]`）的 PROPOSAL 会被 `/gantry-next` 阶段门禁阻断。
 5. **Pipeline 复核**：
-   - 默认 `full`：`REQUIREMENT → DESIGN → [UI-DESIGN] → TASK → DEV → TEST → REVIEW → INTEGRATION`
-   - 显式 `light`：`FAST → INTEGRATION`，仅允许低风险局部变更。
-   - light 在澄清后命中高风险边界 → 停止并提示 `gantry pipeline full`，不得自动升级或绕过。
+   - 默认 `full`：`REQUIREMENT → DESIGN → [UI-DESIGN] → TASK → DEV → TEST → REVIEW → INTEGRATION`。`gantry change` 在创建期不再判档，一律走 full。
+   - `light` **不经过本阶段**：它由 `gantry change --tier light --scope <p,...>` 直接进入 `fast` 闭环（无 PROPOSAL、无 change / integration 关卡）。若用户要 light，请改用该入口重开，不要在本阶段的 PROPOSAL 里"降档"。
+   - 若你认为当前变更风险低、适合走 light：仍然先按 full 澄清并产出 PROPOSAL，由用户在创建期用 `--tier light` 决定；本阶段不做降档。
 
 ## 输出
 
@@ -184,8 +184,15 @@ gantry hook run after:change
 - 退出码 0 或无配置 → 继续
 - 退出码非 0 → 停止并告知用户，等待指示
 
+## 自主模式自检（autonomous=true）
+
+本阶段末尾禁止向用户反问「是否继续 / 要不要先扫一眼 / 是否推进下一阶段」。按 R2.6：
+- 产物齐备、门禁通过 → 直接按「触发下一步」执行
+- 多选场景 → 取推荐项（无推荐则取列表第一项），把选择与理由写进本阶段产物
+- 仅三类允许停：① `requiresApproval` 硬锁的 change / design / integration；② R5 / R6 / R7 触发；③ R2.5 自愈 3 次仍失败
+
 ## 触发下一步
 
-`PROPOSAL.md` 经用户确认后：
-- full → `phases/1-requirement.md`
-- light → `phases/F-fast.md`
+`PROPOSAL.md` 经用户确认后 → `phases/1-requirement.md`（本阶段只产出 full 变更）。
+
+light 不经本阶段，也不从 `PROPOSAL` 触发：它由 `gantry change --tier light --scope …` 直接进入 `.gantry/core/phases/F-fast.md`。
