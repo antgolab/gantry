@@ -41,6 +41,8 @@ for (const tool of targets) {
   if (existsSync(outDir)) rmSync(outDir, { recursive: true, force: true });
   const files = renderer.render(core, commands, agents);
   for (const [relPath, content] of Object.entries(files)) {
+    // __merge__/ entries are merge intents consumed by `gantry install`, not files
+    if (relPath.startsWith('__merge__/')) continue;
     const full = join(outDir, relPath);
     mkdirSync(dirname(full), { recursive: true });
     const skipBanner = isPromptEntry(relPath);
