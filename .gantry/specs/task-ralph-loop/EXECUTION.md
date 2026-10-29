@@ -84,7 +84,7 @@ source: default
 <!-- ralph-task:T01:begin -->
 ### T01 · verified
 
-- receipt: 8b6fa772ecf648c2a4124814cd99d2ebb85331496c8282141de8f78553f7f2ab
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
 - attempt: ac805829-be0e-4950-b7bf-6dc69983fe04; repairs: 3/3
 - verify: `node --test tests/ralph-record.test.mjs` (exit 0, tests unknown)
 - problem: none
@@ -95,7 +95,7 @@ source: default
 <!-- ralph-task:T02:begin -->
 ### T02 · verified
 
-- receipt: 8b6fa772ecf648c2a4124814cd99d2ebb85331496c8282141de8f78553f7f2ab
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
 - attempt: 4456922f-31ef-4ed6-a0a7-27baba900159; repairs: 3/3
 - verify: `node --test tests/ralph-evidence.test.mjs` (exit 0, tests unknown)
 - problem: none
@@ -106,7 +106,7 @@ source: default
 <!-- ralph-task:T03:begin -->
 ### T03 · verified
 
-- receipt: 8b6fa772ecf648c2a4124814cd99d2ebb85331496c8282141de8f78553f7f2ab
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
 - attempt: 207fabb1-886f-4410-b561-5de6fe6af511; repairs: 3/3
 - verify: `node --test tests/ralph-process.test.mjs` (exit 0, tests unknown)
 - problem: none
@@ -117,7 +117,7 @@ source: default
 <!-- ralph-task:T04:begin -->
 ### T04 · verified
 
-- receipt: 8b6fa772ecf648c2a4124814cd99d2ebb85331496c8282141de8f78553f7f2ab
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
 - attempt: c96fe0a7-aff2-49c9-91a6-8664190a4fe1; repairs: 3/3
 - verify: `node --test tests/ralph-task-cycle.test.mjs tests/ralph-recovery.test.mjs` (exit 0, tests unknown)
 - problem: none
@@ -190,7 +190,7 @@ source: default
 <!-- ralph-task:T05:begin -->
 ### T05 · verified
 
-- receipt: 8b6fa772ecf648c2a4124814cd99d2ebb85331496c8282141de8f78553f7f2ab
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
 - attempt: 5a2a195e-98d5-46f3-9247-6597dafd4dff; repairs: 3/3
 - verify: `node --test tests/loop-next.test.mjs tests/loop-next-cli.test.mjs tests/loop-driver.test.mjs tests/ralph-stage.test.mjs` (exit 0, tests unknown)
 - problem: verification-mutated-content
@@ -201,7 +201,7 @@ source: default
 <!-- ralph-task:T06:begin -->
 ### T06 · verified
 
-- receipt: 8b6fa772ecf648c2a4124814cd99d2ebb85331496c8282141de8f78553f7f2ab
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
 - attempt: 68500408-707b-4e6d-87c9-5d0ba24d36cb; repairs: 3/3
 - verify: `node --test tests/ralph-integration.test.mjs tests/autonomous-task-dispatch.test.mjs tests/context-pack.test.mjs tests/heal-cli.test.mjs tests/approval-gate.test.mjs` (exit 0, tests unknown)
 - problem: none
@@ -272,7 +272,7 @@ source: default
 <!-- ralph-task:T07:begin -->
 ### T07 · verified
 
-- receipt: 8b6fa772ecf648c2a4124814cd99d2ebb85331496c8282141de8f78553f7f2ab
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
 - attempt: 34cbbe0b-ea9e-485a-944e-b05c9327f3b4; repairs: 3/3
 - verify: `node --test tests/ralph-protocol.test.mjs tests/prompt-text-check.test.mjs && npm run build && npm run verify` (exit 0, tests unknown)
 - problem: unknown-test-counts
@@ -289,7 +289,7 @@ source: default
 <!-- ralph-task:T-FIX-01:begin -->
 ### T-FIX-01 · verified
 
-- receipt: 8b6fa772ecf648c2a4124814cd99d2ebb85331496c8282141de8f78553f7f2ab
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
 - attempt: de38ade8-d071-4faa-8825-11f4e6e2f343; repairs: 0/3
 - verify: `node --test tests/ralph-task-cycle.test.mjs tests/ralph-evidence.test.mjs tests/context-pack.test.mjs` (exit 0, tests unknown)
 - problem: none
@@ -300,7 +300,7 @@ source: default
 <!-- ralph-task:T-FIX-02:begin -->
 ### T-FIX-02 · verified
 
-- receipt: 8b6fa772ecf648c2a4124814cd99d2ebb85331496c8282141de8f78553f7f2ab
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
 - attempt: bf8de8b7-47d5-45e9-a87f-b2b50f94f6c8; repairs: 0/3
 - verify: `node --test tests/ralph-integration.test.mjs` (exit 0, tests unknown)
 - problem: none
@@ -324,7 +324,7 @@ source: default
 <!-- ralph-task:T-FIX-03:begin -->
 ### T-FIX-03 · verified
 
-- receipt: 8b6fa772ecf648c2a4124814cd99d2ebb85331496c8282141de8f78553f7f2ab
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
 - attempt: 9f43d925-ad82-4605-b8fe-93bffe1940b0; repairs: 0/3
 - verify: `node --test tests/ralph-integration.test.mjs` (exit 0, tests unknown)
 - problem: none
@@ -335,7 +335,7 @@ source: default
 <!-- ralph-task:T-FIX-04:begin -->
 ### T-FIX-04 · verified
 
-- receipt: 8b6fa772ecf648c2a4124814cd99d2ebb85331496c8282141de8f78553f7f2ab
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
 - attempt: 96086a47-d86d-4ee8-a5d6-ae6a78661806; repairs: 0/3
 - verify: `node --test tests/ralph-stage.test.mjs tests/approval-gate.test.mjs tests/loop-driver.test.mjs` (exit 0, tests unknown)
 - problem: none
@@ -360,7 +360,7 @@ source: default
 <!-- ralph-task:T-FIX-05:begin -->
 ### T-FIX-05 · verified
 
-- receipt: 8b6fa772ecf648c2a4124814cd99d2ebb85331496c8282141de8f78553f7f2ab
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
 - attempt: ad3b3853-b358-4d4b-87cc-2d47a5def3ef; repairs: 0/3
 - verify: `node --test tests/ralph-integration.test.mjs` (exit 0, tests unknown)
 - problem: none
@@ -371,7 +371,7 @@ source: default
 <!-- ralph-task:T-FIX-06:begin -->
 ### T-FIX-06 · verified
 
-- receipt: 8b6fa772ecf648c2a4124814cd99d2ebb85331496c8282141de8f78553f7f2ab
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
 - attempt: 54b1913b-b60f-402f-9497-e18e84b79b30; repairs: 0/3
 - verify: `node --test tests/ralph-task-cycle.test.mjs tests/context-pack.test.mjs tests/ralph-recovery.test.mjs` (exit 0, tests unknown)
 - problem: none
@@ -389,7 +389,7 @@ source: default
 <!-- ralph-task:T-FIX-07:begin -->
 ### T-FIX-07 · verified
 
-- receipt: 8b6fa772ecf648c2a4124814cd99d2ebb85331496c8282141de8f78553f7f2ab
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
 - attempt: f818ae83-a26f-4317-a6b6-4e669eda2865; repairs: 0/3
 - verify: `node --test tests/ralph-task-cycle.test.mjs tests/ralph-protocol.test.mjs` (exit 0, tests unknown)
 - problem: none
@@ -403,3 +403,24 @@ source: default
 - 有限识别字面直调、引号参数、&&/;/|与简单文件重定向，以固定Shell脚本和位置参数command-v检测，不eval验收串、不预跑行为测试。复杂Shell需显式preflight，TASK规划门禁同步检查声明；包脚本/解释器导入/远程依赖不做传递推断。
 - RED3项失败：缺runner仍calls=1、链/checks缺runner仍编码、动态Shell无preflight仍预约。GREEN及父done35/35（约50秒），缺失时calls=0且无新record/attempt；本地权限、builtin、命令链及合法RED兼容。
 - 六维：有限识别无通用Shell框架，固定脚本+参数防求值，静态门禁和执行复用判据，零新依赖，保持phases→evidence方向。仅声明7文件，保留06投影/测试，0越界；git diff --check通过。
+
+<!-- ralph-task:T-FIX-08:begin -->
+### T-FIX-08 · verified
+
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
+- attempt: a0715a67-e3ea-49ee-be2d-59c39eeb8a85; repairs: 0/3
+- verify: `node --test tests/loop-engineering.test.mjs tests/ralph-protocol.test.mjs` (exit 0, tests unknown)
+- problem: none
+- cause: none
+- next: none
+<!-- ralph-task:T-FIX-08:end -->
+
+
+## T-FIX-08 · 旧门禁fixture适配
+
+- 正式全量903项902通过，旧有效fixture缺verify，104行原成功断言变红；原失败输出TEST-FAILED-FIX4TO7.txt。
+- Fresh executor先focused重现RED，再仅补node --version的verify，规定verify与父done均28/28通过；原两条断言保留，生产实现不变。
+- 沿用grep：rg定位loop-engineering:99，参考ralph-protocol静态门禁；LESSONS runner/preflight/fixture无命中。
+- 边界：write_files仅tests/loop-engineering.test.mjs，实际仅该文件一行；EXECUTION为控制器记录。0越界；无UI/schema/破坏性API。
+- 六维：R1一行fixture；R2仅相关用例；R3复用node字面验证；R4不增抽象；R5不改依赖；R6补齐有效任务前提。测试修改有真实失败依据，不删除或弱化断言。
+- 独立质量复核确认原测试意图保持，不把历史902/903写为通过。
