@@ -860,10 +860,6 @@ async function nextOnce(projectRoot, { isSkip = false, approvedStage = null, wor
     console.log('当前无活跃变更。运行 gantry change "<描述>" 开始。');
     return { stop: true };
   }
-  if (state.currentStage === 'integration') {
-    console.log('已在 integration 阶段。运行 gantry archive 完成变更。');
-    return { reachedEnd: 'integration' };
-  }
 
   // light@fast 走独立的出口门（DESIGN D7/D8/D14；SPEC AC-6/7/8/11）：
   // 不经过 full 的阶段图与 change/design/integration 硬锁，由 CLI 执行 verify
@@ -899,6 +895,8 @@ async function nextOnce(projectRoot, { isSkip = false, approvedStage = null, wor
   }
   const nextStage = getNextStage(state.currentStage, effectiveConfig);
   if (!nextStage) {
+    updateState(projectRoot, { pauseReason: null });
+    if (state.currentStage === 'integration') console.log('integration 已获批准。运行 gantry archive 完成变更。');
     return { reachedEnd: state.currentStage };
   }
 
@@ -1012,28 +1010,33 @@ async function commitDevCheckpoint(root, state) {
     const message = `feat(${state.activeChange}): 完成 DEV 任务与组合验证`;
     let pending = existsSync(marker) ? JSON.parse(readFileSync(marker, 'utf8')) : null;
     if (pending && pending.changeId !== state.activeChange) return { ok: false, reason: '存在其他 change 的待核对提交记录' };
-    if (pending && head !== pending.head) {
+    const committedCandidateMismatch = () => {
+      const manual = '；保留预约、提交与索引。请人工核对 git show HEAD、git diff HEAD、git diff --cached 及 .gantry/planning/ralph-checkpoint.json，不会自动追加 DEV 提交';
       const subject = git(['log', '-1', '--format=%s']);
-      const parent = git(['rev-parse', 'HEAD^']);
+      const parent = git(['log', '-1', '--format=%P']);
       const tree = git(['rev-parse', 'HEAD^{tree}']);
-      if (parent === pending.head && subject === pending.message && tree === pending.tree) {
-        // A matching commit proves the old candidate landed, not that it still
-        // describes the workspace. Ignore only the framework-owned receipt.
-        const reservedSources = pending.files.filter(path => path !== execution).sort();
-        const candidateSources = [...allowed].filter(path => path !== execution).sort();
-        if (reservedSources.length !== candidateSources.length || reservedSources.some((path, i) => path !== candidateSources[i])) {
-          return { ok: false, reason: 'Git 已提交，但任务源码清单已变化；保留预约与索引，请人工核对提交后的新增或删除源码' };
-        }
-        if (git(['write-tree']) !== pending.tree) {
-          return { ok: false, reason: 'Git 已提交，但索引已变化；保留预约与用户暂存内容，请人工核对后恢复' };
-        }
-        if (reservedSources.length && git(['diff', 'HEAD', '--', ...reservedSources])) {
-          return { ok: false, reason: 'Git 已提交，但工作区源码已变化；保留预约与索引，请人工核对当前源码和已提交成果' };
-        }
-        unlinkSync(marker);
-        return { ok: true, commit: head, recovered: true };
+      if (parent !== pending.head || subject !== pending.message || tree !== pending.tree) {
+        return 'Git 实际提交的 parent/tree 或消息与已验证候选不一致' + manual;
       }
-      return { ok: false, reason: 'Git HEAD 在待提交窗口变化，需要核对真实提交' };
+      // Re-read after hooks too: a matching commit alone does not prove that
+      // the index and workspace still describe the verified candidate.
+      const committedScope = checkTaskScope(baseline, captureManifest(root), tasks.flatMap(task => task.writeFiles));
+      const reservedSources = pending.files.filter(path => path !== execution).sort();
+      const candidateSources = committedScope.changedFiles.filter(path => !path.startsWith('.gantry/') && !committedScope.outOfScope.includes(path)).sort();
+      if (reservedSources.length !== candidateSources.length || reservedSources.some((path, i) => path !== candidateSources[i])) {
+        return 'Git 已提交，但任务源码清单已变化' + manual;
+      }
+      if (git(['write-tree']) !== pending.tree) return 'Git 已提交，但索引已变化' + manual;
+      if (reservedSources.length && git(['diff', 'HEAD', '--', ...reservedSources])) {
+        return 'Git 已提交，但工作区源码已变化' + manual;
+      }
+      return null;
+    };
+    if (pending && head !== pending.head) {
+      const mismatch = committedCandidateMismatch();
+      if (mismatch) return { ok: false, reason: mismatch };
+      unlinkSync(marker);
+      return { ok: true, commit: head, recovered: true };
     }
     const candidateFiles = [...allowed].sort();
     if (pending && (pending.files.length !== candidateFiles.length || pending.files.some((path, i) => path !== candidateFiles[i]))) {
@@ -1072,6 +1075,8 @@ async function commitDevCheckpoint(root, state) {
     writeFileSync(marker, JSON.stringify(pending, null, 2) + '\n');
     git(['commit', '-m', pending.message]);
     const commit = git(['rev-parse', 'HEAD']);
+    const mismatch = committedCandidateMismatch();
+    if (mismatch) return { ok: false, reason: mismatch };
     unlinkSync(marker);
     return { ok: true, commit };
   } catch (error) { return { ok: false, reason: error.message }; }

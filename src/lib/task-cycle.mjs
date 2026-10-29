@@ -6,7 +6,7 @@ import { parseTasks } from './tasks.mjs';
 import { readState } from './state.mjs';
 import { readConfig } from './config.mjs';
 import { resolveArtifactPath } from './artifacts.mjs';
-import { createContract, captureManifest, assertTaskPathsObservable, computeContentDigest, checkTaskScope, detectTaskWeakening, inspectVerificationOutput, receiptIsValid, DEFAULT_RALPH_DEADLINES } from './task-evidence.mjs';
+import { createContract, captureManifest, assertTaskPathsObservable, inspectTaskRunnerReadiness, computeContentDigest, checkTaskScope, detectTaskWeakening, inspectVerificationOutput, receiptIsValid, DEFAULT_RALPH_DEADLINES } from './task-evidence.mjs';
 import { createTaskRecord, readTaskRecord, writeTaskRecord, reserveAttempt, recordExternalRetry, acquireWorkspaceLock, releaseWorkspaceLock } from './task-record.mjs';
 import { runShellCommand } from './process-runner.mjs';
 import { appendHealAttempt } from './self-heal.mjs';
@@ -117,16 +117,36 @@ async function prepare(e, opts) {
   if (!e.contract.verify.trim() || !e.contract.writeFiles.length) return result('blocked', record, 'task requires verify and write_files');
   if (!e.task.depends.every(id => getTaskReceiptStatus(e.root, id, opts).valid && e.tasks.find(t => t.id === id)?.status === 'done')) return result('blocked', record, 'dependency-receipt-invalid');
   if (record?.attempt?.lifecycle === 'reserved' || record?.attempt?.lifecycle === 'running') return result('blocked', record, 'attempt-already-reserved');
+  const readiness = inspectTaskRunnerReadiness(e.root, e.contract);
+  if (!readiness.ok) return result('blocked', record, readiness.reason, { diagnostic: readiness.diagnostic });
   const baseline = snapshot(e);
   const failure = await preflight(e, opts); if (failure) return failure;
   if (computeContentDigest(baseline) !== computeContentDigest(snapshot(e))) return result('blocked', record, 'preflight-mutated-content');
   if (!record) record = createTaskRecord(e.root, e.changeId, e.task, e.contract, baseline, opts);
   if (record.attempt && record.repairsUsed >= 3) return result('exhausted', record, 'task-repair-budget-exhausted');
   record = reserveAttempt(e.root, record, { repair: Boolean(record.attempt), ownerNonce: opts.ownerNonce });
+  projectExecutorReports(e, record);
   return result('prepared', record, null, { task: e.task, attempt: record.attempt });
 }
 export async function prepareTask(root, taskId, opts = {}) { return locked(root, opts, owned => prepare(env(root, taskId, owned), owned)); }
 function atomicText(path, text) { const temporary = `${path}.${randomUUID()}.tmp`; writeFileSync(temporary, text); renameSync(temporary, path); }
+function projectExecutorReports(e, record) {
+  if (!record.executorReports?.length) return;
+  const execution = join(e.dir, 'EXECUTION.md');
+  const marker = `<!-- ralph-executor:${e.task.id}:begin -->`; const end = `<!-- ralph-executor:${e.task.id}:end -->`;
+  const reports = record.executorReports.map(report => {
+    // Quote all lines and escape marker syntax so executor output cannot create
+    // another task section or terminate this controller-owned projection.
+    const excerpt = report.text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').split('\n').map(line => `> ${line}`).join('\n');
+    return `- attempt: ${report.attemptId}; at: ${report.at}; truncated: ${report.truncated}\n\n${excerpt}`;
+  }).join('\n\n');
+  const block = `${marker}\n### ${e.task.id} · executor reports\n\nSource: executor statements; unverified; not verification evidence. Diagnostics, hypotheses and excluded approaches below are claims; use controller verify facts separately.\n\n${reports}\n${end}`;
+  let text = existsSync(execution) ? readFileSync(execution, 'utf8') : '# EXECUTION\n';
+  const start = text.indexOf(marker); const stop = text.indexOf(end, start);
+  text = start >= 0 && stop >= 0 ? text.slice(0, start) + block + text.slice(stop + end.length) : `${text.trimEnd()}\n\n${block}\n`;
+  atomicText(execution, text);
+}
 function finish(e, record, opts) {
   // Receipt is already durable. These two writes can be replayed independently.
   opts.onCheckpoint?.('receipt', record);
@@ -223,6 +243,8 @@ export async function convergeTask(root, taskId, opts = {}) {
       else prepared = await prepare(env(root, taskId, owned), owned);
       if (prepared.kind !== 'prepared') return prepared;
       record = prepared.record;
+      // Replay the projection if a previous controller stopped after reserving.
+      projectExecutorReports(e, record);
       for (;;) {
         if (record.attempt.externalRetryPending) {
           await pause(1000 * 2 ** (record.attempt.externalRetriesUsed - 1), owned.signal);

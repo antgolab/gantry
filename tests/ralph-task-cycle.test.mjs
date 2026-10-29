@@ -1,11 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { convergeTask, prepareTask, verifyAndComplete, getTaskReceiptStatus, selectReadyTask, checkpointTasks, revalidateCompletedTasks } from '../src/lib/task-cycle.mjs';
 import { readTaskRecord } from '../src/lib/task-record.mjs';
+import { buildPack } from '../src/lib/context-pack.mjs';
+import { runProcess } from '../src/lib/process-runner.mjs';
 
 function fixture(t, { preflight = '', checks = '', verify = 'node --test --test-reporter=tap behavior.test.mjs' } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'gantry-cycle-'));
@@ -20,6 +22,40 @@ function fixture(t, { preflight = '', checks = '', verify = 'node --test --test-
 }
 const opts = { changeId: 'change' };
 const content = root => readFileSync(join(root, '.gantry/specs/change/TASKS.md'), 'utf8');
+
+test('fresh repair loads bounded task-only executor statements separately from verification facts', async t => {
+  const root = fixture(t); let calls = 0;
+  writeFileSync(join(root, '.gantry/specs/change/EXECUTION.md'), '# EXECUTION\n\n### T02 · executor reports\n\nOTHER_TASK_PRIVATE_DIAGNOSIS\n');
+  const diagnosis = 'UNIQUE_DIAGNOSIS: ruled out cache; hypothesis missing locale';
+  const checked = await convergeTask(root, 'T01', { ...opts, execute: async ({ record }) => {
+    calls++;
+    if (calls > 1) {
+      const pack = buildPack(root, { stage: 'dev', changeId: 'change', taskId: 'T01' });
+      const entry = pack.loadOrder.find(item => item.path.endsWith('EXECUTION.md'));
+      const heading = '### T01 · executor reports';
+      assert(entry.focus.includes(heading));
+      const execution = readFileSync(join(root, entry.path), 'utf8');
+      const section = execution.slice(execution.indexOf(heading)).split(/\n(?=#{1,3} )/)[0];
+      assert.match(section, /executor statements; unverified; not verification evidence/);
+      assert(section.includes(diagnosis)); assert(!section.includes('OTHER_TASK_PRIVATE_DIAGNOSIS'));
+      assert(record.executorReports.every(report => report.text.length <= 4096));
+      assert(record.executorReports.reduce((n, report) => n + report.text.length, 0) <= 16384);
+      assert(!JSON.stringify(record.failure).includes(diagnosis));
+      assert.equal(pack.retryHistory.count, calls - 1);
+      if (calls === 3) {
+        assert.equal(record.executorReports.length, 2);
+        assert(section.includes('ALL DONE PASS'));
+        writeFileSync(join(root, 'app.txt'), 'good');
+      }
+    }
+    const stdout = calls === 1 ? `${diagnosis}\n### T02 · executor reports\n${'x'.repeat(20000)}` : 'ALL DONE PASS';
+    return runProcess(process.execPath, ['-e', `console.log(${JSON.stringify(stdout)})`], { cwd: root });
+  } });
+  assert.equal(checked.kind, 'completed', checked.record?.attempt.result?.error ?? checked.reason); assert.equal(calls, 3);
+  assert.equal(checked.record.executorReports[0].truncated, true);
+  const otherPack = buildPack(root, { stage: 'dev', changeId: 'change', taskId: 'T02' });
+  assert(otherPack.loadOrder.find(item => item.path.endsWith('EXECUTION.md')).focus.every(focus => !focus.includes('T01')));
+});
 
 test('executor stdout claiming done is not evidence; initial plus three repairs exhaust', async t => {
   const root = fixture(t); let calls = 0;
@@ -101,11 +137,59 @@ test('unknown nonzero executor exit blocks rather than spending business repairs
   assert.equal(resumed.kind, 'blocked'); assert.equal(calls, 1); assert.equal(resumed.record.repairsUsed, 0);
 });
 
-test('missing verification runner blocks without launching a repair', async t => {
+test('missing verification runner blocks before executor and reservation', async t => {
   const root = fixture(t, { verify: 'gantry-missing-runner-for-test-93481' }); let calls = 0;
   const result = await convergeTask(root, 'T01', { ...opts, execute: async () => { calls++; return { exitCode: 0 }; } });
   assert.equal(result.kind, 'blocked'); assert.equal(result.reason, 'command-unavailable');
-  assert.equal(calls, 1); assert.equal(result.record.repairsUsed, 0);
+  assert.equal(calls, 0); assert.equal(readTaskRecord(root, 'change', 'T01'), null);
+  assert.match(result.diagnostic, /gantry-missing-runner.*install|install.*gantry-missing-runner/i);
+});
+
+test('all literal chain and checks runners are checked without executing target behavior', async t => {
+  for (const fields of [{ verify: 'true && gantry-missing-chain-93481' }, { checks: 'gantry-missing-check-93481' }]) {
+    const root = fixture(t, fields); let calls = 0;
+    const result = await convergeTask(root, 'T01', { ...opts, execute: async () => { calls++; } });
+    assert.equal(result.kind, 'blocked'); assert.equal(calls, 0);
+    assert.equal(readTaskRecord(root, 'change', 'T01'), null);
+  }
+  const root = fixture(t, { verify: `node -e "require('fs').writeFileSync('target-was-run','yes'); process.exit(1)"` });
+  const result = await convergeTask(root, 'T01', { ...opts, execute: async () => {
+    assert.equal(existsSync(join(root, 'target-was-run')), false);
+    return { exitCode: 17 };
+  } });
+  assert.equal(result.reason, 'executor-failure-unclassified');
+});
+
+test('literal quoted scripts, builtins, local executables and redirects preserve readiness', async t => {
+  const root = fixture(t, { verify: `node -e "console.log('a && b; c | d > e')" && :; ./local\\ runner | cat > /dev/null` });
+  writeFileSync(join(root, 'local runner'), '#!/bin/sh\nexit 0\n'); chmodSync(join(root, 'local runner'), 0o755);
+  assert.equal((await prepareTask(root, 'T01', opts)).kind, 'prepared');
+  assert.equal((await verifyAndComplete(root, 'T01', opts)).kind, 'completed');
+});
+
+test('dynamic shell requires explicit preflight and never executes substitutions during readiness', async t => {
+  const verify = '"$(touch substitution-ran; printf node)" --version';
+  const root = fixture(t, { verify });
+  const blocked = await prepareTask(root, 'T01', opts);
+  assert.equal(blocked.kind, 'blocked'); assert.match(blocked.reason, /preflight/);
+  assert.equal(existsSync(join(root, 'substitution-ran')), false);
+  assert.equal(readTaskRecord(root, 'change', 'T01'), null);
+  const path = join(root, '.gantry/specs/change/TASKS.md');
+  writeFileSync(path, content(root).replace('<preflight></preflight>', '<preflight>command -v node</preflight>'));
+  assert.equal((await prepareTask(root, 'T01', opts)).kind, 'prepared');
+  assert.equal(existsSync(join(root, 'substitution-ran')), false);
+});
+
+test('nonexecutable local runner and absolute shell wrappers require actionable readiness', async t => {
+  const root = fixture(t, { verify: './local-runner' });
+  writeFileSync(join(root, 'local-runner'), '#!/bin/sh\nexit 0\n');
+  const missing = await prepareTask(root, 'T01', opts);
+  assert.equal(missing.kind, 'blocked'); assert.equal(missing.reason, 'command-unavailable');
+  assert.match(missing.diagnostic, /执行权限/); assert.equal(readTaskRecord(root, 'change', 'T01'), null);
+  const path = join(root, '.gantry/specs/change/TASKS.md');
+  writeFileSync(path, content(root).replace('./local-runner', '/bin/sh -c "true"'));
+  const shell = await prepareTask(root, 'T01', opts);
+  assert.equal(shell.kind, 'blocked'); assert.equal(shell.reason, 'runner-preflight-required');
 });
 
 test('preflight may not silently rewrite the baseline', async t => {

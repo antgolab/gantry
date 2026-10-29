@@ -131,6 +131,56 @@ test('failed commit with unchanged reservation resumes once and commits current 
   assert.equal(Number(git('rev-list', '--count', 'HEAD')), count + 1);
 }));
 
+for (const change of ['invalid source', 'valid different source', 'index only', 'post-commit index']) {
+  test(`successful Git hook changing ${change} preserves checkpoint and cannot create another DEV commit`, () => fixture(({ root, git, json }) => {
+    assert.equal(json('dispatch').status, 0);
+    candidate(root);
+    assert.equal(json('done', 'T01').status, 0);
+    const hook = join(root, '.git/hooks', change === 'post-commit index' ? 'post-commit' : 'pre-commit');
+    const source = change === 'valid different source' ? 'export const value = 1; // hook candidate' : 'export const value = 999;';
+    const script = change === 'index only' || change === 'post-commit index'
+      ? `blob=$(printf '${source}\\n' | git hash-object -w --stdin)\ngit update-index --cacheinfo 100644,$blob,src/value.mjs\n`
+      : `printf '${source}\\n' > src/value.mjs\ngit add src/value.mjs\n`;
+    writeFileSync(hook, '#!/bin/sh\n' + script);
+    chmodSync(hook, 0o755);
+    const advance = json('advance');
+    assert.equal(advance.status, 2, advance.stdout + advance.stderr);
+    assert.match(advance.data.reason, /人工核对/);
+    assert.match(advance.data.reason, /ralph-checkpoint\.json/);
+    const marker = join(root, '.gantry/planning/ralph-checkpoint.json');
+    assert.equal(existsSync(marker), true);
+    assert.equal(readState(root).currentStage, 'dev');
+    const head = git('rev-parse', 'HEAD');
+    const index = git('write-tree');
+    assert.equal(Number(git('rev-list', '--count', 'HEAD')), 2);
+    if (change === 'valid different source') {
+      assert.equal(spawnSync(process.execPath, ['verify.mjs'], { cwd: root }).status, 0);
+    }
+    rmSync(hook);
+    candidate(root);
+    const resumed = json('advance');
+    assert.equal(resumed.status, 2, resumed.stdout + resumed.stderr);
+    assert.equal(git('rev-parse', 'HEAD'), head);
+    assert.equal(git('write-tree'), index);
+    assert.equal(Number(git('rev-list', '--count', 'HEAD')), 2);
+    assert.equal(existsSync(marker), true);
+  }));
+}
+
+test('successful Git hook without content changes completes one DEV commit', () => fixture(({ root, git, json }) => {
+  assert.equal(json('dispatch').status, 0);
+  candidate(root);
+  assert.equal(json('done', 'T01').status, 0);
+  const hook = join(root, '.git/hooks/pre-commit');
+  writeFileSync(hook, '#!/bin/sh\ngit diff --cached --check\n');
+  chmodSync(hook, 0o755);
+  const advance = json('advance');
+  assert.equal(advance.status, 0, advance.stdout + advance.stderr);
+  assert.equal(readState(root).currentStage, 'test');
+  assert.equal(Number(git('rev-list', '--count', 'HEAD')), 2);
+  assert.equal(existsSync(join(root, '.gantry/planning/ralph-checkpoint.json')), false);
+}));
+
 test('failed commit cannot omit a newly required in-scope module on resume', () => fixture(ctx => {
   const { root, git, json } = ctx;
   failCommit(ctx);

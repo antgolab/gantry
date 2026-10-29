@@ -28,7 +28,7 @@ Wave 2: T03
   <action>
     <做什么。写意图，不写代码。>
   </action>
-  <!-- 可选：preflight 仅探测环境就绪，不执行预期 RED 的行为测试 -->
+  <!-- 简单直调可选；复杂 Shell/远程环境必须声明 preflight；仅探测环境就绪，不执行预期 RED 的行为测试 -->
   <preflight>
   </preflight>
   <verify>
@@ -57,5 +57,7 @@ Wave 2: T03
 ```
 
 ## DEV 组合检查
+
+编码预约前只探测 verify/checks 中可识别的字面 runner（含简单 && / ; / | 链及文件重定向），不预跑目标行为测试。复杂 Shell（动态命令、命令替换、控制结构、切换目录/环境等）必须在 preflight 明确探测实际 runner、目录及环境；数据库/远程服务也须声明就绪探针。缺失时先安装 runner、修复 PATH/本地执行权限或补充探针，再预约。包脚本、解释器导入等传递依赖不会被自动发现，任务规划必须逐项确认；合法 RED 应交给执行者编码。
 
 跨任务必跑命令配置在 `.gantry/planning/config.json` 的 `ralph.checkpointCommands` 数组。未额外配置时控制器仍重验任务 verify/checks；未知 runner 测试数记录为 null，不能声称已执行零个或全部用例。

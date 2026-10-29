@@ -60,6 +60,11 @@ export function validateTaskRecord(record, changeId = record?.changeId, taskId =
   } else if (record.repairsUsed !== 0) {
     fail('record budget has no attempt');
   }
+  if (record.executorReports != null && (!Array.isArray(record.executorReports) || record.executorReports.length > 4 ||
+      record.executorReports.some(report => report?.source !== 'executor' || typeof report.attemptId !== 'string' ||
+        typeof report.at !== 'string' || typeof report.text !== 'string' || report.text.length > 4096 || typeof report.truncated !== 'boolean'))) {
+    fail('invalid bounded executor reports');
+  }
   return record;
 }
 
@@ -149,6 +154,7 @@ export function reserveAttempt(root, record, { repair = false, ownerNonce = null
   const repairsUsed = record.repairsUsed + (repair ? 1 : 0);
   const next = {
     ...record, repairsUsed, candidate: null, receipt: null,
+    executorReports: retainExecutorReports(record),
     attempt: {
       id: randomUUID(), repairOrdinal: repairsUsed, lifecycle: 'reserved',
       reservedAt: new Date().toISOString(), executorPid: null, processGroupId: null,
@@ -156,6 +162,21 @@ export function reserveAttempt(root, record, { repair = false, ownerNonce = null
     },
   };
   return writeTaskRecord(root, next, { ownerNonce });
+}
+
+function retainExecutorReports(record) {
+  const reports = record.executorReports ?? [];
+  const output = record.attempt?.result;
+  const stdout = typeof output?.stdout === 'string' ? output.stdout : '';
+  const stderr = typeof output?.stderr === 'string' ? output.stderr : '';
+  if ((!stdout && !stderr) || reports.some(report => report.attemptId === record.attempt.id)) return reports;
+  // Preserve claims verbatim as bounded excerpts, never promote them to verify
+  // facts. Four business attempts bound the history independently of output size.
+  return [...reports, {
+    source: 'executor', attemptId: record.attempt.id, at: new Date().toISOString(),
+    text: `stdout:\n${stdout.slice(0, 2000)}\nstderr:\n${stderr.slice(0, 2000)}`,
+    truncated: stdout.length > 2000 || stderr.length > 2000,
+  }].slice(-4);
 }
 
 export function recordExternalRetry(root, record, { limit = MAX_EXTERNAL_RETRIES, ownerNonce = null } = {}) {

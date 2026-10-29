@@ -54,6 +54,39 @@ test('existing unapproved draft is not rewritten on restart',async()=>{
   assert.equal(readFileSync(join(f.root,'.gantry/specs/demo/DESIGN.md'),'utf8'),'review me');
  }finally{f.clean();}
 });
+test('real CLI: integration pauses, accepts human approval and resumes without rewriting UAT or archiving',async()=>{
+ const {spawnSync}=await import('node:child_process');
+ const cli=new URL('../src/cli.mjs',import.meta.url).pathname;
+ for(const client of ['claude','codex']){
+  const f=fixture('integration');try{
+   writeFileSync(join(f.root,'.gantry/core/phases/7-integration.md'),'integration fixture');
+   const uat=join(f.root,'.gantry/specs/demo/UAT.md');
+   writeFileSync(uat,'human reviewed UAT');
+   const loop=async()=>{
+    let stderr='';
+    const rc=await runLoop({root:f.root,client,env:f.env,onOutput:()=>{},onError:x=>stderr+=x});
+    return {rc,stderr};
+   };
+   const pending=await loop();
+   assert.equal(pending.rc,2,pending.stderr);
+   assert.doesNotMatch(pending.stderr,/stuck/);
+   assert.equal(isStageApproved(f.root,'integration'),false);
+   const approved=spawnSync(process.execPath,[cli,'advance','--approve','integration','--json'],{cwd:f.root,encoding:'utf8'});
+   assert.equal(approved.status,0,approved.stderr);
+   assert.equal(isStageApproved(f.root,'integration'),true);
+   for(let restart=0;restart<2;restart++){
+    const resumed=await loop();
+    assert.equal(resumed.rc,0,resumed.stderr);
+   }
+   assert.equal(existsSync(join(f.root,'calls')),false);
+   assert.equal(readFileSync(uat,'utf8'),'human reviewed UAT');
+   assert.equal(readState(f.root).currentStage,'integration');
+   assert.equal(readState(f.root).activeChange,'demo');
+   assert.equal(existsSync(join(f.root,'.gantry/specs/_archive/demo')),false);
+   assert.equal(existsSync(join(f.root,'.gantry/planning/ralph.lock')),false);
+  }finally{f.clean();}
+ }
+});
 test('idle cannot silently create change; token mismatch cannot dispatch',async()=>{
  for(const stage of ['idle','design']){
   const f=fixture(stage);try{

@@ -14,7 +14,7 @@ import { checkAcCoverage } from './ac-coverage.mjs';
 import { parseTestCommands } from './test-commands.mjs';
 import { SPECS_DIR } from './paths.mjs';
 import { readTaskRecord } from './task-record.mjs';
-import { createContract, captureManifest, assertTaskPathsObservable, receiptIsValid, DEFAULT_RALPH_DEADLINES } from './task-evidence.mjs';
+import { createContract, captureManifest, assertTaskPathsObservable, inspectTaskRunnerReadiness, receiptIsValid, DEFAULT_RALPH_DEADLINES } from './task-evidence.mjs';
 import { readConfig } from './config.mjs';
 
 // 固定管线阶段定义
@@ -109,7 +109,13 @@ export function checkGate(targetStage, specsDir, config, state, projectRoot) {
     return checkLightIntent(specsDir);
   }
   if (targetStage === 'dev') {
-    return checkArtifact(specsDir, 'tasks');
+    const artifact = checkArtifact(specsDir, 'tasks');
+    if (!artifact.passed) return artifact;
+    for (const task of parseTasks(resolveArtifactPath(specsDir, 'tasks').path)) {
+      const readiness = inspectTaskRunnerReadiness(null, createContract(task, config?.ralph ?? {}), { probe: false });
+      if (!readiness.ok) return { passed: false, hard: true, reason: `任务 ${task.id}: ${readiness.diagnostic}` };
+    }
+    return artifact;
   }
   if (targetStage === 'review') {
     return checkArtifact(specsDir, 'test');

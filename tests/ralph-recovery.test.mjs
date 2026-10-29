@@ -16,6 +16,42 @@ function fixture(t) {
 }
 const opts = { changeId: 'change' };
 
+test('executor diagnosis survives real controller restart and legacy record reservation', async t => {
+  const root = fixture(t);
+  const cycleUrl = new URL('../src/lib/task-cycle.mjs', import.meta.url).href;
+  const runnerUrl = new URL('../src/lib/process-runner.mjs', import.meta.url).href;
+  const packUrl = new URL('../src/lib/context-pack.mjs', import.meta.url).href;
+  const diagnosis = 'RESTART_DIAGNOSIS: excluded cache; hypothesis locale';
+  const first = execFileSync(process.execPath, ['--input-type=module', '-e', `
+    import {convergeTask} from ${JSON.stringify(cycleUrl)};
+    import {runProcess} from ${JSON.stringify(runnerUrl)};
+    const abort = new AbortController();
+    const result = await convergeTask(${JSON.stringify(root)}, 'T01', {changeId:'change',signal:abort.signal,execute:async()=>{
+      const output = await runProcess(process.execPath,['-e',${JSON.stringify(`console.log(${JSON.stringify(diagnosis)})`)}],{cwd:${JSON.stringify(root)}});
+      abort.abort(); return output;
+    }}); console.log(result.kind);
+  `], { encoding: 'utf8' });
+  assert.equal(first.trim(), 'cancelled');
+  const legacy = readTaskRecord(root, 'change', 'T01'); delete legacy.executorReports;
+  writeTaskRecord(root, legacy);
+  assert.equal(readTaskRecord(root, 'change', 'T01').executorReports, undefined, 'old records without optional reports remain readable');
+  const second = execFileSync(process.execPath, ['--input-type=module', '-e', `
+    import assert from 'node:assert/strict'; import {readFileSync,writeFileSync} from 'node:fs'; import {join} from 'node:path';
+    import {convergeTask} from ${JSON.stringify(cycleUrl)}; import {buildPack} from ${JSON.stringify(packUrl)};
+    const root=${JSON.stringify(root)};
+    const result=await convergeTask(root,'T01',{changeId:'change',execute:async({record})=>{
+      const pack=buildPack(root,{stage:'dev',changeId:'change',taskId:'T01'});
+      const entry=pack.loadOrder.find(item=>item.path.endsWith('EXECUTION.md'));
+      assert(entry.focus.includes('### T01 · executor reports'));
+      assert(readFileSync(join(root,entry.path),'utf8').includes(${JSON.stringify(diagnosis)}));
+      assert.equal(record.executorReports[0].source,'executor'); assert.equal(record.repairsUsed,1);
+      assert(!JSON.stringify(record.failure).includes(${JSON.stringify(diagnosis)}));
+      writeFileSync(join(root,'app.txt'),'good'); return {exitCode:0};
+    }}); console.log(JSON.stringify({kind:result.kind,used:result.record.repairsUsed}));
+  `], { encoding: 'utf8' });
+  assert.deepEqual(JSON.parse(second), { kind: 'completed', used: 1 });
+});
+
 test('existing candidate is verified on restart without another executor call', async t => {
   const root = fixture(t); await prepareTask(root, 'T01', opts); writeFileSync(join(root, 'app.txt'), 'good');
   const result = await convergeTask(root, 'T01', { ...opts, execute: async () => { throw Error('must not call'); } });

@@ -172,6 +172,11 @@ export async function runLoop({ root = process.cwd(), client, quiet = false, env
       }
       if (advanced.exitCode !== 0 || !advanced.cleanupComplete) { onError(`blocked: advance ${outcome.reason ?? advanced.exitCode}\n`); return advanced.exitCode || 2; }
       const after = readState(root);
+      if (outcome.reachedEnd === 'integration' && after.currentStage === 'integration'
+          && after.activeChange === state.activeChange && isStageApproved(root, 'integration')) {
+        onOutput(`✓ done (steps=${step} elapsed=${Date.now() - start}ms)\n`);
+        return 0;
+      }
       if (after.currentStage === state.currentStage && after.activeChange === state.activeChange) { onError('stuck: advance 未推进\n'); return 5; }
       onOutput(quiet ? `step=${step}/${options.maxSteps} stage=${stage} rc=0\n` : `[loop] step=${step}/${options.maxSteps} ok\n`);
       if (after.currentStage === 'idle') return 0;

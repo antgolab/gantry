@@ -292,7 +292,7 @@ function buildLoadOrder({ projectRoot, stage, changeId, taskId, pipeline, config
     if (execution && existsSync(execution.path)) {
       items.push({
         path: `${SPECS_DIR}/${changeId}/${execution.name}`, kind: 'artifact', required: false,
-        focus: [`## ${taskId}`, `### ${taskId} · attempt`],
+        focus: [`## ${taskId}`, `### ${taskId} · attempt`, `### ${taskId} · executor reports`],
       });
     }
     const progressPath = `${SPECS_DIR}/${changeId}/${taskId}-PROGRESS.md`;

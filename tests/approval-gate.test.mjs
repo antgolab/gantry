@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, rmSync, existsSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { execSync, spawnSync } from 'node:child_process';
-import { approveStage, isStageApproved } from '../src/lib/state.mjs';
+import { approveStage, isStageApproved, readState, writeState, readFence } from '../src/lib/state.mjs';
 
 const CLI = join(import.meta.dirname, '..', 'src', 'cli.mjs');
 
@@ -128,6 +128,33 @@ describe('门禁绕过', () => {
 
 
 describe('内容绑定的人工批准', () => {
+  it('integration 先等待显式批准，再返回终态；工件变化后重新等待', () => {
+    run('change --tier full "integration approval"');
+    writeState(tmpDir, { ...readState(tmpDir), currentStage: 'integration' });
+    seedArtifact('integration-approval', 'UAT.md', '# UAT\nreviewed bytes\n');
+    const advance = (...args) => {
+      const result = spawnSync(process.execPath, [CLI, 'advance', '--json', ...args], { cwd: tmpDir, encoding: 'utf8' });
+      return { ...result, outcome: JSON.parse(result.stdout) };
+    };
+    const pending = advance('--skip');
+    assert.equal(pending.status, 2, pending.stderr);
+    assert.equal(pending.outcome.pausedForApproval, 'integration');
+    assert.equal(isStageApproved(tmpDir, 'integration'), false);
+    assert.equal(advance('--approve', 'design').status, 2);
+    const approved = advance('--approve', 'integration');
+    assert.equal(approved.status, 0, approved.stderr);
+    assert.equal(approved.outcome.reachedEnd, 'integration');
+    assert.equal(isStageApproved(tmpDir, 'integration'), true);
+    assert.ok(readFence(tmpDir).approvals.integration.digest);
+    assert.equal(readState(tmpDir).pauseReason, null);
+    assert.equal(readStage(), 'integration');
+    assert.equal(readFileSync(join(tmpDir, '.gantry/specs/integration-approval/UAT.md'), 'utf8'), '# UAT\nreviewed bytes\n');
+    assert.equal(existsSync(join(tmpDir, '.gantry/specs/_archive/integration-approval')), false);
+    seedArtifact('integration-approval', 'REVIEW.md', '# REVIEW\nchanged evidence\n');
+    assert.equal(isStageApproved(tmpDir, 'integration'), false);
+    assert.equal(advance().outcome.pausedForApproval, 'integration');
+  });
+
   function enterDesign() {
     run('change --tier full "approval binding"');
     seedProposal('approval-binding');

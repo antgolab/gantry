@@ -7,9 +7,29 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { parseTasks } from '../src/lib/tasks.mjs';
+import { checkGate } from '../src/lib/phases.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = path => readFileSync(join(root, path), 'utf8');
+
+test('TASK planning rejects complex verification without actionable preflight declarations', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'ralph-runner-planning-'));
+  try {
+    const path = join(dir, 'TASKS.md');
+    const task = '<task id="T01"><write_files>x</write_files><verify>RUNNER=node "$RUNNER" --version</verify><checks></checks><preflight>PROBE</preflight></task>';
+    writeFileSync(path, task.replace('PROBE', ''));
+    const gate = checkGate('dev', dir, { pipeline: 'full' });
+    assert.equal(gate.passed, false); assert.equal(gate.hard, true);
+    assert.match(gate.reason, /T01.*preflight/);
+    writeFileSync(path, task.replace('PROBE', 'command -v node'));
+    assert.equal(checkGate('dev', dir, { pipeline: 'full' }).passed, true);
+    for (const file of ['templates/TASKS.md', 'phases/3-task.md']) {
+      const text = read(file);
+      assert.match(text, /传递依赖/); assert.match(text, /复杂 Shell/);
+      assert.match(text, /RED/); assert.match(text, /preflight/);
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
 
 test('full DEV protocols agree on single-task reservation, candidate boundary and actual completion', () => {
   for (const file of ['phases/4-dev.md', 'skills/auto.md', 'skills/exec.md']) {
