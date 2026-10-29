@@ -173,3 +173,89 @@ test('duplicate task identities cannot reuse one receipt for two task definition
   assert.equal(result.kind, 'blocked'); assert.match(result.reason, /duplicate task identities/);
   assert.equal(readTaskRecord(root, 'change', 'T01'), null);
 });
+
+// Ignored project source cannot be represented by the content receipt. Refuse
+// the task rather than accepting a verification result for invisible inputs.
+test('ignored explicit task source blocks before executor or reservation', async t => {
+  const root = fixture(t, { verify: 'true' });
+  mkdirSync(join(root, 'private'), { recursive: true });
+  writeFileSync(join(root, 'private/value.mjs'), 'export default 1;');
+  writeFileSync(join(root, '.git/info/exclude'), 'private/\n');
+  const path = join(root, '.gantry/specs/change/TASKS.md');
+  writeFileSync(path, content(root).replace('<write_files>app.txt</write_files>', '<write_files>private/value.mjs</write_files>'));
+  let calls = 0;
+  const prepared = await convergeTask(root, 'T01', { ...opts, execute: async () => { calls++; return { exitCode: 0 }; } });
+  assert.equal(prepared.kind, 'blocked'); assert.match(prepared.reason, /ignored.*source|unobservable.*source/);
+  assert.equal(calls, 0); assert.equal(readTaskRecord(root, 'change', 'T01'), null);
+});
+
+test('ignored source selected by recursive task glob is rejected without reading it', async t => {
+  const root = fixture(t, { verify: 'true' });
+  mkdirSync(join(root, 'src/private'), { recursive: true });
+  writeFileSync(join(root, 'src/private/value.mjs'), 'sensitive ignored content');
+  writeFileSync(join(root, '.git/info/exclude'), 'src/private/\n');
+  const path = join(root, '.gantry/specs/change/TASKS.md');
+  writeFileSync(path, content(root).replace('<read_files>app.txt</read_files>', '<read_files>src/**/*.mjs</read_files>'));
+  const prepared = await prepareTask(root, 'T01', opts);
+  assert.equal(prepared.kind, 'blocked'); assert.match(prepared.reason, /src\/private\/value\.mjs/);
+  assert.doesNotMatch(prepared.reason, /sensitive ignored content/);
+});
+
+test('existing ignored source makes query, repeated done and static gate fail closed', async t => {
+  const root = fixture(t, { verify: 'true' });
+  await prepareTask(root, 'T01', opts);
+  assert.equal((await verifyAndComplete(root, 'T01', opts)).kind, 'completed');
+  // A tracked file remains observable even when an ignore rule matches it.
+  execFileSync('git', ['rm', '--cached', 'app.txt'], { cwd: root });
+  writeFileSync(join(root, '.git/info/exclude'), 'app.txt\n');
+  const status = getTaskReceiptStatus(root, 'T01', opts);
+  assert.equal(status.valid, false); assert.match(status.reason, /ignored.*source|unobservable.*source/);
+  const done = await verifyAndComplete(root, 'T01', opts);
+  assert.equal(done.kind, 'blocked'); assert.match(done.reason, /ignored.*source|unobservable.*source/);
+  const { checkGate } = await import('../src/lib/phases.mjs');
+  const gate = checkGate('test', join(root, '.gantry/specs/change'), { pipeline: 'full' }, null, root);
+  assert.equal(gate.passed, false); assert.equal(gate.hard, true); assert.match(gate.reason, /ignored.*source|unobservable.*source/);
+});
+
+test('ignored dependency and framework knowledge reads are not treated as task source', async t => {
+  const root = fixture(t, { verify: 'true' });
+  for (const directory of ['node_modules/pkg', '.context', '.gantry/specs/other']) mkdirSync(join(root, directory), { recursive: true });
+  writeFileSync(join(root, 'node_modules/pkg/index.js'), 'external dependency');
+  writeFileSync(join(root, '.context/NOTES.md'), 'team knowledge');
+  writeFileSync(join(root, '.git/info/exclude'), 'node_modules/\n.context/\n.gantry/\n');
+  const path = join(root, '.gantry/specs/change/TASKS.md');
+  writeFileSync(path, content(root).replace('<read_files>app.txt</read_files>', '<read_files>app.txt, node_modules/**, .context/**, .gantry/specs/other/*</read_files>'));
+  assert.equal((await prepareTask(root, 'T01', opts)).kind, 'prepared');
+});
+
+test('tracked task source remains observable under ignore rules and recursive globs', async t => {
+  const root = fixture(t, { verify: 'true' });
+  mkdirSync(join(root, 'src/private'), { recursive: true });
+  writeFileSync(join(root, 'src/private/value.mjs'), 'export default 1;');
+  execFileSync('git', ['add', 'src'], { cwd: root });
+  writeFileSync(join(root, '.git/info/exclude'), 'app.txt\nsrc/\n');
+  const path = join(root, '.gantry/specs/change/TASKS.md');
+  writeFileSync(path, content(root).replace('<read_files>app.txt</read_files>', '<read_files>app.txt, src/**/*.mjs</read_files>'));
+  assert.equal((await prepareTask(root, 'T01', opts)).kind, 'prepared');
+});
+
+test('ignored future task source is refused before it exists', async t => {
+  const root = fixture(t, { verify: 'true' });
+  writeFileSync(join(root, '.git/info/exclude'), 'private/\n');
+  const path = join(root, '.gantry/specs/change/TASKS.md');
+  writeFileSync(path, content(root).replace('<write_files>app.txt</write_files>', '<write_files>private/**/*.mjs</write_files>'));
+  const prepared = await prepareTask(root, 'T01', opts);
+  assert.equal(prepared.kind, 'blocked'); assert.match(prepared.reason, /ignored source boundary: private\//);
+  assert.equal(readTaskRecord(root, 'change', 'T01'), null);
+});
+
+test('ignored source created during verification cannot receive a receipt', async t => {
+  const root = fixture(t, { verify: `mkdir -p src/private; echo hidden > src/private/value.mjs` });
+  writeFileSync(join(root, '.git/info/exclude'), 'src/private/\n');
+  const path = join(root, '.gantry/specs/change/TASKS.md');
+  writeFileSync(path, content(root).replace('<read_files>app.txt</read_files>', '<read_files>src/**/*.mjs</read_files>'));
+  assert.equal((await prepareTask(root, 'T01', opts)).kind, 'prepared');
+  const done = await verifyAndComplete(root, 'T01', opts);
+  assert.equal(done.kind, 'blocked'); assert.match(done.reason, /ignored source boundary/);
+  assert.equal(readTaskRecord(root, 'change', 'T01').receipt, null);
+});

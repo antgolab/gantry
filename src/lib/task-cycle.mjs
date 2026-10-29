@@ -6,7 +6,7 @@ import { parseTasks } from './tasks.mjs';
 import { readState } from './state.mjs';
 import { readConfig } from './config.mjs';
 import { resolveArtifactPath } from './artifacts.mjs';
-import { createContract, captureManifest, computeContentDigest, checkTaskScope, detectTaskWeakening, inspectVerificationOutput, receiptIsValid, DEFAULT_RALPH_DEADLINES } from './task-evidence.mjs';
+import { createContract, captureManifest, assertTaskPathsObservable, computeContentDigest, checkTaskScope, detectTaskWeakening, inspectVerificationOutput, receiptIsValid, DEFAULT_RALPH_DEADLINES } from './task-evidence.mjs';
 import { createTaskRecord, readTaskRecord, writeTaskRecord, reserveAttempt, recordExternalRetry, acquireWorkspaceLock, releaseWorkspaceLock } from './task-record.mjs';
 import { runShellCommand } from './process-runner.mjs';
 import { appendHealAttempt } from './self-heal.mjs';
@@ -24,6 +24,7 @@ function env(root, taskId, opts = {}) {
   if (new Set(tasks.map(task => task.id)).size !== tasks.length) blocked('duplicate task identities');
   const task = tasks.find(t => t.id === taskId);
   if (taskId && !task) blocked(`unknown task: ${taskId}`);
+  if (task) assertTaskPathsObservable(root, task);
   const configPath = join(root, '.gantry/planning/config.json');
   if (existsSync(configPath)) { try { const parsed = JSON.parse(readFileSync(configPath, 'utf8')); if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) blocked('invalid project config'); } catch (error) { blocked(`project config corrupt: ${error.message}`); } }
   const sourceConfig = opts.config === undefined ? readConfig(root) : opts.config;
@@ -42,7 +43,10 @@ function env(root, taskId, opts = {}) {
   const includePaths = [relative(root, path), '.gantry/planning/config.json', '.gantry/loop/test-commands.yml'];
   return { root, changeId, dir, path, tasks, task, config, deadlines, includePaths, contract: task ? createContract(task, config) : null };
 }
-function snapshot(e) { return captureManifest(e.root, { includePaths: e.includePaths }); }
+function snapshot(e) {
+  for (const task of e.task ? [e.task] : e.tasks) assertTaskPathsObservable(e.root, task);
+  return captureManifest(e.root, { includePaths: e.includePaths });
+}
 function save(e, record, opts) { return writeTaskRecord(e.root, record, { ownerNonce: opts.ownerNonce }); }
 function ensureContract(e, record) { if (record.contract.digest !== e.contract.digest) blocked('task contract changed; use adjust and approved revision without resetting budget'); }
 function receiptValid(e, record, manifest = snapshot(e)) {

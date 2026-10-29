@@ -14,7 +14,7 @@ import { checkAcCoverage } from './ac-coverage.mjs';
 import { parseTestCommands } from './test-commands.mjs';
 import { SPECS_DIR } from './paths.mjs';
 import { readTaskRecord } from './task-record.mjs';
-import { createContract, captureManifest, receiptIsValid, DEFAULT_RALPH_DEADLINES } from './task-evidence.mjs';
+import { createContract, captureManifest, assertTaskPathsObservable, receiptIsValid, DEFAULT_RALPH_DEADLINES } from './task-evidence.mjs';
 import { readConfig } from './config.mjs';
 
 // 固定管线阶段定义
@@ -307,6 +307,7 @@ function checkAllTasksDone(specsDir, projectRoot) {
       if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('invalid ralph config');
       const deadlines = Object.fromEntries(Object.entries(DEFAULT_RALPH_DEADLINES).map(([key, value]) => [key, config[key] ?? value]));
       if (Object.values(deadlines).some(value => !Number.isSafeInteger(value) || value <= 0)) throw new Error('invalid ralph deadlines');
+      for (const task of tasks) assertTaskPathsObservable(root, task);
       const manifest = captureManifest(root, { includePaths: [relative(root, resolved.path), '.gantry/planning/config.json', '.gantry/loop/test-commands.yml'] });
       const changeId = specsDir.split(sep).at(-1);
       for (const task of tasks) {

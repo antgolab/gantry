@@ -1017,10 +1017,33 @@ async function commitDevCheckpoint(root, state) {
       const parent = git(['rev-parse', 'HEAD^']);
       const tree = git(['rev-parse', 'HEAD^{tree}']);
       if (parent === pending.head && subject === pending.message && tree === pending.tree) {
+        // A matching commit proves the old candidate landed, not that it still
+        // describes the workspace. Ignore only the framework-owned receipt.
+        const reservedSources = pending.files.filter(path => path !== execution).sort();
+        const candidateSources = [...allowed].filter(path => path !== execution).sort();
+        if (reservedSources.length !== candidateSources.length || reservedSources.some((path, i) => path !== candidateSources[i])) {
+          return { ok: false, reason: 'Git 已提交，但任务源码清单已变化；保留预约与索引，请人工核对提交后的新增或删除源码' };
+        }
+        if (git(['write-tree']) !== pending.tree) {
+          return { ok: false, reason: 'Git 已提交，但索引已变化；保留预约与用户暂存内容，请人工核对后恢复' };
+        }
+        if (reservedSources.length && git(['diff', 'HEAD', '--', ...reservedSources])) {
+          return { ok: false, reason: 'Git 已提交，但工作区源码已变化；保留预约与索引，请人工核对当前源码和已提交成果' };
+        }
         unlinkSync(marker);
         return { ok: true, commit: head, recovered: true };
       }
       return { ok: false, reason: 'Git HEAD 在待提交窗口变化，需要核对真实提交' };
+    }
+    const candidateFiles = [...allowed].sort();
+    if (pending && (pending.files.length !== candidateFiles.length || pending.files.some((path, i) => path !== candidateFiles[i]))) {
+      return { ok: false, reason: '待提交清单已变化；保留索引。请人工核对并保存暂存内容，再清空暂存区、删除 .gantry/planning/ralph-checkpoint.json 后重跑 gantry advance' };
+    }
+    // A failed hook leaves our staged tree behind. Path membership alone does
+    // not establish ownership: the user may have staged different bytes or
+    // unstaged one of those same files since the failure.
+    if (pending && (!pending.tree || git(['write-tree']) !== pending.tree)) {
+      return { ok: false, reason: '待提交索引已变化或缺少预约摘要；保留索引。请人工核对并保存暂存内容，再清空暂存区、删除 .gantry/planning/ralph-checkpoint.json 后重跑 gantry advance' };
     }
     const staged = git(['diff', '--cached', '--name-only', '-z']).split('\0').filter(Boolean);
     if (staged.length && (!pending || staged.some(path => !pending.files.includes(path)))) {
@@ -1031,16 +1054,20 @@ async function commitDevCheckpoint(root, state) {
       return { ok: false, reason: '当前为主分支，请在工作分支完成 DEV 提交' };
     }
     if (!pending) {
-      pending = { changeId: state.activeChange, head, message, files: [...allowed].sort(), tree: null };
+      pending = { changeId: state.activeChange, head, message, files: candidateFiles, tree: git(['write-tree']) };
       writeFileSync(marker, JSON.stringify(pending, null, 2) + '\n');
     }
-    if (pending.files.some(path => !allowed.has(path))) return { ok: false, reason: '待提交清单已变化，请核对后恢复' };
     const sourceFiles = pending.files.filter(path => path !== execution);
     if (sourceFiles.length) git(['add', '--', ...sourceFiles]);
     if (pending.files.includes(execution)) git(['add', '-f', '--', execution]);
+    pending.tree = git(['write-tree']);
+    writeFileSync(marker, JSON.stringify(pending, null, 2) + '\n');
     // Index contents are part of evidence; staging invalidates earlier receipts.
     const checked = await checkpointTasks(root, taskOptions());
     if (checked.kind !== 'completed') return { ok: false, reason: checked.reason || '暂存后的组合验证失败，保留现场' };
+    // The checkpoint refreshes this framework-owned receipt after index-bound
+    // verification. Include the final human evidence, not its previous digest.
+    if (pending.files.includes(execution)) git(['add', '-f', '--', execution]);
     pending.tree = git(['write-tree']);
     writeFileSync(marker, JSON.stringify(pending, null, 2) + '\n');
     git(['commit', '-m', pending.message]);

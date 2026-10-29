@@ -142,6 +142,49 @@ function scopeRegex(pattern) {
   }
   return new RegExp(`^${expression}${pattern.endsWith('/') ? '.*' : ''}$`);
 }
+
+/** Refuse project inputs that Git cannot anchor, without opening their contents.
+ * Knowledge/control documents and installed dependencies are read-only context,
+ * not project source. Git exclusions keep broad read globs from walking them.
+ */
+export function assertTaskPathsObservable(root, task) {
+  const contextRead = path => /^(?:\.gantry|\.context)(?:\/|$)/.test(path)
+    || /(^|\/)node_modules(?:\/|$)/.test(path);
+  function ignored(path) {
+    try {
+      return Boolean(execFileSync('git', ['check-ignore', '-z', '--stdin'], {
+        cwd: root, input: `${path}\0`, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
+      }));
+    } catch (error) { if (error.status === 1) return false; throw error; }
+  }
+  function refuse(path) {
+    throw new Error(`ignored source boundary: ${path}; track the task source or remove its ignore rule before running the task`);
+  }
+  for (const [patterns, readOnly] of [[lines(task.readFiles ?? task.read_files), true], [lines(task.writeFiles ?? task.write_files), false]]) {
+    for (const pattern of patterns) {
+      const matcher = scopeRegex(pattern);
+      if (!matcher) throw new Error(`unsafe task source path: ${pattern}`);
+      if (readOnly && contextRead(pattern)) continue;
+      const wildcard = pattern.indexOf('*');
+      const prefix = wildcard < 0 ? pattern : pattern.slice(0, pattern.lastIndexOf('/', wildcard) + 1) || '.';
+      const tracked = () => git(root, ['ls-files', '-z', '--', prefix]).split('\0').filter(Boolean)
+        .some(path => matcher.test(path) || (wildcard < 0 && path.startsWith(`${pattern.replace(/\/$/, '')}/`)));
+      if (wildcard < 0) {
+        if (ignored(pattern) && !tracked()) refuse(pattern);
+      } else {
+        // Checking the literal directory also covers ignored output roots that
+        // do not exist yet. Normal check-ignore semantics preserve tracked files.
+        if (prefix !== '.' && ignored(prefix) && !tracked()) refuse(prefix);
+      }
+      const exclusions = readOnly ? [':(exclude).gantry', ':(exclude).context', ':(exclude,glob)**/node_modules/**'] : [];
+      const names = git(root, ['ls-files', '--others', '--ignored', '--exclude-standard', '-z', '--', prefix, ...exclusions]);
+      for (const path of names.split('\0').filter(Boolean)) {
+        if (readOnly && contextRead(path)) continue;
+        if (matcher.test(path) || (wildcard < 0 && path.startsWith(`${pattern.replace(/\/$/, '')}/`))) refuse(path);
+      }
+    }
+  }
+}
 export function checkTaskScope(baseline, current, writeFiles) {
   const changedFiles = changes(baseline, current).map(e => e.path);
   const patterns = lines(writeFiles).map(scopeRegex);
