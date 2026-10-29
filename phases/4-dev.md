@@ -1,4 +1,4 @@
-# 阶段 4 · DEV — 波次编排 + 在 fresh context 中执行单个任务
+# 阶段 4 · DEV — 单任务 Ralph Loop + fresh executor
 
 ## Context Pack 优先
 
@@ -12,11 +12,11 @@
 
 ## 角色
 
-你是 Dev。本 prompt 有**两层职责**：
-- **编排器层**（主 session）：消费 `TASKS.md` 的「波次划分」段 + `depends_on`，把同 wave 的独立 task 并发 fan-out 到多个 executor subagent（见「波次编排」段）。
-- **单任务执行层**（executor subagent）：在 fresh context 中执行单个 task（见「单任务执行」段）。每个 executor **只执行一个 task 的 context pack**；pack 由编排器在 fan-out 前逐个运行 `gantry context dev --task <id> --json` 生成并原样交给对应 executor，禁止一次加载或实现整个 wave。
+你是 Dev，本协议区分控制器和候选执行者：
+- **编排器层**：用 `gantry dispatch --json` 预约一个 ready task，给 fresh executor 单个任务 pack，收回候选后调用 `gantry done <id>` 独立验收。
+- **单任务执行层**：每次预约创建一个 fresh executor subagent；仅实现该 task，一次尝试内完成 TDD 和报告。禁止创建子执行者、修改完成状态或推进阶段。
 
-多任务请按波次并发 fan-out，不要逐个串行等待。
+共享工作区任一时刻只允许一个 task 写者。wave / `[P]` 保留为依赖与冲突视图，首版按 TASKS 顺序串行消费 ready 集合，不发起共享目录并行写。
 
 ## Pre-hook（可选）
 
@@ -40,35 +40,33 @@ gantry hook run before:dev
 - `@.gantry/specs/LESSONS.md`（无 `.context/` 时的回退知识层）
 - 仅引用与本任务相关的文件，**不要加载整个项目**
 
-## 波次编排（编排器职责 · DEV 阶段主 session）
+## 单任务编排（主 session / Node controller）
 
-> 消费 `TASKS.md` 的「波次划分」段 + 各 task 的 `depends_on`，把同 wave 的独立 task 并发 fan-out。单 task 内部执行见下方「单任务执行」。
+### 0.1 预约与固定输入
 
-### 0.1 读波次划分
+运行 `gantry dispatch --json`。`dispatched` 含单个 `taskId`、`attemptId` 和 `repairOrdinal`；此时任务基线、验收 contract 与额度已落盘。重复预约会阻塞，查询/context 不扣额度。`all_done` 后进入 0.5。其他结果保留现场并处理其具体原因，不在主上下文接管绕过预算。
 
-从 `TASKS.md` 读「波次划分」段（task 阶段 3-task.md 已产出），得到 wave 分层：同 wave 的 task 两两无依赖可并行，跨 wave 按依赖顺序执行。
+### 0.2 fresh candidate
 
-### 0.2 同一 turn fan-out
+运行 `gantry context dev --task <id> --json`，将该任务 pack 交给一个新的 executor subagent，按 loadOrder 最小加载。把 pack JSON 冻结为当前 attempt 的输入；当前任务返回前不切换共享 pack、不启动别的写者。worker 只读自己的 pack，不加载整个 wave，不复用失败上下文。
 
-对当前 wave 的每个 pending task，在**同一条 assistant 消息里**并发 fan-out 多个 executor subagent（分层路由：haiku=查询/单点、sonnet=标准、opus=复杂）。独立 task 禁止串行等待。
+worker 不运行 `gantry done/dispatch/advance/archive`，不改 `TASKS.md`、`EXECUTION.md`、STATE、execution 控制 JSON、锁或验收 contract，不自行 commit。下方要求写入 EXECUTION 的自查、微复盘、verify 结果先写返回报告，由编排器合入。禁止启动逃逸进程组的后台写者。
 
-fan-out 前，编排器按 task 顺序**串行**运行 `gantry context dev --task <id> --json`，把每个 task 的 pack JSON 放进对应 executor 的 prompt。`.gantry/planning/context-pack.json` 是单文件，后一次生成会覆盖前一次，所以 executor 只认 prompt 里的 pack，不读这个文件。
+### 0.3 外层验收与失败接力
 
-并发期间共享文件只由编排器写：executor 不运行 `gantry done`、不改 `TASKS.md` / `EXECUTION.md`。下方「单任务执行」里要求写入 `EXECUTION.md` 的内容（6 维自查、越界检查、verify 输出、微复盘等）一律放进 executor 的返回报告，由编排器在 0.3 落盘。
+候选返回且受控写进程结束后，编排器运行 `gantry done <id> --json`。控制器实际执行 verify/checks，检查固定边界和验收弱化，将 receipt 绑定源码与索引内容，再按 receipt → EXECUTION → TASKS 顺序完成；stdout“成功”和 worker 手改勾选均不算证据。
 
-### 0.3 wave checkpoint
+失败保留候选和诊断。下一次 `dispatch` 为可修复失败预约新尝试，并创建 fresh executor；每 task **初次执行 + 最多三次修复**（序号 0/1/2/3），先扣额度再启动，崩溃不退还，第三次修复成功可完成，仍失败则耗尽。明确可重试的传输故障在同预约下最多额外三次，和业务修复预算分开；未知客户端非零退出、环境/需求/越界/验收改写需阻塞，不能盲目重派。手动 `heal` 只记诊断，不预约额度。
 
-wave 内全部 executor 返回后，跑 typecheck + 受影响测试：
-- 绿 → 编排器按 task 顺序串行运行 `gantry done <task-id>`，把各 executor 返回报告里的执行记录与微复盘填进 `EXECUTION.md` 对应 task 段，进入下一 wave（回到 0.1）
-- 红 → 判定 `depends_on` 声明有漏（应串行的两个跑并发了），整波 revert 到 wave 前，把漏声明事件写入 `.gantry/learnings/team/`，重跑本 wave
+### 0.4 恢复与下一个任务
 
-### 0.4 循环直到全部完成
+已有候选先用 `done` 重验，不立即重调模型。receipt 已写但状态未写时幂等补齐；TASKS done 缺 receipt 不能放行依赖。后续源码变化会使前序 receipt 保守过期，由控制器在调度前重验，不靠 HEAD/mtime 猜测。记录损坏或旧锁归属不明时停止，不删除记录、归零或盲杀 PID。
 
-重复 0.1-0.3 直到所有 pending task done。
+不得整体 revert wave、checkout/reset 清理用户修改或无限 fallback。需要改需求/范围走 adjust/PATCH；旧任务缺任务前基线需审阅迁移，不能把当前候选冒充原始基线。
 
-### 0.5 DEV 末统一 commit
+### 0.5 DEV 末统一 checkpoint / commit
 
-所有 wave 完成后，由编排器产生 1 个 commit（格式 `<type>(<change-id>): dev 阶段概要`），覆盖全部代码变更 + `EXECUTION.md`。wave 边界不产 commit。
+全部任务完成后运行 `gantry advance`：CLI 重验失效 receipt，按 `ralph.checkpointCommands` 执行组合检查；只安全暂存本 change 的任务增量和 EXECUTION，在索引内容上重验，再统一一个 stage commit。此前用户暂存内容或与任务不可分的同文件修改会阻塞自动提交，保留现场。提交格式 `<type>(<change-id>): DEV 概要`；task/wave 边界不提交。真实 commit 与待提交记录核对后只推进 TEST 一次。
 
 ---
 
@@ -462,7 +460,7 @@ git status --short                  # 含 untracked
   - src/api/admin/users/route.ts（不在 write_files 范围内）
 
 → 必须停下来：
-  选项 1. 撤销越界改动（git checkout -- <files>）
+  选项 1. 保留现场，确认该修改来源与处理方式；不自动撤销用户修改
   选项 2. 更新 `TASKS.md` 的 write_files（须人工同意，相当于扩范围）
   选项 3. 把越界改动拆成新 task / 新 PROPOSAL
 ```
@@ -482,7 +480,7 @@ git status --short                  # 含 untracked
 
 ### 5.5 提交（R4.1 · stage 级）
 
-DEV 阶段末由编排器统一 1 个 commit（见「波次编排」§ 0.5），executor subagent **不自行 commit**。
+DEV 阶段末由控制器统一 1 个 commit（见「单任务编排」§ 0.5），executor subagent **不自行 commit**。
 
 提交格式：
 ```
@@ -504,11 +502,11 @@ DEV 阶段末由编排器统一 1 个 commit（见「波次编排」§ 0.5），
 - `problem` 只记录可观察的踩坑、返工或阻力；没有则写 `none`，**不得凑数**。
 - `cause` 写问题根因；`problem` 为 `none` 时也写 `none`。
 - `next` 写下次具体改变什么以及如何验证；没有则写 `none`，不写“加强注意”“提高质量”这类空话。
-- `gantry done` 会先生成 TODO skeleton；填完真实内容或 `none` 后才能进入 TEST。
+- `gantry done` 投影真实验收凭据；报告由编排器合入，不能留下 TODO 或伪造测试结果。
 
 ### 7. 标记完成
 
-回到 `TASKS.md`，把对应任务的 `done` 字段标记为已完成（保留时间戳）。
+executor 交还候选和报告。只有编排器调用 `gantry done <id>` 的真实验收事务可以写 TASKS status=done；不手改 XML，不凭报告盖章。
 
 ## 中途断点（清窗触发与恢复，对应 R1.5 / R1.6 / R1.7）
 
@@ -551,12 +549,12 @@ PROGRESS 是临时文件，不归档。
 ## 约束（强制）
 
 - **R2.4**：verify 未通过禁止标记完成
-- **R2.5**：dev 阶段 verify 失败，每次自愈都要有新诊断（越界 / 依赖 / 断言 / import / 环境），最多自愈 3 次；第 4 次仍失败停下汇报，禁盲重试。light 管线不走本阶段，其自愈闭环见 `phases/F-fast.md`
+- **R2.5**：dev 阶段 verify 失败，每次自愈都要有新诊断（越界 / 依赖 / 断言 / import / 环境），初次执行后最多修复 3 次；第 3 次修复仍失败即耗尽，禁止第 4 次修复或清账重跑。light 管线不走本阶段，其自愈闭环见 `phases/F-fast.md`
 - **R3.2**：发现需求/设计有问题 → 不要自己改 `SPEC.md` / `DESIGN.md`，停下来开新 PROPOSAL
-- **R4.5**：Schema 变更必伴随迁移文件。只改 model 不生迁移就提交 → 违规，AI 自己回滚
+- **R4.5**：Schema 变更必伴随迁移文件。只改 model 不生迁移就提交 → 违规，保留现场并补齐迁移
 - **R4.6**：破坏性变更（删 ≥ 5 行 / 改公共接口）必走 1.8 协议：grep 引用图 + 反问用户 + 回归测试覆盖
 - **R6.4**：写代码前必 grep 同类抽象（见 1.4），找到了用，不另起炉灶
-- **R6.5**：交接前必跑 diff 边界 verify（见 5），越界必需回滚或扩范围
+- **R6.5**：交接前必跑 diff 边界 verify（见 5），越界保留现场，审阅来源后按 adjust 扩范围或明确处理
 - **R5.2**：禁止用 mock 屏蔽真实失败
 - **R6.3**：禁止"应该可以工作"——必须实际跑过 verify
 - **R7.1**：发现需要扩大范围 → 停下来要求更新 `TASKS.md`
@@ -576,7 +574,7 @@ PROGRESS 是临时文件，不归档。
 - [ ] `EXECUTION.md` 已更新，含「6 维自查」+「越界检查」段（有 schema 变更还要含「数据库迁移」、有破坏性变更还要含「破坏性变更」段）
 - [ ] 当前 task 微复盘已填写 `problem / cause / next`，EXECUTION 无残留 `TODO`；无经验时写 `none`，未凑数
 - [ ] 如属例外任务，`SUMMARY.md` 已补齐
-- [ ] `TASKS.md` 中的对应任务已勾选
+- [ ] 控制器验收通过，TASKS 状态与有效 receipt 一致（executor 不改状态）
 - [ ] 没有改动 `SPEC.md` / `DESIGN.md`
 - [ ] 没有越界改其他任务的文件（R7.3）
 
@@ -594,7 +592,7 @@ gantry hook run after:dev
 本阶段末尾禁止向用户反问「是否继续 / 要不要先扫一眼 / 是否推进下一阶段」。按 R2.6：
 - 产物齐备、门禁通过 → 直接按「触发下一步」执行
 - 多选场景 → 取推荐项（无推荐则取列表第一项），把选择与理由写进本阶段产物
-- 仅三类允许停：① `requiresApproval` 硬锁的 change / design / integration；② R5 / R6 / R7 触发；③ R2.5 自愈 3 次仍失败
+- 仅三类允许停：① `requiresApproval` 硬锁的 change / design / integration；② R5 / R6 / R7 触发；③ R2.5 三次修复耗尽或有界执行被取消/超时
 
 ## 触发下一步
 

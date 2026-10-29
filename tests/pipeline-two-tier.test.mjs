@@ -62,14 +62,14 @@ test('AC-1/D23 · WHITELIST 中除 blocked 外每个 token 都由 computeNextSte
   // 这里对每个 token 反查一条能产出它的 state —— 白名单是 driver 的契约面,
   // 任何一个 token 不可达都意味着契约说谎(blocked 是兜底失败态,不在此列)。
   const witnesses = {
-    'gantry-change': { pipeline: 'full', currentStage: 'idle' },
-    'gantry-requirement': { pipeline: 'full', currentStage: 'change' },
-    'gantry-design': { pipeline: 'full', currentStage: 'requirement' },
-    'gantry-task': { pipeline: 'full', currentStage: 'design' },
-    'gantry-dev': { pipeline: 'full', currentStage: 'task' },
-    'gantry-test': { pipeline: 'full', currentStage: 'dev' },
-    'gantry-review': { pipeline: 'full', currentStage: 'test' },
-    'gantry-integration': { pipeline: 'full', currentStage: 'review' },
+    'gantry-change': { pipeline: 'full', currentStage: 'change' },
+    'gantry-requirement': { pipeline: 'full', currentStage: 'requirement' },
+    'gantry-design': { pipeline: 'full', currentStage: 'design' },
+    'gantry-task': { pipeline: 'full', currentStage: 'task' },
+    'gantry-dev': { pipeline: 'full', currentStage: 'dev' },
+    'gantry-test': { pipeline: 'full', currentStage: 'test' },
+    'gantry-review': { pipeline: 'full', currentStage: 'review' },
+    'gantry-integration': { pipeline: 'full', currentStage: 'integration' },
     // D23:light 只有 fast 一个阶段,未收敛正是靠这条产生 gantry-fast。
     'gantry-fast': { pipeline: 'light', currentStage: 'fast' },
     done: { pipeline: 'light', currentStage: 'fast', lastStageResult: { ok: true } },

@@ -1,185 +1,45 @@
-# gantry self-heal · DEV verify 失败重试记忆
+# Gantry 任务修复与失败接力
 
-> P3 交付,承接 P1 `loop-next` / P2 `loop-guard`。字段与代码单一来源:
-> `src/lib/self-heal.mjs` / `src/cli.mjs` heal / acGate / `src/lib/phases.mjs` checkAcGate
+Ralph task-cycle 自动持久化预约、候选和失败事实。`gantry heal` 保留人工可读诊断入口；它不预约模型调用，不修改验收 contract，也不是预算真值。
 
----
+## 一次失败如何进入下一轮
 
-## 何时触发
+1. 首次预约编号0，固定任务前基线和验收；fresh executor 返回候选。
+2. 控制器真实运行 verify/checks。失败写入 execution/<task>.json，报告通过 EXECUTION/PROGRESS 交接。
+3. 可修复时先持久化 repairsUsed=1，再启动新的 fresh executor。修复2/3相同，重启、换客户端、修改诊断不返还额度。
+4. 第三次修复成功仍可完成；第三次修复返回失败后耗尽，禁止第四次修复、整段DEV重派或转主上下文清零。
 
-> P3 交付,承接 P1 `loop-next` / P2 `loop-guard`(P4 已折叠进 `gantry advance`)。
-> 字段与代码单一来源:`src/lib/self-heal.mjs` / `src/cli.mjs` heal / `src/lib/phases.mjs` checkAcGate
+明确的429/连接中断等传输故障可以在同一预约内最多额外重试三次（1/2/4秒），不增加业务修复序号；未知非零不能这样重试。传输失败可能留下有用代码，因此仍先验证候选。receipt有效时不再调用模型。
 
-DEV 阶段 verify 失败(R2.5 允许最多 3 次自愈)时,executor(自动化或人工)应显式调:
-
-```bash
-gantry heal <taskId> --reason "verify 失败:xxx" \
-                     --command "node --test tests/foo.test.mjs" \
-                     --stderr "AssertionError: expected 1 got 2"
-```
-
-- 成功记录 → stdout `recorded #<n>`,exit 0
-- `<n>` 是该 taskId 已记录 attempt 数 + 1(从 1 起)
-
----
-
-## EXECUTION.md `## Self-Heal Log` 段格式
-
-self-heal 记录**只写** EXECUTION.md,追加到独立段 `## Self-Heal Log`:
-
-```markdown
-## Self-Heal Log
-
-### T02 · attempt #1
-
-- at: 2026-09-16T14:30:12.000Z
-- reason: verify 失败:assertion mismatch
-- command: `node --test tests/foo.test.mjs`
-- stderr:
-  ```
-  AssertionError: expected 1 got 2
-    at tests/foo.test.mjs:12
-  ```
-
-### T02 · attempt #2
-
-- at: 2026-09-16T14:35:47.000Z
-- reason: 修改断言方向后仍失败,fixture 数据问题
-- command: `node --test tests/foo.test.mjs`
-```
-
-**约束**:
-- 段标题 `## Self-Heal Log` 固定字面,`readHealLog` 靠此定位
-- 子记录标题正则 `^### (\S+) · attempt #(\d+)$`,taskId 不允许空白 / `#` / 换行
-- fields 顺序固定:`at → reason → command → stderr`
-- `reason` 单行,超 200 字符截断加 `…`
-- `stderr` 用三反引号 code fence 包裹,超 8KB 保留头 6KB + 尾 2KB + `[...truncated N bytes]`
-
----
-
-## R2.5 上限落地 · gantry heal --check
-
-R2.5 明文:"最多自愈 3 次,第 4 次仍失败才停下汇报"。P3 用一条查询命令落地:
+## 手动诊断和查询
 
 ```bash
-gantry heal --check <taskId>
+gantry heal T02 --reason "舍入边界断言失败" \
+  --command "node --test tests/money.test.mjs" \
+  --stderr "expected 1.01 got 1.00"
+gantry heal --check T02
 ```
 
-| 记录数 K | 输出 | exit | 副作用 |
-|---|---|---|---|
-| K < 3 | `ok · attempts=K/3` | 0 | 无 |
-| K >= 3 | `blocked · attempts=K/3` | 2 | 写 `fence.lastStageResult.blockedReason = 'heal: limit exceeded task=<taskId>'` |
+手动记录追加到 `EXECUTION.md` 的 `## Self-Heal Log`，保留 at/reason/command/stderr；reason单行截200字符，stderr限8KB。记录次数不等于已启动修复次数。
 
-**fence 熔断契约**(与 loop-guard 内联熔断一致):
-- 只写 `blockedReason` 为空的 fence;已有非空 → 不覆盖(单一职责:谁先熔断谁负责)
-- 下一次 `loop-next` 自然返回 `blocked`(P1 判定序 step 1)
-
-**注**:上限阈值 `3` 硬编码,不做运行时配置化——避免"调大就绕过"。测试中允许通过 `shouldStopHealing(log, taskId, limit)` 覆盖,仅供覆盖率场景。
-
----
-
-## self-heal vs PATCH · 语义边界
-
-| 维度 | PATCH | self-heal |
-|---|---|---|
-| 触发 | 需求 / AC / 边界变化 | dev verify 失败 |
-| 载体 | `PATCH.md`(有 open/closed 状态) | `EXECUTION.md ## Self-Heal Log`(仅追加) |
-| 生命周期 | 跨阶段(SPEC → DESIGN → TASK → DEV → TEST → REVIEW) | 单 task,单 change |
-| 影响面 | 可能改 AC / 废 task / 加 task | 只是"重试记忆",不改任何契约 |
-| 恢复 | patch 段勾选完成 | task 自身修复或 stopHealing 后人工介入 |
-
-**代码层强隔离**:
-- `src/lib/self-heal.mjs` 不 import `patch.mjs`,不读 `PATCH.md`
-- 单测显式断言 `PATCH.md` 前后字节相等(SPEC AC-8)
-
----
-
-## AC 覆盖硬闸(integration 门禁)
-
-> P4(2026-09-16)命令折叠:独立的 `gantry ac-gate` CLI 已删除。
-> AC 覆盖硬闸只由 integration 门禁末端触发,纯函数 `checkAcCoverage` 保留供门禁调用。
-
-**触发时机**:
-`checkGate('integration', ...)` 末端会自动调 `checkAcCoverage`,校验 SPEC 声明的 AC 编号是否全部被 `test-commands.yml` 的 `covers` 覆盖。
-
-**fail-closed(2026-10-12)**:只要 SPEC 有 AC 编号,就必须有覆盖映射。
-此前 `test-commands.yml` 缺失即放行,而 `install` 从不生成它——这道闸于是在
-真实用户项目里永远等于不存在。现在缺口一律阻塞。
-
-| 场景 | 门禁行为 |
+| 存储事实 | heal --check 行为 |
 |---|---|
-| 全覆盖(含 `covers: ['*']` 通配) | 门禁通过 |
-| 覆盖不全 | 门禁 fail · reason: `ac-gate: missing AC-3, AC-5` |
-| SPEC 有 AC,但 test-commands.yml 缺失 | 门禁 fail · reason 附 `test-commands.yml 缺失(...),运行 gantry install 生成模板` |
-| SPEC 有 AC,但文件无有效条目(含 install 刚铺的注释模板) | 门禁 fail · reason 附 `无有效命令条目(每条需 cmd + covers)` |
-| test-commands.yml 语法非法 | 门禁 fail · reason `ac-gate: test-commands.yml 解析失败(...)`(不再抛穿 advance) |
-| SPEC 无 AC 或 SPEC.md 缺失 | 门禁通过 + skipReason(唯一保留的放行) |
+| 新TaskRecord存在，修复0/1/2 | 依据持久额度查询，允许剩余尝试 |
+| 修复3已预约/运行中 | 不提前判耗尽，该次仍可成功 |
+| 修复3已返回且验证失败 | blocked，保留诊断与预算 |
+| 无新记录的历史任务 | 沿用保守旧日志阈值，提示审阅迁移；不自动按零额度重开 |
+| 损坏或未知版本记录 | blocked，不覆盖、不归零 |
 
-**模板来源**:`gantry install` 会铺一份 `<项目>/.gantry/loop/test-commands.yml`
-(源:`src/loop/test-commands.template.yml`),**整份注释、绝不覆盖已有文件**。
-注释态解析为空表 = 无有效条目 = 按上表阻塞,直到你填入真实命令。
+熔断写 fence.lastStageResult.blockedReason 时不覆盖已有非空原因。清除fence只处理阻塞标志，不重置 repairsUsed、预约和历史；不得凭清fence重开第四次修复。
 
-**手动自检**:review 阶段直接跑 `gantry advance` 直到 integration,门禁失败即可看到缺失 AC 列表。
+## 恢复
 
-**fence 写入**:门禁 fail 时由 advance 已有失败路径写 `fence.blockedReason`(非覆盖)。
+先确认旧受控执行已退出且后代已清理，再运行 `gantry done <task> --json` 重验现有候选。receipt → EXECUTION → TASKS任一落盘窗口中断都可幂等补齐。旧锁归属不明时停止核对，不按PID猜测删除或盲杀。旧任务没有真实任务前基线时，审阅范围和历史预算后再迁移，不静默以当前候选作为初始基线。
 
----
+需求、AC、范围变化走 adjust/PATCH；代码修复走 task-cycle，二者不能互相替代。验收弱化误报需审阅具体变更并重验，不能全局关闭红灯规则。当前机械检查无法证明所有测试语义，REVIEW仍核实关键断言和TDD报告。
 
-## 恢复步骤
+## Integration AC 覆盖门禁
 
-### heal 达到 R2.5 上限
+integration 的 `checkAcCoverage` 仍检查 SPEC AC 编号是否映射到 `.gantry/loop/test-commands.yml` 的 cmd/covers。SPEC有AC而映射缺失、为空、漏覆盖或语法错误时阻塞；SPEC无AC才可跳过。`gantry install` 只铺注释模板，不覆盖已有文件。
 
-1. 检查 stderr:`[heal] limit exceeded, task=<taskId>`
-2. 查看 EXECUTION.md `## Self-Heal Log` 段,读所有 attempt 的根因
-3. 决定路径:
-   - **代码问题** → 修复后清 fence.blockedReason,人工判断是否可以继续
-   - **AC/需求问题** → 走 PATCH 流程(不是 self-heal 的职责)
-   - **测试本身有 bug** → 修测试,不要弱化(R5.3 硬底线)
-4. 清 fence:手动编辑 `.gantry/planning/STATE.md` fence JSON,`lastStageResult.blockedReason` 置 `null`
-5. 继续 `gantry advance` 或 `gantry loop <client>`(client ∈ `claude` | `codex`)
-
-### integration AC 覆盖门禁阻塞
-
-1. 检查门禁 reason:`ac-gate: missing AC-X, AC-Y`(缺失 / 空文件 / 解析失败时 reason 会带对应指路)
-2. 文件不存在(install 未跑或项目较老)→ 先 `gantry install` 铺模板
-3. 到 `.gantry/loop/test-commands.yml` 里给某条命令的 `covers` 加上缺失 AC
-4. 或者补齐一条 test 命令,例如 `integration: cmd: ...  covers: [AC-X, AC-Y]`
-5. 再跑 `gantry advance` 进 integration
-
-> 若该门禁对你不适用(例如 SPEC 的 AC 本就无法用仓库内命令覆盖),正确做法是修 SPEC 的
-> AC 划分或走 PATCH 流程,**不是**删掉 `covers` 让它重新 fail-open。
-
----
-
-## 与 P1/P2/P4 契约的关系
-
-```
-        ┌────────────────────────────────────┐
-        │         src/loop/loop.sh            │
-        └────────────────┬───────────────────┘
-                         │
-             ┌───────────┼───────────┬─────────┐
-             ▼           ▼           ▼         ▼
-          loop-next   advance      heal    (integration
-          (P1)        (既有+P4      (P3)     门禁末端)
-                       内联 guard)             checkAcGate
-             │           │           │         (P3)
-             ▼           ▼           ▼         │
-       computeNext   preAdvance  appendHeal   checkAc
-       Step          LoopGuard   Attempt      Coverage
-                    +transition  (self-       (loop.mjs)
-                     Stage        heal.mjs)
-                                     heal.mjs)
-    │          │         │        │         │
-    └────┬─────┘         │        │         │
-         ▼               │        │         │
-   fence.blockedReason ◀─┴────────┴─────────┘
-     (P1 定义,P2/P3 谁先熔断谁写)
-```
-
-**契约不变**:
-- P1 `computeNextStep` 判定序不变
-- P2 `checkLoopGuard` 契约不变(P4 折叠只改调用位置)
-- P3 只新增 self-heal 段 + `heal` CLI + integration 门禁末端 check
-- P4 收敛 CLI:删掉独立的 `loop-guard` / `ac-gate` 命令,合入 `advance` 与门禁
-- fence.blockedReason 采取"先到先得,不覆盖"策略,三家共同遵守
+covers 是覆盖映射，不证明命令已运行。真实执行结果由TEST及任务receipt提供。补齐真实检查与covers后再advance；不要删除covers或弱化SPEC来隐藏缺口。独立 `ac-gate` CLI 已折叠到门禁，不再作为命令。

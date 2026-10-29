@@ -51,6 +51,7 @@ test('AC-1 · writeFence 后 readFence 幂等', () => {
   writeProseOnly(root);
 
   const fence = {
+    approvals: {},
     nextStep: 'gantry-test',
     lastStageResult: {
       stage: 'dev',

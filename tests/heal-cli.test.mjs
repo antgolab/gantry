@@ -167,3 +167,36 @@ test('AC-5 · 已有非空 blockedReason 不覆盖', () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+function putRecord(root, { repairsUsed = 2, lifecycle = 'returned', failure = { kind: 'verify', summary: 'assertion failed' }, receipt = null } = {}) {
+  const path = join(root, '.gantry/specs/demo/execution');
+  mkdirSync(path, { recursive: true });
+  const record = {
+    schemaVersion: 1, revision: 1, changeId: 'demo', taskId: 'T02', contract: {}, baseline: {}, repairsUsed,
+    attempt: { id: 'attempt', repairOrdinal: repairsUsed, lifecycle, externalRetriesUsed: 0, reservedAt: '2026-10-29T00:00:00Z' }, failure, receipt,
+  };
+  writeFileSync(join(path, 'T02.json'), JSON.stringify(record));
+}
+
+test('Ralph record budget overrides diagnostic log length', () => {
+  const root = makeProject();
+  try {
+    for (let i = 0; i < 4; i++) run(root, 'T02', '--reason', `diagnosis ${i}`);
+    putRecord(root, { repairsUsed: 2 });
+    const result = run(root, '--check', 'T02');
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /ok · attempts=2\/3/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('reserved repair three may finish but returned failed repair three is exhausted', () => {
+  const root = makeProject();
+  try {
+    putRecord(root, { repairsUsed: 3, lifecycle: 'reserved' });
+    assert.equal(run(root, '--check', 'T02').status, 0);
+    putRecord(root, { repairsUsed: 3, lifecycle: 'returned' });
+    const result = run(root, '--check', 'T02');
+    assert.equal(result.status, 2, result.stderr);
+    assert.match(result.stdout, /blocked · attempts=3\/3/);
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
