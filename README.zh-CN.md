@@ -66,12 +66,10 @@ Gantry 的应对不是试图让 AI"更小心"，而是**通过工程结构让这
 
 ## 系统架构
 
-Gantry 的核心是一个**制品驱动的状态机**：每次开发被拆解为 9 个有序阶段，每个阶段产出一个 `.md` 制品，下游阶段以上游制品作为唯一输入。状态由 CLI 维护，与 AI 工具无关。
+Gantry 的核心是一个**制品驱动的状态机**：每次开发被拆解为 8 个有序阶段，每个阶段产出一个 `.md` 制品，下游阶段以上游制品作为唯一输入。状态由 CLI 维护，与 AI 工具无关。
 
 ```
-PROPOSAL → SPEC → DESIGN → [UI-DESIGN] → TASKS
-                                                 ↓
-                             ARCHIVE ← INTEGRATION ← REVIEW ← TEST ← DEV
+PROPOSAL → SPEC → DESIGN → TASKS → DEV → TEST → REVIEW → INTEGRATION
 ```
 
 **三层交互模式并存，互为补充**：
@@ -223,7 +221,7 @@ gantry change "给订单列表增加导出功能"
 gantry status
 gantry archive
 
-# 无人值守收敛引擎(P1–P4,详见 docs/loop.md)
+# 无人值守收敛引擎(详见 docs/loop.md)
 gantry loop-next                     # 只读:输出下一步白名单 token
 gantry advance                       # 推进一步;入口内联 loop-guard 熔断
 gantry heal T02 --reason "..."       # 记录一次 DEV verify 失败到 EXECUTION.md
@@ -235,11 +233,9 @@ gantry heal --check T02              # 查询 R2.5 3 次上限
 
 ### 无人值守收敛引擎
 
-`gantry loop` 是基于状态机的自驱收敛引擎。`gantry loop <client> [--quiet]`(client ∈ `claude` | `codex`)读 `STATE.md`、每轮通过 `dispatch-<client>.sh` 派发到 headless AI 产阶段产物、再调 `gantry advance`,遇到 `done` / `blocked` / stuck 后停下。默认全显示并流式转发 dispatch 输出,`--quiet` 只打每步一行摘要;dispatch / advance 失败会带失败上下文退避重试(上限取 `config.autonomous.maxRetries`),`advance rc=2` 属硬停不重试:
+`gantry loop` 是基于状态机的自驱收敛引擎。`gantry loop <client> [--quiet]`(client ∈ `claude` | `codex`)读取 `STATE.md`，每阶段派发到 fresh headless AI，运行真实门禁并逐次推进一步。可恢复失败进入有界诊断与修复；人工批准、取消、进程状态不安全或预算耗尽则按实际原因停止。
 
-- [`docs/loop.md`](docs/loop.md) — driver 契约、白名单 token、fence 结构、`state-must-advance` 断言、输出纪律与重试语义
-- [`docs/loop-guard.md`](docs/loop-guard.md) — 上下文 / 步数熔断(现内联到 `gantry advance` 入口)
-- [`docs/self-heal.md`](docs/self-heal.md) — `EXECUTION.md ## Self-Heal Log` 缓冲、R2.5 上限、integration 门禁末端 AC 强校验
+配置、任务验收、失败恢复、熔断、AC 执行证据、输出和退出码统一见 [`docs/loop.md`](docs/loop.md)。
 
 ### 手动 @引用
 
@@ -258,7 +254,7 @@ phases/0-change.md
 ## 完整流程
 
 ```
-PROPOSAL → SPEC → DESIGN → [UI-DESIGN] → TASKS → DEV → TEST → REVIEW → INTEGRATION → ARCHIVE
+PROPOSAL → SPEC → DESIGN → TASKS → DEV → TEST → REVIEW → INTEGRATION
 ```
 
 ### 路径 A：从 0 开发新项目
@@ -270,25 +266,18 @@ gantry change "描述需求"   # → PROPOSAL.md
 gantry archive             # → INTEGRATION + 归档
 ```
 
-### 路径 B：显式低风险快速修复
+### 路径 B：light 快车道（无人工关卡 · 替代 micro）
 
-只有文档、配置、文案或局部 bug 等低风险变更可显式选择 light：
+只有文档、配置、文案或局部 bug 等低风险变更走 light——不走 `change` / `integration`，是无人工关卡的 `fast` 单阶段闭环（范围锁定、实现、测试、自审都在 fast 内完成，出口是 `gantry advance`）：
 
 ```bash
 gantry change --tier light --scope <p,...> "描述需求"
 gantry advance   # 出口门：CLI 执行 verify + diff 守卫
 ```
 
-### MVP 模式（light 管线，当天跑通）
-
-light 不走 `change` / `integration`，是无人工关卡的 `fast` 单阶段闭环：范围锁定、实现、测试和自审都在 fast 内完成，出口是 `gantry advance`：
-
-```bash
-gantry change --tier light --scope <p,...> "描述需求"
-gantry advance
-```
-
 产物：`light.json` + `EXECUTION.md`，无 `PROPOSAL.md`。出口门命中范围越界 / 红线 / 测试弱化会自动升档 `full@change`（代码保留，转人工确认）。
+
+可选语义预检：在 config 里开 `jev.enabled` 并设 `TYPESAFE_API_KEY` 后，light 入口会用 TypeSafe 的 Jev 模型再判一次变更描述是否有语义红线（默认关闭，详见 [`docs/jev.md`](docs/jev.md)）。
 
 ---
 
@@ -302,9 +291,12 @@ gantry advance
 |---|---|---|---|
 | `METHODOLOGY.md` | 方法论骨架（流程图 + 阶段定义 + 文件体系 + 核心机制） | ✅ 可单独读 | 想理解整套思路；新成员入门；技术分享 |
 | `RULES.md` | 系统级硬规则（R1 token · R2 阶段门 · R3 角色红线 · R4 提交 · R5 测试 · R6 反幻觉 · R7 范围 · R8 语言） | ✅ 可单独注入 | 直接复制进 `.cursorrules` / `.windsurfrules` / 系统提示，给任何 AI 立刻提升纪律 |
+| `docs/loop.md` | 无人值守收敛循环的统一说明（配置 · 验收 · 恢复 · 熔断 · AC 执行证据） | ✅ 可单独读 | 运行或排查 `gantry loop`、任务修复与 AC 证据 |
+| `docs/prototype.md` | 可选原型与 REVIEW 简化边界 | ✅ 可单独读 | 正式设计前验证交互、状态迁移或 API 体验 |
+| `docs/testing-strategy.md` | 确定性行为评测与可选真实模型执行 | ✅ 可单独读 | 修改 Gantry 协议、renderer 或模型适配器 |
 | `README.md`（本文件） | 安装 + 调用方式 + 文件速查 + 设计原则 | ✅ 可单独读 | 装到新项目时先看；判断要不要采用 |
 
-### 阶段文件（9 个，按顺序）
+### 阶段文件（8 个，按顺序）
 
 | 文件 | 作用 | 能否单独用 | 单独用场景 |
 |---|---|---|---|
@@ -442,7 +434,7 @@ gantry advance
 
 ### 完整闭环
 
-| change 规模 | 典型任务数 | 完整模式 | 极简模式 |
+| change 规模 | 典型任务数 | 完整模式 | light 模式 |
 |---|---|---|---|
 | 小（< 100 行 / 加字段 / 修 bug）| 1–2 | ~80k – 150k | ~50k – 100k |
 | 中（100–500 行 / PR 级 feature）| 3–5 | ~150k – 300k | ~120k – 240k |
@@ -453,7 +445,7 @@ gantry advance
 
 1. **改 < 30 行 / 一次性 / 简单 bugfix** → 跳 Gantry，让 AI 直接改
 2. **改 30–100 行 / 个人项目** → 走原生 skill（brainstorm + TDD + review 三件套就够）
-3. **改 100–500 行 / 想要可追溯制品** → Gantry 极简模式，或单点调 6-review
+3. **改 100–500 行 / 想要可追溯制品** → Gantry light 模式，或单点调 6-review
 4. **改 500+ 行 / 团队 / 长期** → Gantry 完整，**多花的 token 沉淀为团队资产**
 
 ---
@@ -514,12 +506,15 @@ Gantry 的演进方向是**从工程过程管理，向 AI 协作智能体基础�
 
 ### v1.x · 稳固基础（当前阶段）
 
-- [x] 9 阶段 pipeline + CLI 状态机
+- [x] 8 阶段 pipeline + CLI 状态机
 - [x] Claude Code / Cursor / Codex / Copilot 四工具 IDE skills 分发
 - [x] Brownfield 安全护栏（CONTEXT + 破坏性变更协议）
 - [x] LESSONS.md 知识库 + `/gantry-context knowledge curate` 月度维护
 - [x] CONVENTIONS.md 项目约定模板
 - [x] 无人值守收敛引擎（P1 `loop-next` · P2 driver + guard 内联 · P3 `heal` + integration AC 硬闸）
+- [x] light 快车道替代 micro：`gantry change --tier light --scope …` + 出口门 diff 守卫，无人工关卡
+- [x] `/gantry-auto` AI 自动决策记录通道（autonomous=true）
+- [x] light 入口 Jev 语义预检（可选 · 默认关闭）
 - [ ] `gantry doctor`：环境自检命令，检测配置完整性和常见问题
 - [ ] 更完善的错误恢复和 人工确认系统
 - [ ] 测试覆盖率提升至 90%+

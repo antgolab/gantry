@@ -34,9 +34,11 @@ describe('T17 · prompt 文本落位检查', () => {
   });
 
   it('4-dev.md 已去 micro 档，且保留 R2.5 自愈上限', () => {
-    const c = read('.gantry/core/phases/4-dev.md');
+    const c = read('phases/4-dev.md');
     assert.ok(!MICRO_RE.test(c), '不应含 micro 管线档位');
     assert.ok(c.includes('R2.5'), '应含 R2.5');
+    assert.ok(c.includes('receipt → EXECUTION → TASKS'), '完成协议应由控制器持证写入');
+    assert.ok(!c.includes('整波 revert 到 wave 前'), '不得指导自动撤销用户工作区');
   });
 
   it('6-review.md 含 review_context_leak + review-lane-guard', () => {

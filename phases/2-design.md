@@ -2,7 +2,7 @@
 
 ## Context Pack 优先
 
-> 如果存在 `.gantry/planning/context-pack.json`,**先读它**。pack 的 `checklists` 字段已替你完成"是否触发各子检查"的机械判定;你只需按 `trigger=true/false` 决定哪些段必跑、哪些跳过。
+> 复用入口已加载的 context pack；尚未加载时再读 `.gantry/planning/context-pack.json`。pack 的 `checklists` 字段已替你完成"是否触发各子检查"的机械判定;你只需按 `trigger=true/false` 决定哪些段必跑、哪些跳过。
 >
 > 下面的 prose 仍是执行参考(怎么做),但"该不该做"以 pack 为准。
 
@@ -18,16 +18,13 @@
 gantry hook run before:design
 ```
 - 退出码 0 或无配置 → 继续
-- 退出码非 0 → 停止并告知用户,等待指示
+- 退出码非 0 → 收集诊断，按宿主剩余预算修复后重跑；候选执行者将诊断交外层，不自行批准或另开重试循环。仅预算耗尽或人工/进程/内容保护条件才停止
 
 ## 输入
 
 - `@.gantry/specs/<change-id>/SPEC.md`
-- `@.gantry/specs/<change-id>/PROPOSAL.md`(含项目类型、调性信息与 `uiImpact` 字段)
-- **项目上下文文档**(从 `STATE.md` 读 `ai_context_doc` 字段决定):
-  - 有 `ai_context_doc: <path>` → 读那个文档(如 `AGENTS.md` / `CLAUDE.md`)
-  - 没 `ai_context_doc` 或 `ai_context_doc: CONTEXT.md` → 读 `@.gantry/specs/CONTEXT.md`
-  - `ai_context_doc: none` → 跳过此输入(AI "盲飞",必须在 DESIGN.md 顶部贴警告)
+- `@.gantry/specs/<change-id>/PROPOSAL.md`：仅查项目类型、`uiImpact` 和架构层影响声明；仅 uiImpact=true 时按下方要求补读视觉调性，不默认整读历史提案。
+- **项目上下文文档**：复用 pack 选择的 context-doc，不再读取 STATE 或配置重新选择。
 - **项目级架构文档**(如存在 · brownfield 强烈推荐):`@.gantry/specs/ARCHITECTURE.md`
   - 重点读 `§ 2 模块清单 + 依赖规则`(决定本 change 能不能引入新模块 / 跨模块依赖)
   - 重点读 `§ 3 ADR 列表`(看本 change 是否撞已有不可逆决策——撞了必须显式说"延续 ADR-NNN"或"申请 supersede ADR-NNN")
@@ -504,15 +501,44 @@ uipro 负责"**广**"(穷举候选)→ impeccable 负责"**深**"(细抠落地)�
 gantry hook run after:design
 ```
 - 退出码 0 或无配置 → 继续
-- 退出码非 0 → 停止并告知用户,等待指示
+- 退出码非 0 → 收集诊断，按宿主剩余预算修复后重跑；候选执行者将诊断交外层，不自行批准或另开重试循环。仅预算耗尽或人工/进程/内容保护条件才停止
 
 ## 自主模式自检（autonomous=true）
 
 本阶段末尾禁止向用户反问「是否继续 / 要不要先扫一眼 / 是否推进下一阶段」。按 R2.6：
 - 产物齐备、门禁通过 → 直接按「触发下一步」执行
 - 多选场景 → 取推荐项（无推荐则取列表第一项），把选择与理由写进本阶段产物
-- 仅三类允许停：① `requiresApproval` 硬锁的 change / design / integration；② R5 / R6 / R7 触发；③ R2.5 自愈 3 次仍失败
+- 停止条件按 当前工具的 `gantry-next` 入口「门禁修复循环」：人工确认/所缺用户决策或凭据、宿主剩余预算耗尽、取消/时限、进程/控制记录/用户内容保护；可恢复门禁先在本次调用内诊断修复
 
 ## 触发下一步
 
 - → `phases/3-task.md`(不再按 UI / 后端分叉;§ 8 是否展开由 PROPOSAL uiImpact 字段决定,pipeline 层面统一到 task 阶段)
+
+
+## 研究覆盖台账（复杂变更按需启用）
+
+跨模块契约、外部 API/版本或体验标准尚不明确时，在 PROPOSAL.md 启用
+`<!-- gantry:research-ledger -->` 与 `## Research Coverage` 表；简单改动无需创建。
+七类 surface 固定为 `contracts`、`lifecycle`、`failure/retry`、`permission/ownership`、
+`source-of-truth`、`experience`、`external-version`，每类一行。
+
+表列固定为 `surface | status | evidence | openDecision`，可选 `scope` 列限定任务 ID
+或代码路径前缀（逗号分隔，空或 `*` 表示全局）。状态使用：
+
+- `resolved-by-evidence`：已读源码/官方文档，引用仓库相对路径（可带行号）或来源 URL；已解决事实不再询问用户。
+- `open-needs-user`：仅记录证据无法确定的业务意图/权衡，必须写明具体 openDecision，再提问。
+- `n/a-derived`：evidence 填一行不适用的原因，不能只填 N/A。
+- `resolved-by-user`：evidence 以 `user:` 记录用户确认原话或决策来源。
+- `default-accepted`：evidence 以 `decision:` 记录已接受的默认值及依据；沉默不能代替必需的授权。
+
+非 open 状态的 openDecision 填 `—`。外部版本事实必须附官方 URL、`version: <版本>`、
+`deprecated: no|yes|YYYY-MM-DD`；弃用事实须在设计决定中说明替代路径。
+事实写在 evidence 指向的来源，决策写进 SPEC/DESIGN，避免重复大段事实。
+若 DESIGN 接替 PROPOSAL 台账，复制七类完整表后更新已解决项，保留原始问题来源；
+不能删行、删问题或删除已启用台账来伪装解决。
+推进门禁会校验台账完整性和未决项。DEV/TEST 仅加载与任务 scope 匹配的行，
+已有来源覆盖的事实直接复用；相关代码/版本变化时先重验再引用，不把历史研究当现状。
+
+## 可选原型
+
+当下一步需要可观察的交互或状态模型来解决一个未决问题时，读取 `.gantry/core/phases/2-prototype.md`，按 `templates/PROTOTYPE.md` 记录 Question / Artifact / Run / Verdict / Decision。它是横向探索协议，不新增阶段。结论回写设计；原型不能替代正式任务、TEST 或 AC 证据。

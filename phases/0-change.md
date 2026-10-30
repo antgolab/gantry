@@ -2,7 +2,7 @@
 
 ## Context Pack 优先
 
-> 如果存在 `.gantry/planning/context-pack.json`,**先读它**。pack 的 `checklists` 字段已替你完成"是否触发各子检查"的机械判定;你只需按 `trigger=true/false` 决定哪些段必跑、哪些跳过。
+> 复用入口已加载的 context pack；尚未加载时再读 `.gantry/planning/context-pack.json`。pack 的 `checklists` 字段已替你完成"是否触发各子检查"的机械判定;你只需按 `trigger=true/false` 决定哪些段必跑、哪些跳过。
 >
 > 下面的 prose 仍是执行参考(怎么做),但"该不该做"以 pack 为准。
 
@@ -13,12 +13,14 @@
 
 ## Pre-hook（可选）
 
+先消费 pack 的 `hook-before`：false 时直接跳过，不运行 hook 命令，也不反复探测。旧 pack 无该项时读一次有效 hook 配置；为空则本上下文内跳过，配置变化后重新判断。CLI 已执行的 before:change / before:dev 不重复执行。
+
 在进入本阶段主流程前，运行：
 ```bash
 gantry hook run before:change
 ```
 - 退出码 0 或无配置 → 继续
-- 退出码非 0 → 停止并告知用户，等待指示
+- 退出码非 0 → 收集诊断，按宿主剩余预算修复后重跑；候选执行者将诊断交外层，不自行批准或另开重试循环。仅预算耗尽或人工/进程/内容保护条件才停止
 
 ## 输入
 
@@ -177,22 +179,49 @@ gantry hook run before:change
 
 ## Post-hook（可选）
 
+先消费 pack 的 `hook-after`：false 时直接跳过，不运行 hook 命令，也不反复探测。旧 pack 无该项时复用已读取配置；为空则跳过。已配置 hook 每次真实阶段执行仍按配置运行，不缓存其成功结果。
+
 完成本阶段所有工作、自检通过后，运行：
 ```bash
 gantry hook run after:change
 ```
 - 退出码 0 或无配置 → 继续
-- 退出码非 0 → 停止并告知用户，等待指示
+- 退出码非 0 → 收集诊断，按宿主剩余预算修复后重跑；候选执行者将诊断交外层，不自行批准或另开重试循环。仅预算耗尽或人工/进程/内容保护条件才停止
 
 ## 自主模式自检（autonomous=true）
 
 本阶段末尾禁止向用户反问「是否继续 / 要不要先扫一眼 / 是否推进下一阶段」。按 R2.6：
 - 产物齐备、门禁通过 → 直接按「触发下一步」执行
 - 多选场景 → 取推荐项（无推荐则取列表第一项），把选择与理由写进本阶段产物
-- 仅三类允许停：① `requiresApproval` 硬锁的 change / design / integration；② R5 / R6 / R7 触发；③ R2.5 自愈 3 次仍失败
+- 停止条件按 当前工具的 `gantry-next` 入口「门禁修复循环」：人工确认/所缺用户决策或凭据、宿主剩余预算耗尽、取消/时限、进程/控制记录/用户内容保护；可恢复门禁先在本次调用内诊断修复
 
 ## 触发下一步
 
 `PROPOSAL.md` 经用户确认后 → `phases/1-requirement.md`（本阶段只产出 full 变更）。
 
 light 不经本阶段，也不从 `PROPOSAL` 触发：它由 `gantry change --tier light --scope …` 直接进入 `.gantry/core/phases/F-fast.md`。
+
+
+## 研究覆盖台账（复杂变更按需启用）
+
+跨模块契约、外部 API/版本或体验标准尚不明确时，在 PROPOSAL.md 启用
+`<!-- gantry:research-ledger -->` 与 `## Research Coverage` 表；简单改动无需创建。
+七类 surface 固定为 `contracts`、`lifecycle`、`failure/retry`、`permission/ownership`、
+`source-of-truth`、`experience`、`external-version`，每类一行。
+
+表列固定为 `surface | status | evidence | openDecision`，可选 `scope` 列限定任务 ID
+或代码路径前缀（逗号分隔，空或 `*` 表示全局）。状态使用：
+
+- `resolved-by-evidence`：已读源码/官方文档，引用仓库相对路径（可带行号）或来源 URL；已解决事实不再询问用户。
+- `open-needs-user`：仅记录证据无法确定的业务意图/权衡，必须写明具体 openDecision，再提问。
+- `n/a-derived`：evidence 填一行不适用的原因，不能只填 N/A。
+- `resolved-by-user`：evidence 以 `user:` 记录用户确认原话或决策来源。
+- `default-accepted`：evidence 以 `decision:` 记录已接受的默认值及依据；沉默不能代替必需的授权。
+
+非 open 状态的 openDecision 填 `—`。外部版本事实必须附官方 URL、`version: <版本>`、
+`deprecated: no|yes|YYYY-MM-DD`；弃用事实须在设计决定中说明替代路径。
+事实写在 evidence 指向的来源，决策写进 SPEC/DESIGN，避免重复大段事实。
+若 DESIGN 接替 PROPOSAL 台账，复制七类完整表后更新已解决项，保留原始问题来源；
+不能删行、删问题或删除已启用台账来伪装解决。
+推进门禁会校验台账完整性和未决项。DEV/TEST 仅加载与任务 scope 匹配的行，
+已有来源覆盖的事实直接复用；相关代码/版本变化时先重验再引用，不把历史研究当现状。

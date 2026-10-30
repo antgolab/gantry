@@ -20,7 +20,7 @@
 - 不依赖聊天记忆；以仓库工件为准。
 - 执行阶段型 gantry skill 时读取 `.gantry/planning/context-pack.json`，按 `loadOrder` 最小加载当前阶段所需文件；其中 `agent-prompt` 与 `phase-prompt` 都是执行约束。 `gantry-change` 首次执行若 pack 不存在，先运行 `gantry change "<描述>"` 创建 pack。
 - `docs/RULES.md` / `docs/METHODOLOGY.md` 是规则源文件；仅在解释规则、修改 gantry 框架或 `context-pack` 明确要求时读取。
-- 严格遵守 `TASKS.md` 的 `read_files` / `write_files` 边界。
+- 按 `TASKS.md` 的 `read_files` / `write_files` 计划加载与实现；full DEV 文件列表差异记录提示，不代替实际验收或自动提交归属判断，保留用户内容。
 - 完成前必须运行并报告 verify 证据。
 - 累计 / 输入 token > 200k 或上下文窗口使用率 > 85% 时，写 `<task-id>-PROGRESS.md` 后清窗。
 - 禁止把长规则或长工件复制进聊天；用 `@文件路径` 引用。

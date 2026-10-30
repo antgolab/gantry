@@ -42,6 +42,8 @@ export function parseTasks(taskMdPath) {
       readFiles: extractList(body, 'read_files'),
       writeFiles: extractList(body, 'write_files'),
       verify: extractField(body, 'verify'),
+      preflight: extractCommands(body, 'preflight'),
+      checks: extractCommands(body, 'checks'),
       done: extractField(body, 'done'),
       estimate: parseEstimate(attrs.estimate, body),
       risk: parseRisk(attrs.risk, body),
@@ -174,6 +176,12 @@ function extractField(body, field) {
   const tagRegex = new RegExp(`<${field}>([\\s\\S]*?)<\\/${field}>`, 'i');
   const tagMatch = body.match(tagRegex);
   return tagMatch ? tagMatch[1].trim() : null;
+}
+
+// Commands are lines, not comma-separated paths: preserve shell quoting/arguments.
+function extractCommands(body, field) {
+  const value = extractField(body, field);
+  return value ? value.split(/\r?\n/).map(line => line.trim().replace(/^[-*]\s+/, '')).filter(Boolean) : [];
 }
 
 function splitList(value) {

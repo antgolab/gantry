@@ -51,9 +51,7 @@ Gantry encodes that discipline as an executable system through phase gates, arti
 Gantry is an **artifact-driven state machine**. Each change is split into ordered phases. Each phase produces a Markdown artifact, and downstream phases use upstream artifacts as their source of truth.
 
 ```text
-PROPOSAL -> SPEC -> DESIGN -> [UI-DESIGN] -> TASKS
-                                                     |
-                             ARCHIVE <- INTEGRATION <- REVIEW <- TEST <- DEV
+PROPOSAL -> SPEC -> DESIGN -> TASKS -> DEV -> TEST -> REVIEW -> INTEGRATION
 ```
 
 Gantry provides three interaction layers:
@@ -158,7 +156,7 @@ gantry change "Add CSV export to the orders list"
 gantry status
 gantry archive
 
-# Convergence engine (P1–P4, see docs/loop.md)
+# Convergence engine (see docs/loop.md)
 gantry loop-next                     # read-only: prints the next whitelist token
 gantry advance                       # advance one step; entry inlines loop-guard breaker
 gantry heal T02 --reason "…"         # record a DEV verify failure into EXECUTION.md
@@ -170,11 +168,9 @@ gantry heal --check T02              # query R2.5 3-attempt ceiling
 
 ### Unattended Convergence Loop
 
-`gantry loop` is a self-driving convergence engine built on the state machine. `gantry loop <client> [--quiet]` (client ∈ `claude` | `codex`) reads `STATE.md`, dispatches each phase to a headless AI via `dispatch-<client>.sh`, calls `gantry advance` per iteration, and stops on `done` / `blocked` / stuck detection. Output is fully streamed by default (`--quiet` collapses it to one summary line per step), and dispatch / advance failures are retried with backoff up to `config.autonomous.maxRetries`, carrying the failure context back into the AI prompt — `advance rc=2` is a hard stop and is never retried. See:
+`gantry loop` is a self-driving convergence engine built on the state machine. `gantry loop <client> [--quiet]` (client ∈ `claude` | `codex`) reads `STATE.md`, dispatches each phase to a fresh headless AI client, runs the real gates, and advances one step at a time. Recoverable failures re-enter bounded diagnosis and repair; approval, cancellation, unsafe process state, and exhausted budgets stop according to their actual reason.
 
-- [`docs/loop.md`](docs/loop.md) — driver contract, whitelist tokens, fence layout, `state-must-advance`, output discipline and retry semantics
-- [`docs/loop-guard.md`](docs/loop-guard.md) — context / step-budget circuit breakers (now inlined into `gantry advance`)
-- [`docs/self-heal.md`](docs/self-heal.md) — `EXECUTION.md ## Self-Heal Log` buffer, R2.5 ceiling, integration AC gate
+See [`docs/loop.md`](docs/loop.md) for configuration, task verification, failure recovery, circuit breakers, AC execution evidence, output, and exit codes.
 
 ### Universal GO.md Entry
 
@@ -193,7 +189,7 @@ Design the appointment scheduling module for a clinic website
 ## Full Workflow
 
 ```text
-PROPOSAL -> SPEC -> DESIGN -> [UI-DESIGN] -> TASKS -> DEV -> TEST -> REVIEW -> INTEGRATION -> ARCHIVE
+PROPOSAL -> SPEC -> DESIGN -> TASKS -> DEV -> TEST -> REVIEW -> INTEGRATION
 ```
 
 Typical flow:
@@ -216,7 +212,7 @@ This produces `light.json` and `EXECUTION.md` — no `PROPOSAL.md` and no human 
 The exit gate auto-archives on success, or auto-upgrades to `full@change` (code kept)
 when it detects out-of-scope edits, red lines, or weakened tests. Schema, public API,
 cross-module, dependency, security, concurrency, and destructive changes must use the
-default full flow.
+default full flow. Optionally enable `jev.enabled` (config) + `TYPESAFE_API_KEY` to add a semantic red-line precheck to the light entry — off by default; see [docs/jev.md](docs/jev.md).
 
 ---
 
@@ -255,9 +251,9 @@ Core documents:
 |---|---|
 | `docs/METHODOLOGY.md` | Methodology overview and phase model |
 | `docs/RULES.md` | System-level rules for AI-assisted development |
-| `docs/loop.md` | Unattended convergence loop: driver contract, whitelist, fence, `state-must-advance` |
-| `docs/loop-guard.md` | Loop guard: context / step-budget breakers (inlined into `gantry advance`) |
-| `docs/self-heal.md` | DEV verify self-heal buffer + integration AC hard gate |
+| `docs/loop.md` | Unattended convergence loop: configuration, verification, recovery, circuit breakers, and AC execution evidence |
+| `docs/prototype.md` | Optional pre-design prototypes and review-time simplification boundaries |
+| `docs/testing-strategy.md` | Deterministic behavior evaluations and optional real-model test runs |
 | `README.md` | Installation and usage overview |
 
 Phase protocols:
@@ -295,12 +291,15 @@ Templates:
 
 ### v1.x
 
-- [x] 9-phase pipeline and CLI state machine
+- [x] 8-phase pipeline and CLI state machine
 - [x] Claude Code / Cursor / Codex / Copilot command distribution
 - [x] Brownfield guardrails
 - [x] `LESSONS.md` knowledge base and `/gantry-context knowledge curate`
 - [x] project convention templates
 - [x] Unattended convergence loop (P1 `loop-next` · P2 driver + inlined guard · P3 `heal` + integration AC hard gate)
+- [x] light fast lane replaces micro: `gantry change --tier light --scope …` + exit-gate diff guard, no human gate
+- [x] `/gantry-auto` AI decision log channel (autonomous=true)
+- [x] optional Jev semantic precheck on the light entry (off by default)
 - [ ] `gantry doctor`
 - [ ] stronger error recovery and 人工确认关卡 system
 - [ ] 90%+ test coverage

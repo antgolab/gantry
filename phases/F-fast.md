@@ -48,7 +48,7 @@
 
 1. `--skip` 被拒绝（`✗ light 出口门不可跳过（--skip 对 light 无效）`）。
 2. CLI 解析并执行 verify 命令（`intent.verify` → `test-commands.yml` → 都没有 ⇒ guard-error 直接升档），带时间戳写入 EXECUTION 的 `## verify-log`。
-3. **FAIL**：`retries++`，你必须往 `EXECUTION.md` **追加一条新的 `## diagnosis` 条目**（文本须与上一条不同，否则不计为有效自愈），修复后重新运行 `gantry advance`。最多 3 次自愈（R2.5）；超限则 `pauseReason=light-verify-failed` 暂停，change 不归档、CHANGELOG 不写。
+3. **FAIL**：`retries++`，你必须往 `EXECUTION.md` **追加一条新的 `## diagnosis` 条目**（文本须与上一条不同，否则不计为有效自愈），修复后重新运行 `gantry advance`。按最新 `autonomous.maxRetries`（默认3）的阶段剩余预算自愈（R2.5），与宿主共用计数，不另起一套额度；超限则 `pauseReason=light-verify-failed` 暂停，change 不归档、CHANGELOG 不写。
 4. **PASS**：CLI 先校验意图锚定（`light.json` 被改写 ⇒ `intent-tampered`）和 change 目录里有无 full 工件（⇒ `forbidden-artifact`），再采 diff 快照跑守卫：范围越界（out-of-scope）、红线、测试弱化（R5.3）、verify 新鲜度。新鲜度的含义是 verify 证据的时间戳**不早于**本次改动文件的最后修改时间；因为 verify 由 CLI 当场执行，这一项实际上是在检查 verify 命令本身有没有改写工作区（`stale-verify`）。结果写入 `## guard-decision`。
 5. **任一命中 ⇒ 自动升档** `full@change`（`↑ 守卫命中，light → full 自动升档`）：写一份标为 `spike` 的 PROPOSAL 初稿，**工作区代码原样保留**。唯一例外是 `stale-verify`：只回到 verify 重跑，不升档。
 6. **全部通过 ⇒ 自动收尾**：CLI 归档 change 并写 CHANGELOG 条目，STATE 复位 `idle`（`✓ light 出口门通过，已自动收尾`）。全程无人工确认。

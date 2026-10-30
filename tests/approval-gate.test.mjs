@@ -2,7 +2,8 @@ import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, rmSync, existsSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { execSync } from 'node:child_process';
+import { execSync, spawnSync } from 'node:child_process';
+import { approveStage, isStageApproved } from '../src/lib/state.mjs';
 
 const CLI = join(import.meta.dirname, '..', 'src', 'cli.mjs');
 
@@ -48,6 +49,7 @@ describe('人工确认关卡 · 派生策略', () => {
     seedProposal('add-feature-x');
     seedArtifact('add-feature-x', 'SPEC.md', '# SPEC\n');
 
+    approveStage(tmpDir, 'change');
     const out = run('auto');
     assert.match(out, /需人工确认|⏸/);
     assert.equal(readStage(), 'design');
@@ -106,13 +108,12 @@ describe('人工确认关卡 · 派生策略', () => {
 });
 
 describe('门禁绕过', () => {
-  it('advance --skip 绕过门禁并推进', () => {
+  it('advance --skip 不能绕过未批准的 change', () => {
     run('change --tier full "risky change"');
     // 故意不 seed PROPOSAL 的待澄清清空 → 直接 --skip 绕过 requirement 门禁
     // （PROPOSAL 由 change 未创建，requirement 门禁必失败）
-    const skipOut = run('advance --skip');
-    assert.match(skipOut, /跳过门禁/);
-    assert.equal(readStage(), 'requirement');
+    assert.throws(() => run('advance --skip'), /advance --approve change/);
+    assert.equal(readStage(), 'change');
   });
 
   it('正常推进不显示 skip 提示', () => {
@@ -122,5 +123,46 @@ describe('门禁绕过', () => {
 
     const statusOut = run('status');
     assert.doesNotMatch(statusOut, /本 change 有/);
+  });
+});
+
+
+describe('内容绑定的人工批准', () => {
+  function enterDesign() {
+    run('change --tier full "approval binding"');
+    seedProposal('approval-binding');
+    seedArtifact('approval-binding', 'SPEC.md', '# SPEC\n');
+    run('advance');
+    run('advance');
+    seedArtifact('approval-binding', 'DESIGN.md', '# DESIGN\nreviewed bytes\n');
+  }
+
+  it('design 未获批准时 --skip 仍被阻止，错误阶段批准也被拒绝', () => {
+    enterDesign();
+    assert.throws(() => run('advance --skip'), /advance --approve design/);
+    assert.equal(readStage(), 'design');
+    assert.throws(() => run('advance --approve change'), /当前人工确认阶段/);
+    assert.equal(readStage(), 'design');
+  });
+
+  it('批准绑定工件摘要，改写已批准设计后失效', () => {
+    enterDesign();
+    approveStage(tmpDir, 'design');
+    assert.equal(isStageApproved(tmpDir, 'design'), true);
+    seedArtifact('approval-binding', 'DESIGN.md', '# DESIGN\nchanged after review\n');
+    assert.equal(isStageApproved(tmpDir, 'design'), false);
+    assert.throws(() => run('advance --skip'), /advance --approve design/);
+    assert.equal(readStage(), 'design');
+  });
+
+  it('advance --json 仅输出JSON，进入人工关卡返回2；普通进入design返回0', () => {
+    run('change --tier full "json approval"');
+    seedProposal('json-approval');
+    seedArtifact('json-approval', 'SPEC.md', '# SPEC\n');
+    run('advance');
+    const json = spawnSync(process.execPath, [CLI, 'advance', '--json'], { cwd: tmpDir, encoding: 'utf8' });
+    assert.equal(json.status, 2, json.stderr);
+    assert.equal(JSON.parse(json.stdout).pausedForApproval, 'design');
+    assert.equal(readStage(), 'design');
   });
 });

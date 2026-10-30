@@ -22,9 +22,15 @@ import { parseTasks } from './tasks.mjs';
 import { PIPELINES, PHASE_FILES, countOpenQuestions } from './phases.mjs';
 import { getPreferredArtifactName, resolveArtifactPath } from './artifacts.mjs';
 import { readConfig } from './config.mjs';
+import { isEmptyHook } from './hooks.mjs';
 import { getAgentFile, getAgentForStage } from './agents.mjs';
 import { validateIntentScope } from './light-guard.mjs';
 import { checkPack } from './review-lane-guard.mjs';
+import { readTaskRecord } from './task-record.mjs';
+import { readHealLog } from './self-heal.mjs';
+import { researchContextEntries } from './research-ledger.mjs';
+import { readPrototypeNotes } from './prototype.mjs';
+import { planSimplification, readReviewDiff } from './simplify.mjs';
 
 const SCHEMA_VERSION = 2;
 const PACK_FILENAME = 'context-pack.json';
@@ -127,15 +133,28 @@ export function buildPack(projectRoot, overrides = {}) {
     loadOrder: buildLoadOrder({ projectRoot, stage, changeId, taskId, pipeline, config }),
     checklists: buildChecklists({ projectRoot, stage, changeId, taskId }),
     lessons: stage === 'dev' || stage === 'fast' ? grepLessons(projectRoot, taskId, changeId) : [],
-    retryHistory: {
-      count: state.retries || 0,
-      lastFailure: state.pauseReason
-        ? { at: null, reason: state.pauseReason }
-        : null,
-    },
+    retryHistory: buildRetryHistory(projectRoot, { stage, changeId, taskId, state }),
     next: buildNextCommands(stage, taskId),
   };
 
+  for (const timing of ['before', 'after']) {
+    const event = `${timing}:${stage}`;
+    const trigger = !isEmptyHook(config?.hooks?.[event]);
+    pack.checklists.push({id:`hook-${timing}`,trigger,confidence:'high',ref:`gantry hook run ${event}`,reason:trigger ? 'configured hook' : 'empty hook; do not invoke CLI or probe again in this pack'});
+  }
+
+  if (stage === 'review') {
+    try {
+      const diff = readReviewDiff(projectRoot);
+      const cleanup = planSimplification(diff);
+      pack.checklists.push({id:'review-simplify',trigger:cleanup.trigger,confidence:'high',ref:'.gantry/core/phases/6-review.md#限域简化',reason:`${cleanup.reason}; ${cleanup.files.join(', ')}`});
+    } catch {
+      pack.checklists.push({id:'review-simplify',trigger:false,confidence:'low',ref:'.gantry/core/phases/6-review.md#限域简化',reason:'diff unavailable; reviewer must inspect its explicit target diff'});
+    }
+  }
+  if (changeId && ['change','design','dev'].includes(stage) && readPrototypeNotes(join(projectRoot,SPECS_DIR,changeId)).length) {
+    pack.loadOrder.push({path:'.gantry/core/phases/2-prototype.md',kind:'phase-prompt',required:true});
+  }
   // REVIEW lane 上下文隔离 gate (T14):仅在 review 阶段且未显式关闭
   // (config.reviewLaneStrict === false) 时扫描 loadOrder 是否泄漏 DEV 上下文。
   // 命中则附加 warnings 字段,CLI 据此设 exit code 'review_context_leak' +
@@ -150,6 +169,25 @@ export function buildPack(projectRoot, overrides = {}) {
   }
 
   return pack;
+}
+
+function buildRetryHistory(root, { stage, changeId, taskId, state }) {
+  if (stage === 'dev') {
+    if (!changeId || !taskId) return { count: 0, lastFailure: null };
+    const record = readTaskRecord(root, changeId, taskId);
+    if (record) {
+      const failure = record.failure;
+      return {
+        count: record.repairsUsed,
+        lastFailure: failure ? { at: failure.at ?? null, reason: String(failure.reason ?? failure.summary ?? failure.kind ?? 'task failed').slice(0, 1000) } : null,
+      };
+    }
+    const execution = resolveArtifactPath(join(root, SPECS_DIR, changeId), 'execution');
+    const entries = execution ? readHealLog(execution.path)[taskId] ?? [] : [];
+    const last = entries.at(-1);
+    return { count: entries.length, lastFailure: last ? { at: last.at, reason: last.reason } : null };
+  }
+  return { count: state.retries || 0, lastFailure: state.pauseReason ? { at: null, reason: state.pauseReason } : null };
 }
 
 // === loadOrder ===
@@ -200,7 +238,7 @@ function buildLoadOrder({ projectRoot, stage, changeId, taskId, pipeline, config
     }
   }
 
-  // 4. 当前 change 工件。DEV 只加载任务执行所需的最小上下文；其余阶段按 pipeline 截断。
+  // 4. 当前 change 工件。按阶段职责选择输入，不累积整条管线的历史。
   if (changeId && stage !== 'idle') {
     const changeDir = join(projectRoot, SPECS_DIR, changeId);
     if (stage === 'dev') {
@@ -272,6 +310,13 @@ function buildLoadOrder({ projectRoot, stage, changeId, taskId, pipeline, config
 
   // 5. 中断恢复上下文
   if (changeId && taskId && stage === 'dev') {
+    const execution = resolveArtifactPath(join(projectRoot, SPECS_DIR, changeId), 'execution');
+    if (execution && existsSync(execution.path)) {
+      items.push({
+        path: `${SPECS_DIR}/${changeId}/${execution.name}`, kind: 'artifact', required: false,
+        focus: [`## ${taskId}`, `### ${taskId} · attempt`],
+      });
+    }
     const progressPath = `${SPECS_DIR}/${changeId}/${taskId}-PROGRESS.md`;
     if (existsSync(join(projectRoot, progressPath))) {
       items.push({
@@ -291,6 +336,16 @@ function buildLoadOrder({ projectRoot, stage, changeId, taskId, pipeline, config
     }
   }
 
+  if (changeId && stage !== 'review') {
+    const specs = join(projectRoot, SPECS_DIR, changeId);
+    const tasksFile = resolveArtifactPath(specs, 'tasks');
+    const task = tasksFile ? parseTasks(tasksFile.path).find(t => t.id === taskId) : null;
+    for (const entry of researchContextEntries(specs, { taskId, files: [...(task?.readFiles ?? []), ...(task?.writeFiles ?? [])] })) {
+      const prior = items.find(item => item.path === entry.path);
+      if (prior) prior.focus = [...new Set([...(prior.focus ?? []), ...entry.focus])];
+      else items.push(entry);
+    }
+  }
   return items;
 }
 
@@ -349,34 +404,20 @@ function readChangeDescription(projectRoot, changeId) {
 }
 
 /**
- * 根据当前阶段和 pipeline,返回应该已存在的所有上游工件。
- *
- * light 的 PIPELINES 只有 ['fast']（ADR-006）：indexOf('fast') === 0，
- * 直接返回空数组 —— light 无 PROPOSAL / SPEC 等上游工件，意图来自 light.json。
+ * 当前阶段默认消费的必要工件。历史工件仅在追溯时读取；DEV 另有单任务分支。
+ * light/fast 意图来自 light.json，不加载 full 工件。
  */
 function getUpstreamArtifacts(stage, pipeline) {
-  const stageArtifact = {
-    change:       'proposal',
-    requirement:  'spec',
-    design:       'design',
-    task:         'tasks',
-    dev:          null, // dev 不产新主工件,SUMMARY 是 per-task
-    fast:         'execution',
-    test:         'test',
-    review:       'review',
-    integration:  null,
-  };
-
   const pipelineStages = PIPELINES[pipeline] || PIPELINES.full;
-  const idx = pipelineStages.indexOf(stage);
-  if (idx <= 0) return [];
-
-  const upstream = [];
-  for (let i = 0; i < idx; i++) {
-    const a = stageArtifact[pipelineStages[i]];
-    if (a) upstream.push(a);
-  }
-  return upstream;
+  if (!pipelineStages.includes(stage)) return [];
+  return {
+    requirement: ['proposal'],
+    design: ['spec'],
+    task: ['spec', 'design'],
+    test: ['spec', 'tasks'],
+    review: ['spec', 'design', 'tasks', 'test'],
+    integration: ['spec', 'design', 'test', 'review'],
+  }[stage] || [];
 }
 
 // === checklists ===

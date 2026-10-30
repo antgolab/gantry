@@ -23,6 +23,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { validateTaskRecord, MAX_TASK_REPAIRS } from './task-record.mjs';
 
 export const HEAL_SECTION_TITLE = '## Self-Heal Log';
 
@@ -108,9 +109,17 @@ export function countRecentFailures(log, taskId) {
  * @returns {{stop: boolean, count: number, limit: number}}
  * @throws {Error} limit 非正整数
  */
-export function shouldStopHealing(log, taskId, limit = 3) {
+export function shouldStopHealing(log, taskId, limit = 3, record = null) {
   if (!Number.isInteger(limit) || limit <= 0) {
     throw new Error('[self-heal] invalid limit');
+  }
+  if (record !== null && record !== undefined) {
+    validateTaskRecord(record, record.changeId, taskId);
+    // A reservation already paid for repair three must be allowed to return
+    // and verify. Diagnostic log entries are never another repair budget.
+    const count = record.repairsUsed;
+    const failedReturn = record.attempt?.lifecycle === 'returned' && Boolean(record.failure) && !record.receipt;
+    return { stop: count >= MAX_TASK_REPAIRS && failedReturn, count, limit: MAX_TASK_REPAIRS };
   }
   const count = countRecentFailures(log, taskId);
   return { stop: count >= limit, count, limit };

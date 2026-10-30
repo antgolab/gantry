@@ -5,6 +5,7 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { PLANNING_DIR, SPECS_DIR } from './paths.mjs';
 import { getAgentForStage } from './agents.mjs';
 
@@ -27,6 +28,7 @@ export function defaultFence() {
     lastStageResult: null,
     currentWave: null,
     previousWave: null,
+    approvals: {},
   };
 }
 
@@ -172,7 +174,10 @@ export function writeState(projectRoot, state) {
     mkdirSync(planningDir, { recursive: true });
   }
 
-  const content = renderStateMd(state);
+  const previousPath = join(planningDir, STATE_FILE);
+  const previous = existsSync(previousPath) ? parseStateMd(readFileSync(previousPath, 'utf8')) : null;
+  const fence = previous && previous.activeChange !== state.activeChange ? defaultFence() : readFence(projectRoot);
+  const content = renderStateMd(state) + `\n${FENCE_BEGIN}\n\`\`\`json\n${JSON.stringify(fence, null, 2)}\n\`\`\`\n${FENCE_END}\n`;
   const statePath = join(planningDir, STATE_FILE);
   const tempPath = `${statePath}.tmp-${process.pid}`;
   writeFileSync(tempPath, content, 'utf-8');
@@ -216,7 +221,7 @@ export function transitionStage(projectRoot, fromStage, toStage) {
       );
     }
   }
-  return updateState(projectRoot, {
+  const updated = updateState(projectRoot, {
     currentStage: toStage,
     activeAgent: getAgentForStage(toStage),
     currentWave: null,
@@ -224,6 +229,11 @@ export function transitionStage(projectRoot, fromStage, toStage) {
     retries: 0,
     pauseReason: null,
   });
+  if (fromStage !== toStage) {
+    const fence = readFence(projectRoot);
+    writeFence(projectRoot, { ...fence, nextStep: null, lastStageResult: null, currentWave: null, previousWave: null });
+  }
+  return updated;
 }
 
 // --- fence 读写(机器可读区,供 loop-next / driver 消费)---
@@ -403,4 +413,44 @@ function renderStateMd(state) {
 ---
 _最后更新: ${now}_
 `;
+}
+
+// Approval is a receipt for the reviewed bytes, never a permanent stage flag.
+const APPROVAL_FILES = Object.freeze({
+  change: ['PROPOSAL.md'],
+  design: ['DESIGN.md', 'UI-DESIGN.md'],
+  integration: ['UAT.md', 'JOURNEY-VERIFY.md', 'TEST.md', 'REVIEW.md', 'DESIGN.md', 'SPEC.md'],
+});
+export function approvalDigest(root, stage, changeId = readState(root).activeChange) {
+  if (!changeId || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(changeId) || !APPROVAL_FILES[stage]) {
+    throw new Error('Invalid approval identity');
+  }
+  if (!existsSync(join(root, SPECS_DIR, changeId, APPROVAL_FILES[stage][0]))) {
+    throw new Error(`Missing approval artifact for ${stage}`);
+  }
+  const hash = createHash('sha256').update(JSON.stringify({ stage, changeId }));
+  let count = 0;
+  for (const name of APPROVAL_FILES[stage]) {
+    const path = join(root, SPECS_DIR, changeId, name);
+    const content = existsSync(path) ? readFileSync(path) : null;
+    hash.update(name).update('\0').update(content ?? '<missing>').update('\0');
+    if (content?.length) count++;
+  }
+  if (!count) throw new Error(`No approval artifact for ${stage}`);
+  return hash.digest('hex');
+}
+export function isStageApproved(root, stage, changeId = readState(root).activeChange) {
+  try {
+    return readFence(root).approvals?.[stage]?.digest === approvalDigest(root, stage, changeId)
+      && readFence(root).approvals?.[stage]?.changeId === changeId;
+  } catch { return false; }
+}
+export function approveStage(root, stage, changeId = readState(root).activeChange) {
+  const state = readState(root);
+  if (state.currentStage !== stage || state.activeChange !== changeId) throw new Error('Approval stage/change mismatch');
+  const digest = approvalDigest(root, stage, changeId);
+  const fence = readFence(root);
+  const approval = { digest, changeId, at: new Date().toISOString() };
+  writeFence(root, { ...fence, approvals: { ...fence.approvals, [stage]: approval } });
+  return approval;
 }

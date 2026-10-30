@@ -51,11 +51,12 @@ function makeSpecsDir({
   return { root, specsDir };
 }
 
-test('AC-7 · SPEC AC-1..3 全覆盖 → passed:true', () => {
+test('AC-7 · SPEC AC-1..3 声明全覆盖但未执行 → blocked', () => {
   const { root, specsDir } = makeSpecsDir();
   try {
     const r = checkGate('integration', specsDir, { pipeline: 'full' });
-    assert.equal(r.passed, true, `reason=${r.reason}`);
+    assert.equal(r.passed, false);
+    assert.match(r.reason, /ac-evidence/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

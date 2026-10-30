@@ -5,39 +5,21 @@ agent: executor
 stage: dev
 ---
 
-# /gantry:exec（内部化 · 2026-09-21）
+# /gantry:exec（内部机制）
 
-> **状态**:此 skill 已从公开入口下沉为内部机制。日常场景下由 `/gantry-next` 或 `/gantry-auto` 到 dev 阶段自动触发,用户无需直接敲。
->
-> 保留源文件是因为 dev 阶段的执行协议仍需通过此 skill 加载 Executor agent + pack driven 协议;老归档 change 与内部 phase 也可能引用此路径。renderer 不再产出 `.claude/skills/gantry-exec/`。
+由 `/gantry-next` 或 `/gantry-auto` 加载，执行已预约的单个任务的一次候选编码。共享工作区逐 task 顺序执行，wave 不产生并行写或额外修复预算。
 
-# /gantry:exec
+## 控制器协议
 
-执行 `TASKS.md` 中的单个任务。同 wave 的多个 task 由编排器并发 fan-out，每个 task 一个 executor（见 `4-dev.md`「波次编排」）。
+1. 宿主运行 `gantry dispatch --json` 预约一个 ready task，读取返回的 contextPack；不再调用 context 重建。
+2. 为该次预约创建 fresh executor subagent，交付单任务 pack；把 pack JSON 冻结为当前 attempt 的输入；当前候选返回前不切换共享 pack。按 loadOrder 加载 agent/phase 等约束，checklists.trigger=true 必须执行。
+3. worker 以 write_files 为计划范围，额外文件列出路径但不阻断；实现前消费失败诊断和 lessons，按 RED→GREEN→REFACTOR，报告实际 verify 和自查。语法/runner 错误不算有效 RED，纯文档等例外写明理由。
+4. worker 交还候选，不自行 commit，不执行 `gantry done/dispatch/advance`，不改 TASKS/EXECUTION、验收 contract 或控制 JSON。pack 的 `next.onSuccess` 由宿主执行。
+5. 宿主运行 `gantry done <id> --json`，独立验收后才完成任务。业务失败经同一内核预约修复，初次 + 最新 `ralph.maxRepairs` 次修复（默认3），先扣额度，失败接力使用 fresh context；禁止主上下文接管清零或整体回退 wave。
+6. 中断先重验候选；记录缺失、损坏或旧锁归属不明时保留现场，不静默建立“原始基线”。全部 done 后仅由宿主调用 advance，完成组合检查、安全统一提交并离开 DEV。
 
-## 用法
+执行完整规则见 `phases/4-dev.md` 的「单任务编排」和「单任务执行」。light/fast 沿用 `phases/F-fast.md`。
 
-- `/gantry:exec` — 执行下一个待处理任务
-- `/gantry:exec T03` — 执行指定任务
-- `/gantry:exec --wave` — 由当前会话充当编排器，按 `4-dev.md`「波次编排」并发 fan-out 当前 wave 的 pending tasks
+失败处理复用 当前工具的 `gantry-next` 入口「门禁修复循环」：先读 gateFeedback/retryHistory/task record，测试删除、flaky、runner 和预检问题先调查修复，契约漂移恢复原验收。候选进程内持续推理和本地验证，外层修复预约和最终报错由宿主管理，不因单次检查返回 blocked 就自行结束整个流程，也不在 worker 内再开外层重试。
 
-## 执行协议（pack-driven · 推荐）
-
-1. 每个 task 开始前跑 `gantry context dev --task <id>`；即使同属一个 wave 也必须刷新，不得沿用上一 task 的 pack。并发 fan-out 时由编排器串行生成（加 `--json`）并写进各 executor 的 prompt，executor 只认 prompt 里的 pack
-2. 读 pack（单独执行时为 `.gantry/planning/context-pack.json`）,严格按其指示办事:
-   - **loadOrder**: 顺序加载列出的文件(phase prompt / 制品 / context-doc / LESSONS)
-   - **checklists**: `trigger=true` 必须执行,`trigger=false` 必须跳过(reason 字段说明原因)
-   - **lessons**: 实现前 grep 命中条目,确认本次方案与之差异
-   - **next.onSuccess**: 任务完成后必须执行(DEV worker 默认为 `gantry done <task-id>`，不得自行推进阶段)
-3. 单独执行时，完成后跑 `gantry done <task-id>` 标记 task done + 更新 `EXECUTION.md`；并发 fan-out 的 executor 不跑 `gantry done`、不写 `TASKS.md` / `EXECUTION.md`，执行记录与微复盘写进返回报告，由编排器串行落盘
-4. 单独调用 `/gantry-exec` 时，全部 task done 后由当前编排器跑 `gantry advance`；由 `/gantry-auto` 创建的 worker 必须停止并把控制权交还 auto orchestrator
-
-## Agent 指令
-
-你是 **Executor（执行者）** 角色。严格遵守:
-- 只在 task.write_files 范围内写代码
-- TDD: 先写测试 → 实现 → 通过
-- 提交前 diff 边界 verify(R6.5)
-- 不自行 commit(R4.1:DEV 末由编排器统一提交)
-- 不读 pack 不动手:pack 是 kernel 给的施工单,不是建议
-- task 失败立即停止并在返回报告里保留证据，不跳过失败继续
+唯一例外：验收字段被误改时，只允许将当前任务的 verify/done/checks/preflight 精确恢复为传入的已保存 contract 原值；不修改 contract 控制记录、TASKS 完成状态或其他任务，不重新定义验收。

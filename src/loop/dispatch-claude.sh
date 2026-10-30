@@ -1,79 +1,61 @@
 #!/usr/bin/env bash
-# dispatch-claude.sh — 把当前阶段派发给 headless `claude -p`
-#
-# 用法: dispatch-claude.sh <phase-short>
-#   phase-short ∈ change|requirement|design|task|dev|test|review|integration
-#
-# 策略(对齐 pdlc adapters/codex-loop-run.sh):
-#   - 一次调用 claude 一次,让它读 phase 文件并产出当前阶段产物
-#   - --dangerously-skip-permissions 是 claude 唯一能吃掉全部权限询问的 flag
-#   - 状态机是唯一真源:退回主循环后由 `gantry advance` 判护栏,不信 claude stdout
-#   - prompt 加硬约束让 claude 停止复述协议/推理过程(2026-10-10)
-#   - 重试轮次(2026-10-12):driver 设 GANTRY_LOOP_RETRY_CONTEXT 时把失败上下文
-#     拼进 prompt,让 claude 据诊断重新决策,而非重复上一轮做法
-#
-# 退出码: 0=完成  非零=派发失败(主循环退避重试,超限才 fail-stop)
-
+# Single invocation adapter. The Node supervisor owns retries and verification.
 set -euo pipefail
-
-PHASE="${1:?用法: $0 <phase-short>}"
+PHASE="${1:?用法: $0 <phase> [task-id] [--pack path]}"
+shift
+TASK_ID="${GANTRY_RALPH_TASK_ID:-}"
+PACK_FILE=""
+while (($#)); do
+  case "$1" in
+    --pack) [[ $# -ge 2 ]] || { echo '--pack 缺少路径' >&2; exit 64; }; PACK_FILE="$2"; shift 2 ;;
+    -*) echo "未知参数: $1" >&2; exit 64 ;;
+    *) [[ -z "${TASK_ID}" || "${TASK_ID}" == "$1" ]] || { echo 'task-id 不一致' >&2; exit 64; }; TASK_ID="$1"; shift ;;
+  esac
+done
 PROJECT_ROOT="${PROJECT_ROOT:-$(pwd)}"
-
-# 重试轮次:driver 在每次失败后写 last-failure.txt 并导出该路径。
-# 非空即表示这是重试,必须带诊断重新决策(R2.5:禁盲重试)。
-RETRY_NOTE=""
-if [[ -n "${GANTRY_LOOP_RETRY_CONTEXT:-}" && -s "${GANTRY_LOOP_RETRY_CONTEXT}" ]]; then
-  RETRY_NOTE="
-
-⚠ 这是重试轮次(上一轮派发或门禁失败)。失败上下文如下:
-
---- 失败上下文开始 ---
-$(cat "$GANTRY_LOOP_RETRY_CONTEXT")
---- 失败上下文结束 ---
-
-要求:
-- 先诊断根因,再产出修正后的产物;禁止重复上一轮的做法(盲重试)
-- 若判断该失败无法自主修复,stdout 输出 1 行 \`error: <简短原因>\` 后退出非零"
-fi
-
-case "$PHASE" in
-  change)       PHASE_FILE=".gantry/core/phases/0-change.md" ;;
-  requirement)  PHASE_FILE=".gantry/core/phases/1-requirement.md" ;;
-  design)       PHASE_FILE=".gantry/core/phases/2-design.md" ;;
-  task)         PHASE_FILE=".gantry/core/phases/3-task.md" ;;
-  dev)          PHASE_FILE=".gantry/core/phases/4-dev.md" ;;
-  test)         PHASE_FILE=".gantry/core/phases/5-test.md" ;;
-  review)       PHASE_FILE=".gantry/core/phases/6-review.md" ;;
-  integration)  PHASE_FILE=".gantry/core/phases/7-integration.md" ;;
-  *) echo "[dispatch-claude] 未知 phase: $PHASE" >&2; exit 64 ;;
+case "${PHASE}" in
+  change) FILE=0-change.md ;;
+  requirement) FILE=1-requirement.md ;;
+  design) FILE=2-design.md ;;
+  task) FILE=3-task.md ;;
+  dev) FILE=4-dev.md ;;
+  test) FILE=5-test.md ;;
+  review) FILE=6-review.md ;;
+  integration) FILE=7-integration.md ;;
+  fast) FILE=F-fast.md ;;
+  *) echo "未知 phase: ${PHASE}" >&2; exit 64 ;;
 esac
-
-[[ -f "$PROJECT_ROOT/$PHASE_FILE" ]] || {
-  echo "[dispatch-claude] phase 文件缺失: $PHASE_FILE" >&2
-  exit 64
-}
-
-PROMPT="你正在无人值守 loop 中执行 gantry pipeline 的 [$PHASE] 阶段。
-
-严格按下方 phase 协议产出本阶段产物到 .gantry/specs/<change-id>/,不询问、不停顿、不等待人工确认。
-
-输出纪律(硬约束):
-- 不复述 phase 协议内容
-- 不输出中间推理/思考过程
-- 不输出 TODO 列表、不汇报进度、不解释动机
-- 产物写入文件后,stdout 只输出 1 行: \`written: <relative/paths/comma/separated>\`
-- 异常或 blocked 时输出 1 行: \`error: <简短原因>\` 后退出非零
-
-- 上下文包: .gantry/planning/context-pack.json
-- 状态机: .gantry/planning/STATE.md
-- Phase 协议(下方全文,即 $PHASE_FILE):
-
----
-$(cat "$PROJECT_ROOT/$PHASE_FILE")
----
-
-产物写完即结束,不要主动跑 \`gantry advance\`——外层 loop 会跑门禁。${RETRY_NOTE}"
-
+PHASE_FILE="$PROJECT_ROOT/.gantry/core/phases/$FILE"
+[[ -f "$PHASE_FILE" ]] || { echo "phase 文件缺失: $PHASE_FILE" >&2; exit 64; }
+PACK_FILE="${PACK_FILE:-$PROJECT_ROOT/.gantry/planning/context-pack.json}"
+[[ -f "${PACK_FILE}" ]] || { echo "context-pack 缺失" >&2; exit 64; }
+if [[ "${PHASE}" == dev && -z "${TASK_ID}" ]]; then
+  echo 'DEV 必须指定单个 task-id' >&2; exit 64
+fi
+# Mechanical identity check precedes the client. The prompt is not the guard.
+node - "${PACK_FILE}" "${PHASE}" "${TASK_ID}" ".gantry/core/phases/${FILE}" <<'NODE'
+const fs = require('node:fs');
+const [file, phase, task, phasePath] = process.argv.slice(2);
+try {
+  const pack = JSON.parse(fs.readFileSync(file, 'utf8'));
+  if (pack.stage !== phase || (pack.taskId ?? '') !== task ||
+      (process.env.GANTRY_RALPH_ATTEMPT_ID && pack.attemptId !== process.env.GANTRY_RALPH_ATTEMPT_ID)) {
+    throw new Error('context-pack identity mismatch');
+  }
+  if (!pack.loadOrder?.some(entry => entry.kind === 'phase-prompt' && entry.path === phasePath)) {
+    throw new Error('context-pack phase-prompt mismatch');
+  }
+} catch (error) { console.error(error.message); process.exit(64); }
+NODE
+PROMPT="执行 Gantry 当前阶段 ${PHASE}；当前 task=${TASK_ID}。
+先读取 ${PACK_FILE}，按 loadOrder 加载约束；此文件是本次尝试的冻结输入。
+必须核对 pack.stage=${PHASE}、pack.taskId=${TASK_ID}（非DEV应为空）与 STATE 的 change/stage；pack.attemptId须与环境GANTRY_RALPH_ATTEMPT_ID一致（若有）。
+若 pack.gateFeedback 或 retryHistory 含失败，先读取具体诊断，分析根因、排除已失败方案，修复后返回候选，交外层重新验收；不要把可修复门禁直接抛给用户，不得通过删测试/弱化验收让门禁消失。
+DEV只执行此task的一次候选编码；读取其 execution/<task>.json 与 PROGRESS 的失败诊断，采用有证据差异的修复方案。遵守 read_files/write_files；必要时写当前task的PROGRESS。
+若当前验收与保存的contract不一致，只能恢复原验收，不得降低标准。
+禁止更改TASKS状态、验收contract、execution控制JSON、STATE、锁；禁止调用gantry done/dispatch/advance/approve/archive；禁止commit；禁止启动逃逸进程组的后台写者。
+阶段工件或候选代码完成且本地验证通过后返回；外层控制器仍独立运行验收并决定完成。验证失败继续基于新证据调查和修复，禁止无差异重跑同一失败命令；确实无法继续时给出已调查路径、已排除方案与具体外部阻塞。遇到人工关卡或需求歧义记录阻塞，不能自行批准。
+不要输出思考过程；输出实际改动、验证结果与阻塞事实。阶段协议仅通过冻结 pack 的 loadOrder 加载。"
 exec claude -p "$PROMPT" \
   --dangerously-skip-permissions \
   --output-format text

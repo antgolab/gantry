@@ -513,6 +513,7 @@
         <a href="#architecture">架构</a>
         <a href="#mechanisms">机制</a>
         <a href="#quickstart">快速开始</a>
+        <a href="loop.md">文档</a>
         <a href="#roadmap">路线图</a>
         <a href="https://github.com/antgolab/gantry" class="nav-cta">GitHub →</a>
       </div>
@@ -525,9 +526,9 @@
   <div class="hero-glow"></div>
   <div class="container">
     <div class="hero-badge">
-      <span>v1.2</span>
+      <span>v1.4</span>
       <span style="color:var(--text-dim)">·</span>
-      <span>工程操作系统 · 无人值守 loop</span>
+      <span>工程操作系统 · 无人值守 loop + light 快车道</span>
     </div>
     <h1>
       AI 协作时代的<br />
@@ -539,6 +540,7 @@
     </p>
     <div class="hero-actions">
       <a href="#quickstart" class="btn btn-primary">快速开始</a>
+      <a href="loop.md" class="btn btn-outline">Loop 统一文档</a>
     </div>
 
     <!-- Pipeline -->
@@ -580,8 +582,8 @@
         </div>
         <div class="pipeline-arrow">→</div>
         <div class="pipeline-node">
-          <div class="box">ARCHIVE</div>
-          <div class="label">知识沉淀归档</div>
+          <div class="box">INTEGRATION</div>
+          <div class="label">UAT · LESSONS · 归档</div>
         </div>
       </div>
     </div>
@@ -638,7 +640,7 @@
       <div class="section-tag">系统架构</div>
       <h2 class="section-title">制品驱动的状态机</h2>
       <p class="section-desc">
-        每次变更被拆解为 9 个有序阶段，每阶段产出一个 <code style="color:var(--cyan);background:var(--cyan-dim);padding:2px 6px;border-radius:4px;">.md</code> 制品，下游阶段以上游制品为唯一输入。状态由 CLI 维护，与 AI 工具无关。
+        每次变更被拆解为 8 个有序阶段，每阶段产出一个 <code style="color:var(--cyan);background:var(--cyan-dim);padding:2px 6px;border-radius:4px;">.md</code> 制品，下游阶段以上游制品为唯一输入。状态由 CLI 维护，与 AI 工具无关。低风险小改可走 light 快车道：单阶段 <code style="color:var(--cyan);background:var(--cyan-dim);padding:2px 6px;border-radius:4px;">fast</code> 闭环、无人工关卡、出口门自动升档。
       </p>
     </div>
     <div class="arch-box" data-reveal>
@@ -646,19 +648,20 @@
         <div class="arch-layer l1">
           <div class="layer-title">IDE 斜杠命令层</div>
           <div class="layer-items">
-            <div class="layer-item">/gantry:change</div>
-            <div class="layer-item">/gantry:next</div>
-            <div class="layer-item">/gantry:exec</div>
-            <div class="layer-item">/gantry:archive</div>
+            <div class="layer-item">/gantry-change</div>
+            <div class="layer-item">/gantry-next</div>
+            <div class="layer-item">/gantry-auto</div>
+            <div class="layer-item">/gantry-archive</div>
           </div>
         </div>
         <div class="arch-arrow">↕</div>
         <div class="arch-layer l2">
           <div class="layer-title">CLI 状态机层</div>
           <div class="layer-items">
-            <div class="layer-item">gantry status</div>
+            <div class="layer-item">gantry install</div>
             <div class="layer-item">gantry change</div>
-            <div class="layer-item">gantry status</div>
+            <div class="layer-item">gantry loop</div>
+            <div class="layer-item">gantry advance</div>
             <div class="layer-item">gantry archive</div>
           </div>
         </div>
@@ -701,7 +704,7 @@
           <li><span class="key">上下文续接</span>下一个会话的唯一可信输入——无论三天后还是三个月后</li>
           <li><span class="key">决策追溯</span>每一次架构选择都有论证记录，新人入职即可理解历史</li>
           <li><span class="key">知识复用</span>LESSONS.md 沉淀跨任务失败经验，下次碰到同类问题时必检查</li>
-          <li><span class="key">范围边界</span>write_files 声明让 diff 超边界行为在提交前可被检测</li>
+          <li><span class="key">范围边界</span>write_files 提供计划边界，额外文件明确展示且不会自动混入提交</li>
           <li><span class="key">审计基础</span>完整工程档案支持合规审查、安全评估、代码溯源</li>
         </ul>
       </div>
@@ -736,8 +739,8 @@
         <div class="mech-cell why">上下文崩溃 · 50k+ token 后的慢性失效</div>
       </div>
       <div class="mech-row">
-        <div class="mech-cell label">文件声明约束</div>
-        <div class="mech-cell how">task 声明 write_files，提交前 diff 验边界</div>
+        <div class="mech-cell label">范围与提交保护</div>
+        <div class="mech-cell how">额外文件进入 scope 提示；自动提交只纳入本 change 增量</div>
         <div class="mech-cell why">范围侵蚀 · 越界修改</div>
       </div>
       <div class="mech-row">
@@ -854,22 +857,35 @@
         <h3>三条命令跑完一次变更</h3>
         <div class="code-block">
           <span class="comment"># 1. 开变更(生成 PROPOSAL / SPEC / DESIGN…骨架)</span><br />
-          /gantry:change <span class="str">"给订单列表加导出功能"</span><br />
+          /gantry-change <span class="str">"给订单列表加导出功能"</span><br />
           <br />
           <span class="comment"># 2. 按阶段推进,门禁自动挡</span><br />
-          /gantry:next   <span class="comment"># 反复调,推进到 dev</span><br />
-          /gantry:exec   <span class="comment"># 逐 task 实现 + verify</span><br />
+          /gantry-next   <span class="comment"># 反复调,推进到 dev</span><br />
+          <span class="comment"># dev 阶段任务自动执行,无需手动敲 exec</span><br />
           <br />
           <span class="comment"># 3. 收尾归档 · LESSONS 沉淀</span><br />
-          /gantry:archive
+          /gantry-archive
         </div>
       </div>
       <div class="qs-card">
-        <div class="step">Step 04 · 中途改需求</div>
+        <div class="step">Step 04 · light 快车道</div>
+        <h3>低风险小改，一条命令进快车道</h3>
+        <div class="code-block">
+          <span class="comment"># 文档 / 配置 / 文案 / 局部 bug · 无人工关卡</span><br />
+          <span class="cmd">gantry</span> change <span class="flag">--tier</span> light <span class="flag">--scope</span> src/x.mjs <span class="str">"改文案"</span><br />
+          <span class="cmd">gantry</span> advance<br />
+          <br />
+          <span class="comment"># 出口门自动 verify + diff 守卫</span><br />
+          <span class="comment"># 命中越界 / 红线 / 弱测试 → 自动升 full@change</span><br />
+          <span class="comment"># (可选)Jev 语义预检:config 开 jev.enabled + TYPESAFE_API_KEY</span>
+        </div>
+      </div>
+      <div class="qs-card">
+        <div class="step">Step 05 · 中途改需求</div>
         <h3>不用回炉，一条 adjust 就闭环</h3>
         <div class="code-block">
           <span class="comment"># dev / test / review 途中发现新事实</span><br />
-          /gantry:adjust <span class="str">"导出还要支持 xlsx 格式"</span><br />
+          /gantry-adjust <span class="str">"导出还要支持 xlsx 格式"</span><br />
           <br />
           <span class="comment"># 自动追加到 PATCH.md，标记受影响阶段:</span><br />
           <span class="comment"># ☐ SPEC.md   ☐ DESIGN.md</span><br />
@@ -880,7 +896,7 @@
         </div>
       </div>
       <div class="qs-card">
-        <div class="step">Step 05 · 全自动</div>
+        <div class="step">Step 06 · 全自动</div>
         <h3>一句话，pipeline 跑到底</h3>
         <div class="code-block">
           <span class="comment"># headless AI 无人值守，收敛到 done 或硬门禁</span><br />
@@ -893,7 +909,7 @@
         </div>
       </div>
       <div class="qs-card">
-        <div class="step">Step 06（可选）· 老项目</div>
+        <div class="step">Step 07（可选）· 老项目</div>
         <h3>先扫既有代码，再走上面流程</h3>
         <div class="code-block">
           <span class="comment"># 仅首次，生成 CONTEXT.md 让 DESIGN 对齐既有架构</span><br />
@@ -921,9 +937,9 @@
   <div class="container">
     <div data-reveal>
       <div class="section-tag">斜杠命令速查</div>
-      <h2 class="section-title">16 条 skill<br />5 类使用场景</h2>
+      <h2 class="section-title">12 条公开 skill<br />5 类使用场景</h2>
       <p class="section-desc">
-        每条 skill 是一个独立能力单元。核心 4 步覆盖 90% 场景,其余按需触发。所有触发词在 IDE 里直接补全,不用背。
+        每条 skill 是一个独立能力单元。核心 3 步覆盖 90% 场景,其余按需触发。<code style="color:var(--cyan);background:var(--surface);padding:1px 6px;border-radius:4px;">exec / fast / knowledge</code> 已内部化,由 CLI 或 <code style="color:var(--cyan);background:var(--surface);padding:1px 6px;border-radius:4px;">next / auto</code> 自动触发,不再作为用户命令。
       </p>
     </div>
 
@@ -932,14 +948,13 @@
       <div style="border:1px solid var(--border);border-radius:var(--r-lg);background:var(--surface);overflow:hidden;">
         <div style="padding:16px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;background:var(--cyan-dim);">
           <span style="font-family:var(--mono);font-size:12px;color:var(--cyan);letter-spacing:1px;font-weight:600;">CORE · 常规循环</span>
-          <span style="font-size:12.5px;color:var(--text-dim);">4 条命令跑完一次变更</span>
+          <span style="font-size:12.5px;color:var(--text-dim);">3 条命令跑完一次变更</span>
         </div>
         <table style="width:100%;border-collapse:collapse;font-size:13.5px;">
           <tbody>
-            <tr style="border-bottom:1px solid var(--border);"><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);width:42%;"><code>/gantry:change <span style="color:var(--text-dim);">"&lt;描述&gt;"</span></code></td><td style="padding:12px 24px;color:var(--text-dim);">开变更 · 生成 PROPOSAL 骨架</td></tr>
-            <tr style="border-bottom:1px solid var(--border);"><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);"><code>/gantry:next</code></td><td style="padding:12px 24px;color:var(--text-dim);">推进到下一阶段(反复调直到 dev)</td></tr>
-            <tr style="border-bottom:1px solid var(--border);"><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);"><code>/gantry:exec <span style="color:var(--text-dim);">[T03 | --wave]</span></code></td><td style="padding:12px 24px;color:var(--text-dim);">执行 dev task · 支持 wave 并行</td></tr>
-            <tr><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);"><code>/gantry:archive <span style="color:var(--text-dim);">[--force]</span></code></td><td style="padding:12px 24px;color:var(--text-dim);">收尾归档 · LESSONS 沉淀</td></tr>
+            <tr style="border-bottom:1px solid var(--border);"><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);width:42%;"><code>/gantry-change <span style="color:var(--text-dim);">"&lt;描述&gt;"</span></code></td><td style="padding:12px 24px;color:var(--text-dim);">开变更 · 生成 PROPOSAL 骨架</td></tr>
+            <tr style="border-bottom:1px solid var(--border);"><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);"><code>/gantry-next</code></td><td style="padding:12px 24px;color:var(--text-dim);">推进到下一阶段(反复调直到 dev,dev 任务自动执行)</td></tr>
+            <tr><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);"><code>/gantry-archive <span style="color:var(--text-dim);">[--force]</span></code></td><td style="padding:12px 24px;color:var(--text-dim);">收尾归档 · LESSONS 沉淀</td></tr>
           </tbody>
         </table>
       </div>
@@ -952,8 +967,8 @@
         </div>
         <table style="width:100%;border-collapse:collapse;font-size:13.5px;">
           <tbody>
-            <tr style="border-bottom:1px solid var(--border);"><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);width:42%;"><code>/gantry:adjust <span style="color:var(--text-dim);">"&lt;发生了什么&gt;"</span></code></td><td style="padding:12px 24px;color:var(--text-dim);">追加 PATCH.md · 标记受影响阶段</td></tr>
-            <tr><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);"><code>/gantry:unarchive <span style="color:var(--text-dim);">&lt;change-id&gt; [--from …]</span></code></td><td style="padding:12px 24px;color:var(--text-dim);">从 _archive 恢复并重新激活</td></tr>
+            <tr style="border-bottom:1px solid var(--border);"><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);width:42%;"><code>/gantry-adjust <span style="color:var(--text-dim);">"&lt;发生了什么&gt;"</span></code></td><td style="padding:12px 24px;color:var(--text-dim);">追加 PATCH.md · 标记受影响阶段</td></tr>
+            <tr><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);"><code>/gantry-unarchive <span style="color:var(--text-dim);">&lt;change-id&gt; [--from …]</span></code></td><td style="padding:12px 24px;color:var(--text-dim);">从 _archive 恢复并重新激活</td></tr>
           </tbody>
         </table>
       </div>
@@ -966,8 +981,8 @@
         </div>
         <table style="width:100%;border-collapse:collapse;font-size:13.5px;">
           <tbody>
-            <tr style="border-bottom:1px solid var(--border);"><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);width:42%;"><code>/gantry:auto</code></td><td style="padding:12px 24px;color:var(--text-dim);">自主推进(默认 3 阶段)</td></tr>
-            <tr style="border-bottom:1px solid var(--border);"><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);"><code>/gantry:fast</code></td><td style="padding:12px 24px;color:var(--text-dim);">light pipeline · 小变更省流</td></tr>
+            <tr style="border-bottom:1px solid var(--border);"><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);width:42%;"><code>/gantry-auto</code></td><td style="padding:12px 24px;color:var(--text-dim);">自主推进(默认 3 阶段)</td></tr>
+            <tr style="border-bottom:1px solid var(--border);"><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);"><code>gantry change <span style="color:var(--text-dim);">--tier light --scope …</span></code></td><td style="padding:12px 24px;color:var(--text-dim);">light 快车道 · 低风险小改省流</td></tr>
             <tr><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);"><code>gantry loop <span style="color:var(--text-dim);">&lt;claude|codex&gt;</span> [--quiet]</code></td><td style="padding:12px 24px;color:var(--text-dim);">headless 无人值守 · 全流程收敛</td></tr>
           </tbody>
         </table>
@@ -995,12 +1010,11 @@
         </div>
         <table style="width:100%;border-collapse:collapse;font-size:13.5px;">
           <tbody>
-            <tr style="border-bottom:1px solid var(--border);"><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);width:42%;"><code>/gantry:init</code></td><td style="padding:12px 24px;color:var(--text-dim);">初始化 .gantry/planning/ 目录</td></tr>
-            <tr style="border-bottom:1px solid var(--border);"><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);"><code>/gantry:status</code></td><td style="padding:12px 24px;color:var(--text-dim);">当前 change / stage / task 状态</td></tr>
-            <tr style="border-bottom:1px solid var(--border);"><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);"><code>/gantry:resume</code></td><td style="padding:12px 24px;color:var(--text-dim);">新会话断点恢复</td></tr>
-            <tr style="border-bottom:1px solid var(--border);"><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);"><code>/gantry:health</code></td><td style="padding:12px 24px;color:var(--text-dim);">代码库健康检查</td></tr>
-            <tr style="border-bottom:1px solid var(--border);"><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);"><code>/gantry:review <span style="color:var(--text-dim);">[--cross-model | --requirement | --adversarial]</span></code></td><td style="padding:12px 24px;color:var(--text-dim);">双轮 / 三轮 / 需求门禁 / 对抗审查</td></tr>
-            <tr><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);"><code>/gantry:debug <span style="color:var(--text-dim);">[&lt;symptom&gt;]</span></code></td><td style="padding:12px 24px;color:var(--text-dim);">系统化四阶段调试</td></tr>
+            <tr style="border-bottom:1px solid var(--border);"><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);width:42%;"><code>/gantry-status</code></td><td style="padding:12px 24px;color:var(--text-dim);">当前 change / stage / task 状态</td></tr>
+            <tr style="border-bottom:1px solid var(--border);"><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);"><code>/gantry-resume</code></td><td style="padding:12px 24px;color:var(--text-dim);">新会话断点恢复</td></tr>
+            <tr style="border-bottom:1px solid var(--border);"><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);"><code>/gantry-health</code></td><td style="padding:12px 24px;color:var(--text-dim);">代码库健康检查</td></tr>
+            <tr style="border-bottom:1px solid var(--border);"><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);"><code>/gantry-review <span style="color:var(--text-dim);">[--cross-model | --requirement | --adversarial]</span></code></td><td style="padding:12px 24px;color:var(--text-dim);">双轮 / 三轮 / 需求门禁 / 对抗审查</td></tr>
+            <tr><td style="padding:12px 24px;font-family:var(--mono);color:var(--cyan);"><code>/gantry-debug <span style="color:var(--text-dim);">[&lt;symptom&gt;]</span></code></td><td style="padding:12px 24px;color:var(--text-dim);">系统化四阶段调试</td></tr>
           </tbody>
         </table>
       </div>
@@ -1018,7 +1032,7 @@
 <section class="section" id="loop">
   <div class="container">
     <div data-reveal style="text-align:center;">
-      <div class="section-tag" style="color:var(--cyan);">v1.2 · 无人值守</div>
+      <div class="section-tag" style="color:var(--cyan);">v1.4 · 无人值守</div>
       <h2 class="section-title" style="font-size:48px;line-height:1.1;">
         <span class="accent">一条命令。</span><br />
         走完全流程。
@@ -1048,14 +1062,15 @@
       <div style="text-align:center;padding:32px 20px;border:1px solid var(--border);border-radius:var(--r-lg);background:var(--surface);">
         <div style="font-size:44px;font-weight:700;color:var(--text-bright);font-family:var(--mono);line-height:1;margin-bottom:12px;">3</div>
         <div style="font-size:14.5px;color:var(--text-bright);font-weight:600;margin-bottom:6px;">硬门禁待人工</div>
-        <div style="font-size:12.5px;color:var(--text-dim);">change / design / integration</div>
+        <div style="font-size:12.5px;color:var(--text-dim);">change / design / integration（full 管线 · light 无门禁）</div>
       </div>
     </div>
 
     <div data-reveal style="max-width:640px;margin:32px auto 0;text-align:center;">
       <p style="color:var(--text-dim);font-size:13.5px;line-height:1.7;">
         状态机是唯一真源,不信 AI stdout。approve 后重跑同一条命令 <strong style="color:var(--text-bright)">幂等续跑</strong>。<br />
-        支持 <strong style="color:var(--text-bright)">claude</strong> / <strong style="color:var(--text-bright)">codex</strong> 双 headless client。
+        支持 <strong style="color:var(--text-bright)">claude</strong> / <strong style="color:var(--text-bright)">codex</strong> 双 headless client。<br />
+        <a href="loop.md">查看配置、任务验收、失败恢复、熔断与 AC 执行证据 →</a>
       </p>
     </div>
   </div>
@@ -1080,7 +1095,7 @@
           每次 UAT 提名 lessons,archive 时落库。DEV 阶段自动 grep,同类问题不再踩第二次。
         </p>
         <div class="code-block" style="font-size:12px;padding:12px 14px;">
-          /gantry:archive<br />
+          /gantry-archive<br />
           <span class="comment"># 交互式提名 lessons → LESSONS.md</span>
         </div>
       </div>
@@ -1091,7 +1106,7 @@
           术语表 + 已锁业务决策 + 既有架构约束。DESIGN 阶段必须对齐,防止 AI 无视既有模式重造抽象。
         </p>
         <div class="code-block" style="font-size:12px;padding:12px 14px;">
-          /gantry:context scan<br />
+          /gantry-context scan<br />
           <span class="comment"># 首次入场,扫既有代码</span>
         </div>
       </div>
@@ -1102,7 +1117,7 @@
           技术选型、POC、竞品对比、性能实验——不属于某个 change 的独立研究,单独归档。
         </p>
         <div class="code-block" style="font-size:12px;padding:12px 14px;">
-          /gantry:knowledge capture <br />
+          /gantry-context knowledge capture <br />
           &nbsp;&nbsp;<span class="str">"WebSocket vs SSE"</span>
         </div>
       </div>
@@ -1114,7 +1129,7 @@
         <div style="height:1px;flex:1;background:var(--border);"></div>
       </div>
       <p style="font-size:13.5px;color:var(--text-dim);line-height:1.75;margin:0;">
-        每个阶段的 <strong style="color:var(--text-bright)">context-pack.json</strong> 自动组装:agent-prompt · phase-prompt · 当前 change 制品 · 项目 CONTEXT · 相关 LESSONS。AI 打开会话就读到全套背景,<strong style="color:var(--text-bright)">不用你贴上下文、不用它猜历史决策</strong>。月度 <code style="color:var(--cyan);">/gantry:knowledge curate</code> 巡检知识库——状态迁移、去重合并、过期检测,保证长期不腐化。
+        每个阶段的 <strong style="color:var(--text-bright)">context-pack.json</strong> 自动组装:agent-prompt · phase-prompt · 当前 change 制品 · 项目 CONTEXT · 相关 LESSONS。AI 打开会话就读到全套背景,<strong style="color:var(--text-bright)">不用你贴上下文、不用它猜历史决策</strong>。月度 <code style="color:var(--cyan);">/gantry-context knowledge curate</code> 巡检知识库——状态迁移、去重合并、过期检测,保证长期不腐化。
       </p>
     </div>
   </div>
@@ -1134,7 +1149,7 @@
           <th>change 规模</th>
           <th>典型任务数</th>
           <th>完整模式</th>
-          <th>极简模式</th>
+          <th>light 模式</th>
         </tr>
       </thead>
       <tbody>
@@ -1177,17 +1192,22 @@
     </div>
     <div class="roadmap-grid" data-reveal>
       <div class="rm-card current">
-        <div class="rm-version">v1.2</div>
+        <div class="rm-version">v1.4</div>
         <div class="rm-when">当前版本</div>
-        <h3>稳固基础 + 无人值守</h3>
+        <h3>稳固基础 + 无人值守 + light 快车道</h3>
         <ul class="rm-features">
           <li class="done">8 阶段 pipeline + CLI 状态机</li>
           <li class="done">四工具 IDE skills 分发</li>
           <li class="done">Brownfield 安全护栏</li>
           <li class="done">LESSONS 知识库 + 月度维护</li>
           <li class="done">loop-next 白名单 + advance 内联 guard 熔断</li>
-          <li class="done">headless loop:claude / codex 双 client 派发 · 失败带诊断退避重试</li>
-          <li class="done">DEV self-heal 缓冲 + R2.5 上限熔断</li>
+          <li class="done">headless loop:claude / codex 双 client · fresh context + 有界修复</li>
+          <li class="done">DEV 失败分类与持久预算 · 诊断 → 修复 → 真实重验</li>
+          <li class="done">light 替代 micro · 无人工关卡快车道 + 出口门 diff 守卫</li>
+          <li class="done">AC 执行证据绑定源码与索引 · integration / archive fail-closed</li>
+          <li class="done">可选原型验证 + 确定性执行型行为评测</li>
+          <li class="done">/gantry-auto AI 自动决策记录通道（autonomous=true）</li>
+          <li class="done">light 入口 Jev 语义预检（可选 · 默认关闭）</li>
           <li>gantry doctor 自检命令</li>
           <li>测试覆盖率提升至 90%+</li>
         </ul>
@@ -1260,7 +1280,7 @@
       <div style="padding:24px 26px;border:1px solid var(--border);border-radius:var(--r-lg);background:var(--surface);">
         <div style="font-family:var(--mono);font-size:11px;color:var(--cyan);margin-bottom:8px;">P5</div>
         <div style="font-size:14.5px;font-weight:600;color:var(--text-bright);margin-bottom:8px;">失败是输入，不是终点</div>
-        <div style="font-size:13.5px;color:var(--text-dim);">UAT 失败自动产 fix-plan，回到 DEV 循环，最多 3 轮。</div>
+        <div style="font-size:13.5px;color:var(--text-dim);">可恢复失败进入诊断 → 修复 → 真实重验；预算持久化，耗尽后报告最后证据。</div>
       </div>
       <div style="padding:24px 26px;border:1px solid var(--border);border-radius:var(--r-lg);background:var(--surface);">
         <div style="font-family:var(--mono);font-size:11px;color:var(--cyan);margin-bottom:8px;">P6</div>
@@ -1288,7 +1308,7 @@
 <footer>
   <div class="container">
     <div class="footer-inner">
-      <div class="footer-logo">gantry · v1.2</div>
+      <div class="footer-logo">gantry · v1.4</div>
       <div class="footer-links">
         <a href="https://github.com/antgolab/gantry">GitHub</a>
       </div>

@@ -15,18 +15,16 @@ requiresApproval: true
 1. 读取 `.gantry/planning/STATE.md`，确认无活跃 change
 2. 接收用户描述（一句话需求）
 3. 先从业务主题提炼英文小写 kebab-case change-id（2~5 个词，剥离输入来源 / 操作指令），再运行 `gantry change --id <id> "<描述>"`。默认 full；light 是**另一条入口**，不在本 skill 的流程里——只有用户显式要求快速路径时，改用 `gantry change --tier light --scope <p,...> [--accept "<a;b>"] [--verify "<cmd>"] "<描述>"`，它会直接进 `fast` 闭环（不经本阶段）。
-4. 读取 `.gantry/planning/context-pack.json`，按 `loadOrder` 加载 `.gantry/core/phases/0-change.md`
-5. 执行 `.gantry/core/phases/0-change.md` 完整流程
-6. **反问澄清（强制前置门）**：把"为什么/给谁/解决什么/何时算完"问到清楚，每轮最多 3 个问题，等用户回答。按 `@gantry/reference/grilling-discipline.md` 执行——每问**带推荐答案 + 理由**、能查代码的**先查代码库**再确认、按依赖顺序深度优先。**只要还有未澄清的点就继续问，不准提前产出 PROPOSAL。**
-7. 产出 `.gantry/specs/<change-id>/PROPOSAL.md`。**`## 待澄清问题` 段必须为 `无`**——带未勾选项的 PROPOSAL 会被 `/gantry-next` 门禁阻断。
-8. 更新 STATE.md（stage=change, agent=planner）
-9. 停在人工确认关卡，等待用户审阅后继续
+4. 按下方 Context Pack 协议加载并执行当前阶段。
+5. **反问澄清（强制前置门）**：把"为什么/给谁/解决什么/何时算完"问到清楚，每轮最多 3 个问题，等用户回答。按 `@gantry/reference/grilling-discipline.md` 执行——每问**带推荐答案 + 理由**、能查代码的**先查代码库**再确认、按依赖顺序深度优先。**只要还有未澄清的点就继续问，不准提前产出 PROPOSAL。**
+6. 产出 `.gantry/specs/<change-id>/PROPOSAL.md`。**`## 待澄清问题` 段必须为 `无`**——带未勾选项的 PROPOSAL 会被 `/gantry-next` 门禁阻断。
+7. 停在人工确认关卡，等待用户审阅后继续；STATE 已由第 3 步 CLI 设置。
 
 如果执行前 `.gantry/planning/context-pack.json` 不存在，不要判定为初始化不完整；先执行第 3 步让 CLI 创建它。若 `.gantry/core/phases/0-change.md` 不存在，运行 `gantry install` 补齐本地阶段协议。
 
 ## Agent 指令
 
-你是 **Planner（规划者）** 角色。按 `.gantry/core/phases/0-change.md` 的完整流程执行：
+你是 **Planner（规划者）** 角色：
 - 二阶反问澄清——**反问是产出 PROPOSAL 之前不可跳过的门**
 - 把疑问写进 PROPOSAL 不等于澄清；澄清 = 问到用户给出答案、结论并入正文
 - 影响范围评估
