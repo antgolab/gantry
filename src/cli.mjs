@@ -21,10 +21,14 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import {
   readState, writeState, updateState, transitionStage,
-  readFence, writeFence, writeFenceBlockedReason,
+  readFence, writeFence, writeFenceBlockedReason, isStageApproved, approveStage,
 } from './lib/state.mjs';
 import { STAGES, getNextStage, checkGate, PHASE_FILES, countOpenQuestions, requiresApproval } from './lib/phases.mjs';
 import { computeNextStep, WHITELIST } from './lib/loop.mjs';
+import { prepareTask, verifyAndComplete, inspectTasks, checkpointTasks, revalidateCompletedTasks } from './lib/task-cycle.mjs';
+import { readTaskRecord, acquireWorkspaceLock, releaseWorkspaceLock } from './lib/task-record.mjs';
+import { captureManifest, checkTaskScope } from './lib/task-evidence.mjs';
+import { runLoop } from './loop/controller.mjs';
 import { checkLoopGuard } from './lib/loop-guard.mjs';
 import {
   appendHealAttempt,
@@ -57,6 +61,14 @@ import { shouldUseJev, runJevPrecheck, renderJevLine } from './lib/jev-precheck.
 import { buildManagedEntries } from './lib/install-helpers.mjs';
 import { extractProposalSummary, collectLessonsIds, appendChangelogLine } from './lib/archive-helpers.mjs';
 import { createInterface } from 'node:readline/promises';
+
+const commandAbort = new AbortController();
+for (const [name, code] of [['SIGINT', 130], ['SIGTERM', 143]]) {
+  if (['done', 'dispatch', 'advance', 'auto'].includes(process.argv[2])) process.on(name, () => { commandAbort.abort(); process.exitCode = code; });
+}
+function taskOptions() {
+  return { signal: commandAbort.signal, ownerNonce: process.env.GANTRY_RALPH_OWNER_NONCE || undefined };
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -568,7 +580,7 @@ function heal(args) {
 
   if (parsed.check) {
     const log = readHealLog(execPath);
-    const { stop, count, limit } = shouldStopHealing(log, parsed.taskId);
+    const { stop, count, limit } = shouldStopHealing(log, parsed.taskId, 3, readTaskRecord(projectRoot, state.activeChange, parsed.taskId));
     if (!stop) {
       process.stdout.write(`ok · attempts=${count}/${limit}\n`);
       process.exit(0);
@@ -714,20 +726,33 @@ function pipeline(args) {
  *   --skip → 不阻塞
  */
 async function advance(args) {
-  const projectRoot = process.cwd();
-  ensureInit(projectRoot);
-
-  // 命令折叠(2026-09-16):原 gantry loop-guard 内联到 advance 入口。
-  // 上下文 / 步数熔断时:exit 2 + 写 fence.blockedReason(非覆盖)。
-  preAdvanceLoopGuard(projectRoot);
-
-  // advance 是「机械推进」入口：推进一步即停。多阶段自主推进用 gantry auto。
-  const isSkip = args.includes('--skip');
-  const result = await nextOnce(projectRoot, { isSkip });
-  if (result.stop && result.exitCode) process.exit(result.exitCode);
-  if (result.reachedEnd) {
-    console.log(`  管线已到达 ${result.reachedEnd}`);
+  const root = process.cwd();
+  ensureInit(root);
+  preAdvanceLoopGuard(root);
+  const approvalIndex = args.indexOf('--approve');
+  const json = args.includes('--json');
+  const originalLog = console.log;
+  if (json) console.log = (...parts) => console.error(...parts);
+  let result;
+  let lock;
+  const priorNonce = process.env.GANTRY_RALPH_OWNER_NONCE;
+  try {
+    if (readState(root).currentStage === 'dev') {
+      lock = acquireWorkspaceLock(root, taskOptions());
+      process.env.GANTRY_RALPH_OWNER_NONCE = lock.ownerNonce;
+    }
+    result = await nextOnce(root, { isSkip: args.includes('--skip'), approvedStage: approvalIndex < 0 ? null : args[approvalIndex + 1] });
+  } catch (error) { result = { stop: true, exitCode: 2, reason: error.message }; }
+  finally {
+    console.log = originalLog;
+    if (lock) releaseWorkspaceLock(root, lock);
+    if (priorNonce === undefined) delete process.env.GANTRY_RALPH_OWNER_NONCE;
+    else process.env.GANTRY_RALPH_OWNER_NONCE = priorNonce;
   }
+  if (json) console.log(JSON.stringify(result));
+  else if (result.reason) console.error(result.reason);
+  if (result.stop && result.exitCode) process.exitCode = result.exitCode;
+  else if (json && result.pausedForApproval) process.exitCode = 2;
 }
 
 /**
@@ -781,120 +806,59 @@ async function auto(args) {
 
 /**
  * gantry dispatch
- *   DEV 阶段为 autonomous orchestrator 机械选择一个 canonical wave。
+ *   DEV 阶段预约一个依赖证据有效的 ready task。
  *   这里只更新状态与 context pack；子 Agent 的创建由宿主运行时负责。
  */
-function dispatch(args) {
-  const projectRoot = process.cwd();
-  ensureInit(projectRoot);
-
-  const state = readState(projectRoot);
+async function dispatch(args) {
+  const root = process.cwd();
+  ensureInit(root);
+  const state = readState(root);
   const json = args.includes('--json');
-  if (state.currentStage !== 'dev') {
-    console.error(`dispatch 只允许在 dev 阶段运行（当前: ${state.currentStage}）`);
-    process.exit(1);
-  }
-  if (!state.activeChange) {
-    console.error('当前无活跃 change');
-    process.exit(1);
-  }
-
-  const taskResolved = resolveArtifactPath(join(projectRoot, SPECS_DIR, state.activeChange), 'tasks');
-  if (!taskResolved?.path || !existsSync(taskResolved.path)) {
-    console.error(`${getPreferredArtifactName('tasks')} 不存在`);
-    process.exit(1);
-  }
-
-  const tasks = parseTasks(taskResolved.path);
-  let schedule;
+  let result;
   try {
-    // 用完整任务图计算 canonical waves，避免部分完成后 wave 编号漂移。
-    // wave 内由一个子 Agent 串行执行，因此保留已有 wave 分组。
-    schedule = scheduleWaves(tasks.map(task => ({ ...task, status: 'pending' })));
-  } catch (error) {
-    console.error(`任务无法调度: ${error.message}`);
-    process.exit(1);
-  }
-
-  const pendingIds = new Set(tasks.filter(task => task.status !== 'done').map(task => task.id));
-  const waveIndex = schedule.waves.findIndex(wave => wave.some(task => pendingIds.has(task.id)));
-
-  if (waveIndex === -1) {
-    updateState(projectRoot, {
-      autonomous: true,
-      currentWave: null,
-      currentTask: null,
-      retries: 0,
-      pauseReason: null,
-    });
-    writeContextPack(projectRoot, { stage: 'dev', taskId: null });
-    const result = { status: 'all_done' };
-    console.log(json ? JSON.stringify(result) : '✓ DEV 所有任务已完成');
-    return;
-  }
-
-  const waveId = waveIndex + 1;
-  const taskIds = schedule.waves[waveIndex]
-    .map(task => task.id)
-    .filter(taskId => pendingIds.has(taskId));
-  const sameWave = state.currentWave === waveId;
-  const retries = sameWave ? state.retries + 1 : 0;
-
-  if (retries > state.maxRetries) {
-    // 当前请求不再创建子 Agent，也不能计入已实际执行的 retry。
-    // 把剩余首个 task 装入 context pack，由主 Agent 在当前上下文接管。
-    const exhaustedRetries = state.maxRetries;
-    const firstTaskId = taskIds[0];
-    updateState(projectRoot, {
-      autonomous: true,
-      currentWave: waveId,
-      currentTask: firstTaskId,
-      activeAgent: 'executor',
-      retries: exhaustedRetries,
-      pauseReason: null,
-    });
-    writeContextPack(projectRoot, { stage: 'dev', taskId: firstTaskId });
-    const result = {
-      status: 'fallback_main',
-      waveId,
-      taskIds,
-      retries: exhaustedRetries,
-      maxRetries: state.maxRetries,
-    };
-    console.log(json
-      ? JSON.stringify(result)
-      : `↪ wave ${waveId} 重试已耗尽，降级由主 Agent 接管: ${taskIds.join(', ')}`);
-    return;
-  }
-
-  const firstTaskId = taskIds[0];
-  updateState(projectRoot, {
-    autonomous: true,
-    currentWave: waveId,
-    currentTask: firstTaskId,
-    activeAgent: 'executor',
-    retries,
-    pauseReason: null,
-  });
-  writeContextPack(projectRoot, { stage: 'dev', taskId: firstTaskId });
-
-  const result = { status: 'dispatched', waveId, taskIds };
-  console.log(json ? JSON.stringify(result) : `✓ 已调度 wave ${waveId}: ${taskIds.join(', ')}`);
+    if (state.currentStage !== 'dev' || !state.activeChange) throw new Error('dispatch 只允许在活跃 dev 阶段运行');
+    const refreshed = await revalidateCompletedTasks(root, taskOptions());
+    if (refreshed.kind !== 'completed') throw new Error(refreshed.reason || '已完成任务重验失败');
+    const inspection = inspectTasks(root);
+    if (inspection.invalidReceipts.length) {
+      result = { status: 'blocked', reason: '任务凭据缺失或过期，请先执行 done/checkpoint 重验', invalidReceipts: inspection.invalidReceipts };
+    } else if (inspection.allDone) result = { status: 'all_done' };
+    else if (!inspection.readyTask) result = { status: 'blocked', reason: '没有依赖已验证的 ready task' };
+    else {
+      const taskId = inspection.readyTask.id;
+      const prepared = await prepareTask(root, taskId, taskOptions());
+      if (prepared.kind !== 'prepared') result = { status: prepared.kind, ...prepared };
+      else {
+        updateState(root, { autonomous: true, currentTask: taskId, activeAgent: 'executor', retries: prepared.record.repairsUsed, pauseReason: null });
+        const pack = writeContextPack(root, { stage: 'dev', taskId });
+        result = { status: 'dispatched', taskId, taskIds: [taskId], attemptId: prepared.attempt.id, repairOrdinal: prepared.record.repairsUsed, contextPack: PACK_PATH };
+      }
+    }
+  } catch (error) { result = { status: 'blocked', reason: error.message }; }
+  console.log(json ? JSON.stringify(result) : `${result.status}: ${result.reason || result.taskId || ''}`);
+  if (!['dispatched', 'all_done'].includes(result.status)) process.exitCode = 2;
 }
 
 /**
  * 单步推进。返回 { stop, reachedEnd, exitCode }
  */
-async function nextOnce(projectRoot, { isSkip = false } = {}) {
+async function nextOnce(projectRoot, { isSkip = false, approvedStage = null, workspaceOwned = false } = {}) {
+  if (!workspaceOwned && readState(projectRoot).currentStage === 'dev') {
+    const lock = acquireWorkspaceLock(projectRoot, taskOptions());
+    const previous = process.env.GANTRY_RALPH_OWNER_NONCE;
+    process.env.GANTRY_RALPH_OWNER_NONCE = lock.ownerNonce;
+    try { return await nextOnce(projectRoot, { isSkip, approvedStage, workspaceOwned: true }); }
+    finally {
+      releaseWorkspaceLock(projectRoot, lock);
+      if (previous === undefined) delete process.env.GANTRY_RALPH_OWNER_NONCE;
+      else process.env.GANTRY_RALPH_OWNER_NONCE = previous;
+    }
+  }
   const state = readState(projectRoot);
 
   if (state.currentStage === 'idle') {
     console.log('当前无活跃变更。运行 gantry change "<描述>" 开始。');
     return { stop: true };
-  }
-  if (state.currentStage === 'integration') {
-    console.log('已在 integration 阶段。运行 gantry archive 完成变更。');
-    return { reachedEnd: 'integration' };
   }
 
   // light@fast 走独立的出口门（DESIGN D7/D8/D14；SPEC AC-6/7/8/11）：
@@ -911,8 +875,28 @@ async function nextOnce(projectRoot, { isSkip = false } = {}) {
     ...config,
     pipeline: state.pipeline || config.pipeline,
   };
+  if (approvedStage) {
+    if (approvedStage !== state.currentStage || !requiresApproval(approvedStage, specsDir)) {
+      return { stop: true, exitCode: 2, reason: '--approve 必须指定当前人工确认阶段' };
+    }
+    approveStage(projectRoot, approvedStage, state.activeChange);
+  }
+  if (requiresApproval(state.currentStage, specsDir) && !isStageApproved(projectRoot, state.currentStage, state.activeChange)) {
+    updateState(projectRoot, { pauseReason: `等待人工批准 ${state.currentStage}` });
+    if (state.currentStage === 'change') console.error('change still has unresolved question(s)，请先澄清并更新 PROPOSAL.md');
+    console.error(`请审阅当前工件后运行 gantry advance --approve ${state.currentStage}`);
+    return { stop: true, exitCode: 2, pausedForApproval: state.currentStage };
+  }
+  if (state.currentStage === 'dev') {
+    const checkpoint = await checkpointTasks(projectRoot, taskOptions());
+    if (checkpoint.kind !== 'completed') return { stop: true, exitCode: checkpoint.exitCode || 2, reason: checkpoint.reason, checkpoint };
+    const committed = await commitDevCheckpoint(projectRoot, state);
+    if (!committed.ok) return { stop: true, exitCode: 2, reason: committed.reason };
+  }
   const nextStage = getNextStage(state.currentStage, effectiveConfig);
   if (!nextStage) {
+    updateState(projectRoot, { pauseReason: null });
+    if (state.currentStage === 'integration') console.log('integration 已获批准。运行 gantry archive 完成变更。');
     return { reachedEnd: state.currentStage };
   }
 
@@ -990,6 +974,114 @@ async function nextOnce(projectRoot, { isSkip = false } = {}) {
   return { stop: false };
 }
 
+// Stage only the change delta from the earliest task baseline. User changes
+// observed at entry are never silently bundled in a DEV commit.
+async function commitDevCheckpoint(root, state) {
+  const git = args => {
+    const result = spawnSync('git', args, { cwd: root, encoding: 'utf8', timeout: 30000 });
+    if (result.error || result.status !== 0) throw new Error(result.error?.message || result.stderr || 'Git command failed');
+    return result.stdout.trim();
+  };
+  try {
+    const taskFile = resolveArtifactPath(join(root, SPECS_DIR, state.activeChange), 'tasks')?.path;
+    const tasks = parseTasks(taskFile);
+    const records = tasks.map(task => readTaskRecord(root, state.activeChange, task.id));
+    if (records.some(record => !record)) return { ok: false, reason: 'DEV 缺少任务前基线；旧任务需人工审阅迁移，不能自动提交' };
+    records.sort((a, b) => (a.attempt?.reservedAt || '').localeCompare(b.attempt?.reservedAt || ''));
+    const baseline = records[0].baseline;
+    const current = captureManifest(root);
+    const scope = checkTaskScope(baseline, current, tasks.flatMap(task => task.writeFiles));
+    const files = scope.changedFiles.filter(path => !path.startsWith('.gantry/'));
+    // Out-of-scope changes may belong to the user. Never stage them.
+    const allowed = new Set(files.filter(path => !scope.outOfScope.includes(path)));
+    const execution = `${SPECS_DIR}/${state.activeChange}/${getPreferredArtifactName('execution')}`;
+    const executionTracked = git(['ls-files', '--', execution]) === execution;
+    const executionChanged = !executionTracked || Boolean(git(['diff', 'HEAD', '--', execution]));
+    if (existsSync(join(root, execution)) && executionChanged) allowed.add(execution);
+    const before = new Map(baseline.entries.map(entry => [entry.path, entry]));
+    for (const path of allowed) {
+      const entry = before.get(path);
+      if (entry && (entry.indexHash === null || entry.content !== entry.indexContent || entry.mode !== entry.indexMode)) {
+        return { ok: false, reason: `用户与任务修改同一文件，无法安全自动提交: ${path}` };
+      }
+    }
+    const marker = join(root, PLANNING_DIR, 'ralph-checkpoint.json');
+    const head = git(['rev-parse', 'HEAD']);
+    const message = `feat(${state.activeChange}): 完成 DEV 任务与组合验证`;
+    let pending = existsSync(marker) ? JSON.parse(readFileSync(marker, 'utf8')) : null;
+    if (pending && pending.changeId !== state.activeChange) return { ok: false, reason: '存在其他 change 的待核对提交记录' };
+    const committedCandidateMismatch = () => {
+      const manual = '；保留预约、提交与索引。请人工核对 git show HEAD、git diff HEAD、git diff --cached 及 .gantry/planning/ralph-checkpoint.json，不会自动追加 DEV 提交';
+      const subject = git(['log', '-1', '--format=%s']);
+      const parent = git(['log', '-1', '--format=%P']);
+      const tree = git(['rev-parse', 'HEAD^{tree}']);
+      if (parent !== pending.head || subject !== pending.message || tree !== pending.tree) {
+        return 'Git 实际提交的 parent/tree 或消息与已验证候选不一致' + manual;
+      }
+      // Re-read after hooks too: a matching commit alone does not prove that
+      // the index and workspace still describe the verified candidate.
+      const committedScope = checkTaskScope(baseline, captureManifest(root), tasks.flatMap(task => task.writeFiles));
+      const reservedSources = pending.files.filter(path => path !== execution).sort();
+      const candidateSources = committedScope.changedFiles.filter(path => !path.startsWith('.gantry/') && !committedScope.outOfScope.includes(path)).sort();
+      if (reservedSources.length !== candidateSources.length || reservedSources.some((path, i) => path !== candidateSources[i])) {
+        return 'Git 已提交，但任务源码清单已变化' + manual;
+      }
+      if (git(['write-tree']) !== pending.tree) return 'Git 已提交，但索引已变化' + manual;
+      if (reservedSources.length && git(['diff', 'HEAD', '--', ...reservedSources])) {
+        return 'Git 已提交，但工作区源码已变化' + manual;
+      }
+      return null;
+    };
+    if (pending && head !== pending.head) {
+      const mismatch = committedCandidateMismatch();
+      if (mismatch) return { ok: false, reason: mismatch };
+      unlinkSync(marker);
+      return { ok: true, commit: head, recovered: true };
+    }
+    const candidateFiles = [...allowed].sort();
+    if (pending && (pending.files.length !== candidateFiles.length || pending.files.some((path, i) => path !== candidateFiles[i]))) {
+      return { ok: false, reason: '待提交清单已变化；保留索引。请人工核对并保存暂存内容，再清空暂存区、删除 .gantry/planning/ralph-checkpoint.json 后重跑 gantry advance' };
+    }
+    // A failed hook leaves our staged tree behind. Path membership alone does
+    // not establish ownership: the user may have staged different bytes or
+    // unstaged one of those same files since the failure.
+    if (pending && (!pending.tree || git(['write-tree']) !== pending.tree)) {
+      return { ok: false, reason: '待提交索引已变化或缺少预约摘要；保留索引。请人工核对并保存暂存内容，再清空暂存区、删除 .gantry/planning/ralph-checkpoint.json 后重跑 gantry advance' };
+    }
+    const staged = git(['diff', '--cached', '--name-only', '-z']).split('\0').filter(Boolean);
+    if (staged.length && (!pending || staged.some(path => !pending.files.includes(path)))) {
+      return { ok: false, reason: '存在用户预先暂存的修改；保留索引，停止自动提交' };
+    }
+    if (!allowed.size && !staged.length) return { ok: true, commit: null };
+    if (['main', 'master'].includes(git(['branch', '--show-current']))) {
+      return { ok: false, reason: '当前为主分支，请在工作分支完成 DEV 提交' };
+    }
+    if (!pending) {
+      pending = { changeId: state.activeChange, head, message, files: candidateFiles, tree: git(['write-tree']) };
+      writeFileSync(marker, JSON.stringify(pending, null, 2) + '\n');
+    }
+    const sourceFiles = pending.files.filter(path => path !== execution);
+    if (sourceFiles.length) git(['add', '--', ...sourceFiles]);
+    if (pending.files.includes(execution)) git(['add', '-f', '--', execution]);
+    pending.tree = git(['write-tree']);
+    writeFileSync(marker, JSON.stringify(pending, null, 2) + '\n');
+    // Index contents are part of evidence; staging invalidates earlier receipts.
+    const checked = await checkpointTasks(root, taskOptions());
+    if (checked.kind !== 'completed') return { ok: false, reason: checked.reason || '暂存后的组合验证失败，保留现场' };
+    // The checkpoint refreshes this framework-owned receipt after index-bound
+    // verification. Include the final human evidence, not its previous digest.
+    if (pending.files.includes(execution)) git(['add', '-f', '--', execution]);
+    pending.tree = git(['write-tree']);
+    writeFileSync(marker, JSON.stringify(pending, null, 2) + '\n');
+    git(['commit', '-m', pending.message]);
+    const commit = git(['rev-parse', 'HEAD']);
+    const mismatch = committedCandidateMismatch();
+    if (mismatch) return { ok: false, reason: mismatch };
+    unlinkSync(marker);
+    return { ok: true, commit };
+  } catch (error) { return { ok: false, reason: error.message }; }
+}
+
 /**
  * 针对特定门禁失败原因，给出可操作的补救指引。
  * 未决问题阻断时，明确告诉用户怎么回到 change 反问。
@@ -1065,81 +1157,20 @@ function context(args) {
 
 /**
  * gantry done <task-id>
- *   标记 task 完成 + 在 EXECUTION.md 不存在时落模板骨架。
+ *   执行真实 verify/checks，保存内容凭据并幂等完成 TASKS/EXECUTION。
  *   不写"实际内容"——那是 AI 的事;CLI 只做机械操作。
  */
-function done(args) {
-  const projectRoot = process.cwd();
-  ensureInit(projectRoot);
-  const state = readState(projectRoot);
-
+async function done(args) {
+  const root = process.cwd();
+  ensureInit(root);
   const taskId = args.find(a => !a.startsWith('-'));
-  if (!taskId) {
-    console.error('用法: gantry done <task-id>');
-    process.exit(1);
+  if (!taskId) throw new Error('用法: gantry done <task-id> [--json]');
+  const result = await verifyAndComplete(root, taskId, taskOptions());
+  if (result.kind === 'completed') {
+    updateState(root, { currentTask: null, pauseReason: null });
   }
-  const changeId = state.activeChange;
-  if (!changeId) {
-    console.error('当前无活跃 change');
-    process.exit(1);
-  }
-  const taskResolved = resolveArtifactPath(join(projectRoot, SPECS_DIR, changeId), 'tasks');
-  const taskFile = taskResolved?.path;
-  if (!taskFile || !existsSync(taskFile)) {
-    console.error(`${getPreferredArtifactName('tasks')} 不存在: ${specsPath(changeId, getPreferredArtifactName('tasks'))}`);
-    process.exit(1);
-  }
-
-  const content = readFileSync(taskFile, 'utf-8');
-  const taskRe = new RegExp(`(<task\\s+[^>]*id="${taskId}"[^>]*?)(\\sstatus="[^"]*")?(\\s*>)`, 'g');
-  let matched = false;
-  const updated = content.replace(taskRe, (full, head, _statusAttr, tail) => {
-    matched = true;
-    return `${head} status="done"${tail}`;
-  });
-  if (!matched) {
-    console.error(`task ${taskId} 未在 ${taskResolved.name} 中找到`);
-    process.exit(1);
-  }
-  writeFileSync(taskFile, updated, 'utf-8');
-
-  if (state.currentTask === taskId) {
-    updateState(projectRoot, { currentTask: null, pauseReason: null });
-  }
-
-  const executionPath = join(projectRoot, specsPath(changeId, getPreferredArtifactName('execution')));
-  if (!existsSync(executionPath)) {
-    const skeleton = `# EXECUTION: ${changeId}
-
-> 变更级执行日志。默认不再为每个 task 自动生成单独 SUMMARY。
-
-## Entries
-
-${executionTaskEntry(taskId)}
-`;
-    writeFileSync(executionPath, skeleton, 'utf-8');
-  } else {
-    const existing = readFileSync(executionPath, 'utf-8');
-    if (!existing.includes(`### ${taskId}`)) {
-      writeFileSync(executionPath, `${existing.trimEnd()}\n\n${executionTaskEntry(taskId)}\n`, 'utf-8');
-    }
-  }
-
-  console.log(`✓ task ${taskId} 已标记完成`);
-  console.log(`  EXECUTION: ${specsPath(changeId, getPreferredArtifactName('execution'))}`);
-}
-
-function executionTaskEntry(taskId) {
-  return `### ${taskId}
-
-- status: done
-- completed_at: ${new Date().toISOString()}
-- summary: TODO
-- verify: TODO
-- evidence: TODO
-- problem: TODO (无则 none，不得凑数)
-- cause: TODO (problem 为 none 时写 none)
-- next: TODO (无则 none)`;
+  console.log(args.includes('--json') ? JSON.stringify(result) : `${result.kind}: ${taskId} ${result.reason || ''}`);
+  process.exitCode = result.exitCode || 0;
 }
 
 /**
@@ -1813,54 +1844,17 @@ function metrics(args) {
  *   - 用户项目 cwd 由 spawn 的 cwd 透传;dispatcher 用环境变量 PROJECT_ROOT 读
  *   - 退出码原样透传(0=done / 2=blocked / 3=max-steps / 4=dispatch-fail / 5=stuck / 64=usage)
  *
- * 环境变量透传:GANTRY_BIN(默认 "gantry") / GANTRY_LOOP_MAX_STEPS / LOOP_STUCK_LIMIT /
- *              GANTRY_LOOP_RETRIES / GANTRY_LOOP_BACKOFF / GANTRY_LOOP_DISPATCHER。
- *
- * 2026-10-12:client 之后的参数原样透传给 loop.sh(--quiet / --verbose / -h),
- * 不再静默吞掉——此前 `gantry loop claude --verbose` 的 flag 会被丢弃。
+ * 使用包内 CLI 与 Node supervisor，adapter 保留流式输出。
  */
-function loop(args) {
-  const client = args[0];
-  const passthrough = args.slice(1);
-  if (!client || ['-h', '--help'].includes(client)) {
-    console.log(`gantry loop <client> [--quiet] — 无监督收敛 driver
-
-用法: gantry loop <client> [--quiet]
-  client        claude | codex(明确指定,不做自动探测)
-  --quiet, -q   只打每步一行摘要,dispatch/advance 输出落日志
-  --verbose,-v  兼容别名(默认已全显示),接受但不改变行为
-
-默认全显示:每步打印头行 + 流式转发 dispatch 输出。
-遇到 dispatch / advance 失败会带诊断退避重试(上限取 config.autonomous.maxRetries)。
-
-环境变量:
-  GANTRY_BIN              CLI 入口,默认 "gantry"(全局可执行)
-  GANTRY_LOOP_MAX_STEPS   步数上限,默认 40
-  LOOP_STUCK_LIMIT        同 token 连续次数上限,默认 2
-  GANTRY_LOOP_RETRIES     失败重试上限,默认取 config.autonomous.maxRetries(3)
-  GANTRY_LOOP_BACKOFF     退避基数秒,默认 1
-
-退出码: 0=done  2=blocked  3=达步数上限  4=dispatch 失败  5=stuck  64=用法错`);
-    if (!client) process.exit(64);
+async function loop(args) {
+  if (!args[0] || ['-h', '--help'].includes(args[0])) {
+    console.log('用法: gantry loop <claude|codex> [--quiet|-q] [--verbose|-v]');
+    if (!args[0]) process.exitCode = 64;
     return;
   }
-
-  const loopScript = join(GANTRY_ROOT, 'src', 'loop', 'loop.sh');
-  if (!existsSync(loopScript)) {
-    console.error(`未找到 loop 脚本: ${loopScript}`);
-    console.error(`gantry 包安装不完整——请重装(npm i -g gantry)。`);
-    process.exit(1);
-  }
-
-  const r = spawnSync('bash', [loopScript, client, ...passthrough], {
-    stdio: 'inherit',
-    cwd: process.cwd(),
-  });
-  if (r.error) {
-    console.error(`启动 loop 失败: ${r.error.message}`);
-    process.exit(1);
-  }
-  process.exit(r.status ?? 1);
+  const unknown = args.slice(1).filter(arg => !['--quiet', '-q', '--verbose', '-v'].includes(arg));
+  if (unknown.length) { console.error(`未知参数: ${unknown.join(', ')}`); process.exitCode = 64; return; }
+  process.exitCode = await runLoop({ root: process.cwd(), client: args[0], quiet: args.includes('--quiet') || args.includes('-q') });
 }
 
 /**
@@ -1924,14 +1918,14 @@ function helpAll() {
 
   auto                自动多阶段推进（步数取 config.autonomous.maxStagesPerRun），遇门禁失败 / 人工确认关卡 / 终态即停
 
-  dispatch            DEV 自动模式选择下一个 canonical wave，并刷新首个 task 的 context pack
+  dispatch            预约一个 ready task，刷新对应 context pack（重复预约阻塞）
     --json              输出 { status, waveId?, taskIds? }
 
   loop <claude|codex> 无监督收敛 driver(headless)——包装 src/loop/loop.sh
                       [--quiet] 只打每步摘要;默认全显示并流式转发 dispatch 输出
                       dispatch/advance 失败带诊断退避重试(上限 config.autonomous.maxRetries)
                       退出码: 0=done  2=blocked  3=max-steps  4=dispatch 失败  5=stuck  64=用法错
-                      环境变量: GANTRY_BIN(默认 gantry) / GANTRY_LOOP_MAX_STEPS / LOOP_STUCK_LIMIT
+                      环境变量: GANTRY_LOOP_MAX_STEPS；ralph 配置控制运行时限
                                 / GANTRY_LOOP_RETRIES / GANTRY_LOOP_BACKOFF
 
   loop-next           只读输出下一步 loop token（供无监督 driver 消费）
@@ -1962,7 +1956,7 @@ function helpAll() {
     --stage <s>         强制指定阶段 (默认从 STATE.md 读)
     --json              把 pack 内容直接打到 stdout
 
-  done <task-id>      标记任务完成 + 落 EXECUTION.md 执行日志
+  done <task-id>      真实验收任务候选并写入内容凭据/执行日志
 
   hook run <event>    执行已配置的阶段 hook（before:change / before:dev 等）
   hook list           列出全部已配置的 hook 及状态标记

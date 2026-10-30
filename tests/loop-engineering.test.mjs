@@ -100,7 +100,7 @@ describe('checkGate · pipeline-aware', () => {
     setup();
     writeFileSync(join(TMP, 'PROPOSAL.md'), '# PROPOSAL\n');
     assert.equal(checkGate('dev', TMP, { pipeline: 'full' }).passed, false);
-    writeFileSync(join(TMP, 'TASKS.md'), '<task id="T01" status="done">x</task>');
+    writeFileSync(join(TMP, 'TASKS.md'), '<task id="T01" status="done"><verify>node --version</verify>x</task>');
     assert.equal(checkGate('dev', TMP, { pipeline: 'full' }).passed, true);
     teardown();
   });

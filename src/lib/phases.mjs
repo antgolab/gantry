@@ -4,7 +4,7 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs';
-import { join, sep } from 'node:path';
+import { join, sep, relative } from 'node:path';
 import { parseTasks, allTasksDone } from './tasks.mjs';
 import { artifactExists, getPreferredArtifactName, resolveArtifactPath } from './artifacts.mjs';
 import { validateIntentScope } from './light-guard.mjs';
@@ -13,6 +13,9 @@ import { validateIntentScope } from './light-guard.mjs';
 import { checkAcCoverage } from './ac-coverage.mjs';
 import { parseTestCommands } from './test-commands.mjs';
 import { SPECS_DIR } from './paths.mjs';
+import { readTaskRecord } from './task-record.mjs';
+import { createContract, captureManifest, assertTaskPathsObservable, inspectTaskRunnerReadiness, receiptIsValid, DEFAULT_RALPH_DEADLINES } from './task-evidence.mjs';
+import { readConfig } from './config.mjs';
 
 // 固定管线阶段定义
 export const STAGES = {
@@ -84,7 +87,7 @@ export function checkGate(targetStage, specsDir, config, state, projectRoot) {
   const staticGates = {
     requirement: () => checkProposalReady(specsDir),
     design:      () => checkArtifact(specsDir, 'spec'),
-    test:        () => checkAllTasksDone(specsDir),
+    test:        () => checkAllTasksDone(specsDir, projectRoot),
     integration: () => {
       const base = checkReviewPassed(specsDir);
       if (!base.passed) return base;
@@ -106,7 +109,13 @@ export function checkGate(targetStage, specsDir, config, state, projectRoot) {
     return checkLightIntent(specsDir);
   }
   if (targetStage === 'dev') {
-    return checkArtifact(specsDir, 'tasks');
+    const artifact = checkArtifact(specsDir, 'tasks');
+    if (!artifact.passed) return artifact;
+    for (const task of parseTasks(resolveArtifactPath(specsDir, 'tasks').path)) {
+      const readiness = inspectTaskRunnerReadiness(null, createContract(task, config?.ralph ?? {}), { probe: false });
+      if (!readiness.ok) return { passed: false, hard: true, reason: `任务 ${task.id}: ${readiness.diagnostic}` };
+    }
+    return artifact;
   }
   if (targetStage === 'review') {
     return checkArtifact(specsDir, 'test');
@@ -271,7 +280,7 @@ export function requiresApproval(stage, specsDir) {
   return countOpenQuestions(content) > 0;
 }
 
-function checkAllTasksDone(specsDir) {
+function checkAllTasksDone(specsDir, projectRoot) {
   const resolved = resolveArtifactPath(specsDir, 'tasks');
   if (!resolved || !existsSync(resolved.path)) {
     return { passed: false, reason: `缺少 ${getPreferredArtifactName('tasks')}` };
@@ -288,6 +297,34 @@ function checkAllTasksDone(specsDir) {
     const execution = readFileSync(executionFile, 'utf-8');
     if (/^\s*-\s*[a-z][a-z-]*:\s*TODO\b/im.test(execution)) {
       return { passed: false, reason: `${getPreferredArtifactName('execution')} 仍有 TODO，需填写真实内容或 none` };
+    }
+    // A checkbox and prose are insufficient. Queries only inspect durable
+    // receipts; actual revalidation belongs to the async checkpoint controller.
+    try {
+      const root = projectRoot ?? deriveProjectRootFromSpecsDir(specsDir);
+      if (!root) return { passed: false, hard: true, reason: '无法定位任务凭据的项目根目录' };
+      const configPath = join(root, '.gantry/planning/config.json');
+      if (existsSync(configPath)) {
+        const parsed = JSON.parse(readFileSync(configPath, 'utf8'));
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('invalid project config');
+      }
+      const configured = readConfig(root).ralph;
+      const config = configured === undefined ? {} : configured;
+      if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('invalid ralph config');
+      const deadlines = Object.fromEntries(Object.entries(DEFAULT_RALPH_DEADLINES).map(([key, value]) => [key, config[key] ?? value]));
+      if (Object.values(deadlines).some(value => !Number.isSafeInteger(value) || value <= 0)) throw new Error('invalid ralph deadlines');
+      for (const task of tasks) assertTaskPathsObservable(root, task);
+      const manifest = captureManifest(root, { includePaths: [relative(root, resolved.path), '.gantry/planning/config.json', '.gantry/loop/test-commands.yml'] });
+      const changeId = specsDir.split(sep).at(-1);
+      for (const task of tasks) {
+        const record = readTaskRecord(root, changeId, task.id);
+        const contract = createContract(task, { ...config, deadlineSnapshot: deadlines });
+        if (!record?.attempt || record.contract.digest !== contract.digest || record.receipt?.attemptId !== record.attempt.id || !receiptIsValid(record.receipt, contract, manifest)) {
+          return { passed: false, hard: true, reason: `任务 ${task.id} 的验证凭据缺失或过期，请执行 done/DEV checkpoint；旧任务需明确审阅迁移` };
+        }
+      }
+    } catch (error) {
+      return { passed: false, hard: true, reason: `任务验证凭据不可确认: ${error.message}` };
     }
     return { passed: true };
   }

@@ -13,9 +13,10 @@ import { strict as assert } from 'node:assert';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const CLI = join(import.meta.dirname, '..', 'src', 'cli.mjs');
+const CLI = join(dirname(fileURLToPath(import.meta.url)), '..', 'src', 'cli.mjs');
 const WHITELIST_REGEX = /^(gantry-(change|requirement|design|task|dev|test|review|integration|fast)|done|blocked)$/;
 
 function makeProject(prose, fence) {
@@ -75,7 +76,7 @@ function writeLightJson(root, changeId, scope = ['src/lib/foo.mjs']) {
   }), 'utf-8');
 }
 
-test('AC-5 · full pipeline · design 阶段 → gantry-task(ui-design 已合入 design)', () => {
+test('AC-5 · full pipeline · design 阶段 → gantry-design', () => {
   const root = makeProject(
     { pipeline: 'full', currentStage: 'design', activeChange: 'demo' },
     { nextStep: null, lastStageResult: null, currentWave: null, previousWave: null },
@@ -83,7 +84,7 @@ test('AC-5 · full pipeline · design 阶段 → gantry-task(ui-design 已合入
   try {
     const r = runLoopNext(root);
     assert.equal(r.status, 0, `exit non-zero: stderr=${r.stderr}`);
-    assert.equal(r.stdout.trim(), 'gantry-task');
+    assert.equal(r.stdout.trim(), 'gantry-design');
     assert.ok(WHITELIST_REGEX.test(r.stdout.trim()));
     assert.ok(r.stderr === '' || /\[loop-next warn\]/.test(r.stderr), `unexpected stderr: ${r.stderr}`);
   } finally {
@@ -91,7 +92,7 @@ test('AC-5 · full pipeline · design 阶段 → gantry-task(ui-design 已合入
   }
 });
 
-test('AC-5 · full pipeline · integration + ok → done, exit 0', () => {
+test('AC-5 · full pipeline · integration + stale ok → current integration, exit 0', () => {
   const root = makeProject(
     { pipeline: 'full', currentStage: 'integration', activeChange: 'demo' },
     { nextStep: null, lastStageResult: { ok: true, blockedReason: null }, currentWave: null, previousWave: null },
@@ -99,7 +100,7 @@ test('AC-5 · full pipeline · integration + ok → done, exit 0', () => {
   try {
     const r = runLoopNext(root);
     assert.equal(r.status, 0);
-    assert.equal(r.stdout.trim(), 'done');
+    assert.equal(r.stdout.trim(), 'gantry-integration');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -154,15 +155,15 @@ test('AC-5 · blockedReason → stdout=blocked, exit 2', () => {
   }
 });
 
-test('AC-5 · fence.nextStep 显式命中白名单 → 直接返回', () => {
+test('AC-5 · fence.nextStep 与实际阶段不一致 → blocked', () => {
   const root = makeProject(
     { pipeline: 'full', currentStage: 'dev', activeChange: 'demo' },
     { nextStep: 'gantry-review', lastStageResult: null, currentWave: null, previousWave: null },
   );
   try {
     const r = runLoopNext(root);
-    assert.equal(r.status, 0);
-    assert.equal(r.stdout.trim(), 'gantry-review');
+    assert.equal(r.status, 2);
+    assert.equal(r.stdout.trim(), 'blocked');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

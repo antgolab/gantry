@@ -52,8 +52,8 @@ describe('install', () => {
     assert.ok(autoSkill.includes('gantry dispatch --json'), 'auto should use mechanical task dispatch');
     assert.ok(autoSkill.includes('`Agent` 工具'), 'Claude auto should launch a new Agent per task');
     assert.ok(autoSkill.includes('general-purpose'), 'Claude auto should use the general-purpose subagent');
-    assert.ok(autoSkill.includes('每个 task 一个新子 Agent'), 'Claude auto should fan out one Agent per task');
-    assert.ok(autoSkill.includes('fallback_main'), 'Claude auto should fall back to the main agent after wave retries');
+    assert.ok(autoSkill.includes('每次成功预约只创建一个 fresh executor subagent'), 'Claude auto should create one executor per reservation');
+    assert.ok(!autoSkill.includes('fallback_main'), 'Claude auto must not reset budgets through a fallback');
     assert.ok(autoSkill.includes('禁止调用 `Agent` 工具或通过 resume'), 'Claude wave subagent should be a leaf executor');
   });
 
@@ -121,13 +121,13 @@ describe('install', () => {
     assert.ok(autoSkill.includes('gantry dispatch --json'), 'auto should use mechanical task dispatch');
     assert.ok(autoSkill.includes('spawn_agent'), 'Codex auto should spawn a new subagent per task');
     assert.ok(autoSkill.includes('wait_agent'), 'Codex auto should wait for all workers in the wave');
-    assert.ok(autoSkill.includes('每个 task 一个新子 Agent'), 'Codex auto should fan out one subagent per task');
-    assert.ok(autoSkill.includes('fallback_main'), 'Codex auto should fall back to the main agent after wave retries');
+    assert.ok(autoSkill.includes('每次成功预约只创建一个 fresh executor subagent'), 'Codex auto should create one executor per reservation');
+    assert.ok(!autoSkill.includes('fallback_main'), 'Codex auto must not reset budgets through a fallback');
     assert.ok(autoSkill.includes('禁止调用 `spawn_agent` 或 `followup_task`'), 'Codex wave subagent should be a leaf executor');
     assert.ok(!autoSkill.includes('fresh worker'), 'fresh worker is not a separate mechanism');
     assert.ok(!autoSkill.includes('gantry-exec/SKILL.md'), 'exec is internalized; workers must not be pointed at an uninstalled skill');
     assert.ok(existsSync(join(tmpDir, '.gantry', 'core', 'agents', 'executor.md')), 'worker protocol must be installed under .gantry/core');
-    assert.ok(autoSkill.includes('子 Agent 禁止执行 `gantry advance`'), 'auto workers must not advance the shared pipeline');
+    assert.ok(autoSkill.includes('禁止 commit、gantry done/dispatch/advance'), 'auto workers must not advance the shared pipeline');
     const sampleSkill = join(skillsDir, skills[0], 'SKILL.md');
     assert.ok(existsSync(sampleSkill), `${sampleSkill} should exist`);
     const sample = readFileSync(sampleSkill, 'utf8');
@@ -204,12 +204,12 @@ describe('install', () => {
     assert.ok(!existsSync(join(tmpDir, '.gantry/planning', 'context-pack.json')));
   });
 
-  it('dev 阶段波次编排契约（4-dev.md 波次并发 + executor 不自行 commit）', () => {
+  it('dev 单任务编排契约（单写者 + 外层验收 + 统一 commit）', () => {
     run('install --tool codex', { cwd: tmpDir });
     const devPhase = readFileSync(join(tmpDir, '.gantry/core/phases', '4-dev.md'), 'utf8');
-    assert.ok(devPhase.includes('波次编排'), '4-dev.md 应含波次编排段');
-    assert.ok(devPhase.includes('同一 turn fan-out'), '4-dev.md 应同 wave 并发 fan-out');
-    assert.ok(devPhase.includes('wave checkpoint'), '4-dev.md 应有 wave 边界 checkpoint');
+    assert.ok(devPhase.includes('单任务编排'), '4-dev.md 应含单任务编排段');
+    assert.ok(devPhase.includes('任一时刻只允许一个 task 写者'), '共享工作区须只有一个任务写者');
+    assert.ok(devPhase.includes('receipt → EXECUTION → TASKS'), '完成必须有外层验收事务');
     assert.ok(devPhase.includes('DEV 末统一'), '4-dev.md 应 stage 末统一 commit');
     const executor = readFileSync(join(tmpDir, '.gantry/core/agents', 'executor.md'), 'utf8');
     assert.ok(executor.includes('不自行 commit'), 'executor 不应自行 git commit');

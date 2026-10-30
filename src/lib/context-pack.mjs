@@ -25,6 +25,8 @@ import { readConfig } from './config.mjs';
 import { getAgentFile, getAgentForStage } from './agents.mjs';
 import { validateIntentScope } from './light-guard.mjs';
 import { checkPack } from './review-lane-guard.mjs';
+import { readTaskRecord } from './task-record.mjs';
+import { readHealLog } from './self-heal.mjs';
 
 const SCHEMA_VERSION = 2;
 const PACK_FILENAME = 'context-pack.json';
@@ -127,12 +129,7 @@ export function buildPack(projectRoot, overrides = {}) {
     loadOrder: buildLoadOrder({ projectRoot, stage, changeId, taskId, pipeline, config }),
     checklists: buildChecklists({ projectRoot, stage, changeId, taskId }),
     lessons: stage === 'dev' || stage === 'fast' ? grepLessons(projectRoot, taskId, changeId) : [],
-    retryHistory: {
-      count: state.retries || 0,
-      lastFailure: state.pauseReason
-        ? { at: null, reason: state.pauseReason }
-        : null,
-    },
+    retryHistory: buildRetryHistory(projectRoot, { stage, changeId, taskId, state }),
     next: buildNextCommands(stage, taskId),
   };
 
@@ -150,6 +147,25 @@ export function buildPack(projectRoot, overrides = {}) {
   }
 
   return pack;
+}
+
+function buildRetryHistory(root, { stage, changeId, taskId, state }) {
+  if (stage === 'dev') {
+    if (!changeId || !taskId) return { count: 0, lastFailure: null };
+    const record = readTaskRecord(root, changeId, taskId);
+    if (record) {
+      const failure = record.failure;
+      return {
+        count: record.repairsUsed,
+        lastFailure: failure ? { at: failure.at ?? null, reason: String(failure.reason ?? failure.summary ?? failure.kind ?? 'task failed').slice(0, 1000) } : null,
+      };
+    }
+    const execution = resolveArtifactPath(join(root, SPECS_DIR, changeId), 'execution');
+    const entries = execution ? readHealLog(execution.path)[taskId] ?? [] : [];
+    const last = entries.at(-1);
+    return { count: entries.length, lastFailure: last ? { at: last.at, reason: last.reason } : null };
+  }
+  return { count: state.retries || 0, lastFailure: state.pauseReason ? { at: null, reason: state.pauseReason } : null };
 }
 
 // === loadOrder ===
@@ -272,6 +288,13 @@ function buildLoadOrder({ projectRoot, stage, changeId, taskId, pipeline, config
 
   // 5. 中断恢复上下文
   if (changeId && taskId && stage === 'dev') {
+    const execution = resolveArtifactPath(join(projectRoot, SPECS_DIR, changeId), 'execution');
+    if (execution && existsSync(execution.path)) {
+      items.push({
+        path: `${SPECS_DIR}/${changeId}/${execution.name}`, kind: 'artifact', required: false,
+        focus: [`## ${taskId}`, `### ${taskId} · attempt`, `### ${taskId} · executor reports`],
+      });
+    }
     const progressPath = `${SPECS_DIR}/${changeId}/${taskId}-PROGRESS.md`;
     if (existsSync(join(projectRoot, progressPath))) {
       items.push({

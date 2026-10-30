@@ -71,6 +71,22 @@ export function computeNextStep(state) {
   // 1. blocked 优先(pdlc AC-4 语义)
   if (state.lastStageResult?.blockedReason != null) return 'blocked';
 
+  // full 执行当前阶段；显式旁路不得跳过实际位置。
+  if (state.pipeline !== 'light') {
+    const stage = state.currentStage;
+    if (stage === 'done') return 'done';
+    if (stage === 'idle') {
+      // light auto-archive deliberately resets position to full@idle and leaves
+      // an explicit convergence receipt. Preserve that compatibility signal.
+      return !state.activeChange && state.nextStep === 'done' && state.lastStageResult?.ok === true
+        ? 'done' : 'gantry-change';
+    }
+    const token = `gantry-${stage}`;
+    if (!PIPELINES.full.includes(stage) || !WHITELIST.includes(token)) return 'blocked';
+    if (state.nextStep != null && state.nextStep !== token) return 'blocked';
+    return token;
+  }
+
   // 2. 收敛条件
   const pipelineKey = state.pipeline in CONVERGE_CONDITIONS ? state.pipeline : 'full';
   if (CONVERGE_CONDITIONS[pipelineKey](state)) return 'done';

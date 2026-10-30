@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { prepareTask, verifyAndComplete } from '../src/lib/task-cycle.mjs';
+import { updateState } from '../src/lib/state.mjs';
 import { checkGate } from '../src/lib/phases.mjs';
 
 const ROOT = join(import.meta.dirname, '..');
@@ -24,14 +26,18 @@ function run(...args) {
   });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   tmpDir = join(import.meta.dirname, `.tmp-reflection-${Date.now()}-${Math.random().toString(36).slice(2)}`);
   mkdirSync(tmpDir, { recursive: true });
   run('install', '--tool', 'codex');
   run('change', '--id', 'reflection-fixture', 'reflection fixture');
+  updateState(tmpDir, { currentStage: 'dev' });
+  execFileSync('git', ['init', '-q'], { cwd: tmpDir });
+  execFileSync('git', ['add', '.'], { cwd: tmpDir });
+  execFileSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'initial'], { cwd: tmpDir });
   writeFileSync(join(tmpDir, '.gantry/specs/reflection-fixture/TASKS.md'), `
-<task id="T01" status="pending"><verify>node --test</verify><done>done</done></task>
-<task id="T02" status="pending"><verify>node --test</verify><done>done</done></task>
+<task id="T01" status="pending"><write_files>first.txt</write_files><verify>node -e "process.exit(0)"</verify><done>done</done></task>
+<task id="T02" status="pending"><write_files>second.txt</write_files><verify>node -e "process.exit(0)"</verify><done>done</done></task>
 `, 'utf-8');
 });
 
@@ -62,8 +68,10 @@ describe('task execution reflection contract', () => {
     assert.match(executor, /problem.*cause.*next/s);
   });
 
-  it('gantry done creates and appends entries with the same reflection fields', () => {
+  it('gantry done creates and appends entries with the same reflection fields', async () => {
+    assert.equal((await prepareTask(tmpDir, 'T01')).kind, 'prepared');
     run('done', 'T01');
+    assert.equal((await prepareTask(tmpDir, 'T02')).kind, 'prepared');
     run('done', 'T02');
 
     const execution = readFileSync(
@@ -81,16 +89,19 @@ describe('task execution reflection contract', () => {
     }
   });
 
-  it('TEST gate rejects unfinished execution TODOs and accepts completed records', () => {
+  it('TEST gate rejects unfinished execution TODOs and accepts completed records', async () => {
+    assert.equal((await prepareTask(tmpDir, 'T01')).kind, 'prepared');
     run('done', 'T01');
+    assert.equal((await prepareTask(tmpDir, 'T02')).kind, 'prepared');
     run('done', 'T02');
 
     const specsDir = join(tmpDir, '.gantry/specs/reflection-fixture');
+    const executionPath = join(specsDir, 'EXECUTION.md');
+    writeFileSync(executionPath, readFileSync(executionPath, 'utf8') + '\n- next: TODO\n');
     const blocked = checkGate('test', specsDir, { pipeline: 'full' });
     assert.equal(blocked.passed, false);
     assert.match(blocked.reason, /EXECUTION\.md.*TODO/);
 
-    const executionPath = join(specsDir, 'EXECUTION.md');
     const completed = readFileSync(executionPath, 'utf-8').replaceAll('TODO', 'none');
     writeFileSync(executionPath, completed, 'utf-8');
     assert.equal(checkGate('test', specsDir, { pipeline: 'full' }).passed, true);

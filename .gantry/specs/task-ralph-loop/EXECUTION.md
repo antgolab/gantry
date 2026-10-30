@@ -1,0 +1,426 @@
+# EXECUTION: task-ralph-loop
+
+## tier-decision
+tier: full
+source: default
+
+### T01
+
+- status: done
+- completed_at: 2026-10-29T02:51:48.214Z
+- summary: 基础模块实现及真实进程边界验证
+- verify: node --test tests/ralph-record.test.mjs tests/ralph-process.test.mjs; exit 0; 18 pass
+- evidence: 原子记录/跨进程锁/初次加三修复/超时取消和后代清理真实探针通过
+- problem: 仅等待客户端close可能被后代管道阻塞
+- cause: 后代继承stdout使leader已退出仍无法close
+- next: none
+
+### T03
+
+- status: done
+- completed_at: 2026-10-29T02:51:48.259Z
+- summary: 基础模块实现及真实进程边界验证
+- verify: node --test tests/ralph-record.test.mjs tests/ralph-process.test.mjs; exit 0; 18 pass
+- evidence: 原子记录/跨进程锁/初次加三修复/超时取消和后代清理真实探针通过
+- problem: 仅等待客户端close可能被后代管道阻塞
+- cause: 后代继承stdout使leader已退出仍无法close
+- next: none
+
+### T02
+
+- status: done
+- completed_at: 2026-10-29T02:55:46.656Z
+- summary: 固定验收contract和工作区内容凭据
+- verify: node --test tests/ralph-evidence.test.mjs; exit 0; tests=13 pass=13 fail=0 skipped=0 todo=0
+- evidence: dirty/index/untracked/删除与模式变化、暂存测试弱化、TAP空跑、内容receipt失效均通过实际临时Git测试
+- problem: 仅比较worktree可遗漏暂存测试弱化
+- cause: 索引与worktree可能包含不同内容
+- next: 将两层内容均纳入基线和弱化比较，未知runner计数保持null
+
+## 自举迁移边界
+
+本change在新TaskRecord内核实现前已启动。T01/T02/T03旧done已写done，但并非新receipt认证。T04—T07实现与外部verify已完成，正式TASKS状态仍pending，等待明确迁移。实际done T04返回blocked(exit2)，没有补造入口基线、没有重置预算。以下是实际实现事实，不是新内核完成凭据。
+
+### T04 · 实现候选已验证
+
+- status: verified-awaiting-migration
+- summary: task-cycle、持久化外部重试与恢复、真实验收完成事务
+- verify: 26项行为回归纳入868/868全量；focused25/25加重复ID1/1
+- evidence: 详见TEST.md AC映射及真实临时Git/进程测试
+- problem: 外部重试重启可能新建业务预约
+- cause: 恢复未区分退避预约与业务修复
+- next: 持久化externalRetryPending，恢复先verify且沿用原额度
+
+### T05 · 实现候选已验证
+
+- status: verified-awaiting-migration
+- summary: Node控制器、阶段批准、冻结pack和两adapter
+- verify: focused43/43；light组合153/153；三任务真实DEV与嵌套CLI取消
+- evidence: 详见TEST.md AC映射及真实临时Git/进程测试
+- problem: Shell中文标点紧邻变量导致set -u失败
+- cause: 未用${变量}明确变量边界
+- next: 真实启动两adapter并在启动前机械核对pack
+
+### T06 · 实现候选已验证
+
+- status: verified-awaiting-migration
+- summary: 统一done/dispatch/advance/heal/context、组合校验及安全提交
+- verify: 真实CLI/Git4/4；全量868/868
+- evidence: 详见TEST.md AC映射及真实临时Git/进程测试
+- problem: 暂存修改会使基于索引的receipt过期
+- cause: receipt绑定真实索引内容
+- next: 安全暂存后再次checkpoint再commit；保留用户索引
+
+### T07 · 实现候选已验证
+
+- status: verified-awaiting-migration
+- summary: 阶段协议、宿主renderer、模板及实际金额舍入使用说明
+- verify: 协议18/18；build成功；verify39文件0错误
+- evidence: 详见TEST.md AC映射及真实临时Git/进程测试
+- problem: renderer额外注入旧wave/fallback指令
+- cause: 只改skills无法覆盖renderer二次注入
+- next: 源与renderer统一后重新build；按PATCH补安装回归
+
+<!-- ralph-task:T01:begin -->
+### T01 · verified
+
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
+- attempt: ac805829-be0e-4950-b7bf-6dc69983fe04; repairs: 3/3
+- verify: `node --test tests/ralph-record.test.mjs` (exit 0, tests unknown)
+- problem: none
+- cause: none
+- next: none
+<!-- ralph-task:T01:end -->
+
+<!-- ralph-task:T02:begin -->
+### T02 · verified
+
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
+- attempt: 4456922f-31ef-4ed6-a0a7-27baba900159; repairs: 3/3
+- verify: `node --test tests/ralph-evidence.test.mjs` (exit 0, tests unknown)
+- problem: none
+- cause: none
+- next: none
+<!-- ralph-task:T02:end -->
+
+<!-- ralph-task:T03:begin -->
+### T03 · verified
+
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
+- attempt: 207fabb1-886f-4410-b561-5de6fe6af511; repairs: 3/3
+- verify: `node --test tests/ralph-process.test.mjs` (exit 0, tests unknown)
+- problem: none
+- cause: none
+- next: none
+<!-- ralph-task:T03:end -->
+
+<!-- ralph-task:T04:begin -->
+### T04 · verified
+
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
+- attempt: c96fe0a7-aff2-49c9-91a6-8664190a4fe1; repairs: 3/3
+- verify: `node --test tests/ralph-task-cycle.test.mjs tests/ralph-recovery.test.mjs` (exit 0, tests unknown)
+- problem: none
+- cause: none
+- next: none
+<!-- ralph-task:T04:end -->
+
+## Self-Heal Log
+
+### T05 · attempt #1
+
+- at: 2026-10-29T03:40:17.693Z
+- reason: blocked: verification-mutated-content
+- command: `node --test tests/loop-next.test.mjs tests/loop-next-cli.test.mjs tests/loop-driver.test.mjs tests/ralph-stage.test.mjs`
+- stderr:
+  ```
+  ✔ compatibility shell validates usage and accepts verbose alias (240.608625ms)
+  ✔ real driver streams candidate, writes metric, stops at concrete design gate (176.332625ms)
+  ✔ quiet keeps stream in log, unknown nonzero is blocked without dispatch retry (71.970875ms)
+  ✔ run deadline cleans actual child writer before returning budget exit (375.902792ms)
+  ✔ invalid stage limit rejects before model launch (53.958708ms)
+  ✔ AC-5 · full pipeline · design 阶段 → gantry-design (64.258125ms)
+  ✔ AC-5 · full pipeline · integration + stale ok → current integration, exit 0 (64.319542ms)
+  ✔ AC-1/AC-5 · light pipeline · fast + ok → done (58.202458ms)
+  ✔ AC-1/AC-5 · light pipeline · fast 未 ok → gantry-fast, exit 0 (57.951875ms)
+  ✔ AC-5 · blockedReason → stdout=blocked, exit 2 (104.127417ms)
+  ✔ AC-5 · fence.nextStep 与实际阶段不一致 → blocked (54.179084ms)
+  ✔ AC-5 · idle 阶段 → gantry-change (48.814917ms)
+  ✔ AC-5 · 输出严格单行,不带装饰 (49.824875ms)
+  ✔ full executes current change, even stale success cannot skip it (0.770375ms)
+  ✔ full executes current requirement, even stale success cannot skip it (0.080792ms)
+  ✔ full executes current design, even stale success cannot skip it (0.044208ms)
+  ✔ full executes current task, even stale success cannot skip it (0.057375ms)
+  ✔ full executes current dev, even stale success cannot skip it (0.0495ms)
+  ✔ full executes current test, even stale success cannot skip it (0.034458ms)
+  ✔ full executes current review, even stale success cannot skip it (0.034167ms)
+  ✔ full executes current integration, even stale success cannot skip it (0.041833ms)
+  ✔ full explicit nextStep cannot bypass position, including invalid token (0.1015ms)
+  ✔ blockedReason wins over success (0.126667ms)
+  ✔ light fast preserves in-progress and convergence behavior (0.155666ms)
+  ✔ idle token remains change; controller decides whether change exists (0.061791ms)
+  ✔ unknown pipeline uses full current-stage behavior (0.292375ms)
+  ✔ unknown/missing stage fails closed and all outputs are whitelisted (0.253667ms)
+  ✔ exported contracts remain immutable (0.165458ms)
+  ✔ approval is bound to bytes/change and survives ordinary state updates (8.913042ms)
+  ✔ missing primary artifact cannot be approved (1.393084ms)
+  ✔ real CLI: fresh design executes matching pack then stops at approval (133.268291ms)
+  ✔ existing unapproved draft is not rewritten on restart (75.154417ms)
+  ✔ idle cannot silently create change; token mismatch cannot dispatch (25.854416ms)
+  ✔ pack validator rejects phase/stage/task/change mismatch (0.176333ms)
+  ✔ invalid or malformed run deadlines fail before dispatch (1.579ms)
+  ✔ quiet keeps client output in run log (149.015625ms)
+  ✔ real DEV controller converges three dependent tasks, refreshes repair packs and commits once (5782.4235ms)
+  ✔ non-DEV failed artifact gate retries are bounded independently of task repairs (248.12ms)
+  ✔ light controller keeps its existing fast gate and archive flow outside task-cycle (455.40475ms)
+  ✔ both adapters enforce frozen pack identity before launching the model (377.6385ms)
+  ✔ new change clears previous convergence and approval metadata (3.680083ms)
+  ✔ successful transition clears phase-local nextStep but preserves approved bytes (2.938125ms)
+  ✔ cancelling the nested CLI checkpoint waits until its TERM-ignoring verifier stops writing (2331.149625ms)
+  ℹ tests 43
+  ℹ suites 0
+  ℹ pass 43
+  ℹ fail 0
+  ℹ cancelled 0
+  ℹ skipped 0
+  ℹ todo 0
+  ℹ duration_ms 9677.971292
+  ```
+
+<!-- ralph-task:T05:begin -->
+### T05 · verified
+
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
+- attempt: 5a2a195e-98d5-46f3-9247-6597dafd4dff; repairs: 3/3
+- verify: `node --test tests/loop-next.test.mjs tests/loop-next-cli.test.mjs tests/loop-driver.test.mjs tests/ralph-stage.test.mjs` (exit 0, tests unknown)
+- problem: verification-mutated-content
+- cause: see persisted command diagnostics
+- next: review persisted diagnostics
+<!-- ralph-task:T05:end -->
+
+<!-- ralph-task:T06:begin -->
+### T06 · verified
+
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
+- attempt: 68500408-707b-4e6d-87c9-5d0ba24d36cb; repairs: 3/3
+- verify: `node --test tests/ralph-integration.test.mjs tests/autonomous-task-dispatch.test.mjs tests/context-pack.test.mjs tests/heal-cli.test.mjs tests/approval-gate.test.mjs` (exit 0, tests unknown)
+- problem: none
+- cause: none
+- next: none
+<!-- ralph-task:T06:end -->
+
+### T07 · attempt #1
+
+- at: 2026-10-29T03:47:06.625Z
+- reason: failed: unknown-test-counts
+- command: `node --test tests/ralph-protocol.test.mjs tests/prompt-text-check.test.mjs && npm run build && npm run verify`
+- stderr:
+  ```
+  ▶ T17 · prompt 文本落位检查
+    ✔ 0-change.md 含 --tier + light，且不再含 tier-router (0.524166ms)
+    ✔ 4-dev.md 已去 micro 档，且保留 R2.5 自愈上限 (0.19575ms)
+    ✔ 6-review.md 含 review_context_leak + review-lane-guard (0.196125ms)
+    ✔ 7-integration.md 含 friction + Curator 且移除手动提名 LESSONS (0.223083ms)
+    ✔ K-knowledge.md 输出路径改为 .gantry/learnings/team/ + tags:[knowledge] (0.297042ms)
+    ✔ F-fast.md 引用 src/lib/hard-rules.mjs 单点收敛 (0.307209ms)
+    ✔ T-FIX-09 · F-fast 红线段与 HARD_RULE_KEYWORDS 语义对齐 (0.781667ms)
+    ✔ CLAUDE.md 红线段主语改 lane + R1.8 引用 .gantry/learnings/team/ (0.416334ms)
+    ✔ LESSONS.md 顶部含 MIGRATED to .gantry/learnings/team/ (0.210333ms)
+    ✔ LESSONS 老文件仍存在（兼容读 6 个月） (0.110334ms)
+  ✔ T17 · prompt 文本落位检查 (3.928292ms)
+  ▶ AC-16 · micro 管线残留清零 + F-fast 描述新 light
+    ✖ phase 产物 / 两个公开 skill / docs/loop.md 均无 micro 管线描述 (2.050166ms)
+    ✔ CLAUDE.md / AGENTS.md 不再描述旧 light 流程（change → fast → integration / 内部判定） (0.104125ms)
+    ✔ F-fast.md 描述 light：含 light.json + gantry advance，且不要求 PROPOSAL (0.0735ms)
+  ✖ AC-16 · micro 管线残留清零 + F-fast 描述新 light (2.339333ms)
+  ✔ full DEV protocols agree on single-task reservation, candidate boundary and actual completion (0.922958ms)
+  ✔ TASKS template declares optional command lists without splitting shell comma arguments (2.31125ms)
+  ✔ both adapters reject DEV without a task and mismatched frozen pack before invoking a client (100.1345ms)
+  ✔ user docs retain content receipts, bounded failures and honest recovery limits (0.311125ms)
+  ✔ rendered Codex and Claude auto skills cannot reintroduce parallel waves or unbounded fallback (1.781875ms)
+  ℹ tests 18
+  ℹ suites 2
+  ℹ pass 17
+  ℹ fail 1
+  ℹ cancelled 0
+  ℹ skipped 0
+  ℹ todo 0
+  ℹ duration_ms 155.800375
+  
+  ✖ failing tests:
+  
+  test at tests/prompt-text-check.test.mjs:137:3
+  ✖ phase 产物 / 两个公开 skill / docs/loop.md 均无 micro 管线描述 (2.050166ms)
+    Error: ENOENT: no such file or directory, open '/Users/mjk/workspace/ai/platform/gantry-ralph-loop-finalize/.claude/skills/gantry-change/SKILL.md'
+        at readFileSync (node:fs:621:20)
+        at TestContext.<anonymous> (file:///Users/mjk/workspace/ai/platform/gantry-ralph-loop-finalize/tests/prompt-text-check.test.mjs:145:23)
+        at Test.runInAsyncScope (node:async_hooks:226:14)
+        at Test.run (node:internal/test_runner/test:1402:25)
+        at Test.start (node:internal/test_runner/test:1262:17)
+        at node:internal/test_runner/test:1903:71
+        at node:internal/per_context/primordials:504:82
+        at new Promise (<anonymous>)
+        at new SafePromise (node:internal/per_context/primordials:478:3)
+        at node:internal/per_context/primordials:504:9 {
+      errno: -2,
+      code: 'ENOENT',
+      syscall: 'open',
+      path: '/Users/mjk/workspace/ai/platform/gantry-ralph-loop-finalize/.claude/skills/gantry-change/SKILL.md'
+    }
+  ```
+
+<!-- ralph-task:T07:begin -->
+### T07 · verified
+
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
+- attempt: 34cbbe0b-ea9e-485a-944e-b05c9327f3b4; repairs: 3/3
+- verify: `node --test tests/ralph-protocol.test.mjs tests/prompt-text-check.test.mjs && npm run build && npm run verify` (exit 0, tests unknown)
+- problem: unknown-test-counts
+- cause: see persisted command diagnostics
+- next: review persisted diagnostics
+<!-- ralph-task:T07:end -->
+
+## 用户确认后的迁移与DEV收尾
+
+用户已确认审阅后的实现作为迁移锚。七任务全部经真实verify生成receipt；历史预算无法证明精确值，保守锁定已消耗修复上界3，不再授新自动修复，未调用模型。记录明确标记legacy migration而非任务前快照。原EXECUTION事实保留，先前awaiting-migration叙述为历史。
+
+并发工作修改同一源码时，本change转入独立worktree，47个文件按初始审阅快照逐个hash校对，原目录未被回退或覆盖。DEV仅提交这47个文件与本EXECUTION，不提交用户README、网站、另一项工作源码、TaskRecord/锁/日志。安全暂存后重验全部任务，最终一个DEV commit。
+
+<!-- ralph-task:T-FIX-01:begin -->
+### T-FIX-01 · verified
+
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
+- attempt: de38ade8-d071-4faa-8825-11f4e6e2f343; repairs: 0/3
+- verify: `node --test tests/ralph-task-cycle.test.mjs tests/ralph-evidence.test.mjs tests/context-pack.test.mjs` (exit 0, tests unknown)
+- problem: none
+- cause: none
+- next: none
+<!-- ralph-task:T-FIX-01:end -->
+
+<!-- ralph-task:T-FIX-02:begin -->
+### T-FIX-02 · verified
+
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
+- attempt: bf8de8b7-47d5-45e9-a87f-b2b50f94f6c8; repairs: 0/3
+- verify: `node --test tests/ralph-integration.test.mjs` (exit 0, tests unknown)
+- problem: none
+- cause: none
+- next: none
+<!-- ralph-task:T-FIX-02:end -->
+
+### REVIEW修复执行补充
+
+- T-FIX-01：沿用captureManifest/checkTaskScope，新增assertTaskPathsObservable统一prepare/verify/query/static gate；显式及glob ignored源码拒绝，只读控制目录/第三方依赖排除。focused 73/73；独立跨模型复核无新增Critical/Major。
+- T-FIX-02：`rg 'pending|commitDevCheckpoint|checkpointTasks' src/cli.mjs tests/ralph-integration.test.mjs`命中既有提交预约及组合检查，直接加强既有事务，无新模块。真实Git RED 4/8失败→GREEN 8/8；父done再次8/8，日志/tmp/gantry-fix2-done.json。
+- 六维自查：候选完整集合和索引内容绑定避免错误恢复；复用Git tree摘要；不新增依赖/公开API；无任意用户reset/revert；源码单向依赖保持；长函数整理作为Minor后续。
+- 边界：F1仅TASKS声明4文件，F2仅声明2文件，0越界；未改SPEC/DESIGN。修复均属原AC9/10/21缺陷，不扩大功能范围。验收控制map调整及锚留存见PATCH。
+
+### T-FIX-03 · executor report
+
+沿用`commitDevCheckpoint`和现有真实Git fixture，`rg 'pending|commitDevCheckpoint|checkpointTasks' src/cli.mjs tests/ralph-integration.test.mjs`确认既有抽象；LESSONS无新的相关active命中。HEAD成功恢复在unlink前核对完整源码候选集合、全索引tree、源码diff HEAD；仅框架EXECUTION允许刷新。RED 13项9绿/4红，GREEN 13/13（57.35秒）；新增/删除/同文件编辑/同路径新暂存均阻塞，无编辑恢复不重复commit。跨模型只读复核无新Critical/Major。
+
+六维自查：领域不变量是“当前源码确已提交”；复用Git与预约，不新增框架；只保守阻塞不reset/revert；长函数为Minor后续，依赖方向未变。边界仅src/cli.mjs、tests/ralph-integration.test.mjs两文件，0越界，无公开接口/数据库/UI变更。git diff --check通过。父编排器仍需执行done真实验收。
+
+<!-- ralph-task:T-FIX-03:begin -->
+### T-FIX-03 · verified
+
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
+- attempt: 9f43d925-ad82-4605-b8fe-93bffe1940b0; repairs: 0/3
+- verify: `node --test tests/ralph-integration.test.mjs` (exit 0, tests unknown)
+- problem: none
+- cause: none
+- next: none
+<!-- ralph-task:T-FIX-03:end -->
+
+<!-- ralph-task:T-FIX-04:begin -->
+### T-FIX-04 · verified
+
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
+- attempt: 96086a47-d86d-4ee8-a5d6-ae6a78661806; repairs: 0/3
+- verify: `node --test tests/ralph-stage.test.mjs tests/approval-gate.test.mjs tests/loop-driver.test.mjs` (exit 0, tests unknown)
+- problem: none
+- cause: none
+- next: none
+<!-- ralph-task:T-FIX-04:end -->
+
+### T-FIX-04 · executor/父验收
+
+- 沿用检索：`rg -n 'integration|Integration|approve|reachedEnd|stuck' src/cli.mjs src/loop/controller.mjs tests/ralph-stage.test.mjs tests/approval-gate.test.mjs`命中既有approveStage/isStageApproved及终态判断；LESSONS对应关键词无命中。
+- 删除Integration提前返回，批准摘要检查后才返回终态；controller只在真实批准有效且reachedEnd=integration时收敛。不自动批准、归档或重写UAT。
+- RED：integration新增两用例0/2，分别复现CLI未批exit0、loop stuck5；GREEN2/2。规定verify34/34，父done再次34/34，结果/tmp/gantry-fix4-done.json。
+- 六维：短分支复用现有摘要/终态；无新增依赖、公共API或平台；真实批准是终态前提，长函数既有Minor保留。仅TASKS声明4文件，0越界；git diff --check通过。
+
+### T-FIX-05 · executor report
+
+- 沿用grep命中commitDevCheckpoint/checkpointTasks/captureManifest/checkTaskScope，LESSONS相关无命中。
+- 共用私有核对检查实际提交parent/tree/message、index及重捕获源码；提交后及中断恢复均调用，异常保留marker/用户HEAD/index并给只读核对指引，不自动reset/revert/amend或追加提交。
+- 真实hooks RED5项4红/1绿；完整integration GREEN18/18，144.003秒。原复现修复后首次advance2，修回后retry2仍DEV，总提交仅基线+唯一DEV。父仍需done验收。
+- 六维：新增约25行私有核对，复用已有Git事实、无新框架/依赖，提交成果一致才算完成。仅声明CLI/integration测试两文件，保留04改动，0越界，git diff --check通过。
+
+<!-- ralph-task:T-FIX-05:begin -->
+### T-FIX-05 · verified
+
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
+- attempt: ad3b3853-b358-4d4b-87cc-2d47a5def3ef; repairs: 0/3
+- verify: `node --test tests/ralph-integration.test.mjs` (exit 0, tests unknown)
+- problem: none
+- cause: none
+- next: none
+<!-- ralph-task:T-FIX-05:end -->
+
+<!-- ralph-task:T-FIX-06:begin -->
+### T-FIX-06 · verified
+
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
+- attempt: 54b1913b-b60f-402f-9497-e18e84b79b30; repairs: 0/3
+- verify: `node --test tests/ralph-task-cycle.test.mjs tests/context-pack.test.mjs tests/ralph-recovery.test.mjs` (exit 0, tests unknown)
+- problem: none
+- cause: none
+- next: none
+<!-- ralph-task:T-FIX-06:end -->
+
+### T-FIX-06 · executor/父验收
+
+- 沿用record锁/原子写、EXECUTION和现有loadOrder.focus；LESSONS无相关active。
+- 可选executorReports最多4份，单份stdout/stderr各2000字符，总文本≤16384字符；保留前序排除陈述，区分executor未验证自述与verify事实。按task投影并引用/转义，旧record可兼容，不扩展v2顶层字段。
+- 新增真实runProcess多轮、其他task隔离、有界摘录、两次独立Node进程恢复及旧记录场景。RED2/2失败，声明verify及父done均67/67。原复现/tmp/gantry-rereview-diagnosis.mjs现在diagnosisInNextInput=true、两轮completed。
+- 六维：新增函数<50行，复用持久层/投影，无新依赖/框架；只改声明3源码+2测试，0越界，git diff --check通过。限制是有界原文摘录，不自动提炼语义，超长明确标截断。
+
+<!-- ralph-task:T-FIX-07:begin -->
+### T-FIX-07 · verified
+
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
+- attempt: f818ae83-a26f-4317-a6b6-4e669eda2865; repairs: 0/3
+- verify: `node --test tests/ralph-task-cycle.test.mjs tests/ralph-protocol.test.mjs` (exit 0, tests unknown)
+- problem: none
+- cause: none
+- next: none
+<!-- ralph-task:T-FIX-07:end -->
+
+### T-FIX-07 · executor/父验收
+
+- 沿用createContract/prepare→preflight→reserve及evidence叶子判据；LESSONS无相关active。
+- 有限识别字面直调、引号参数、&&/;/|与简单文件重定向，以固定Shell脚本和位置参数command-v检测，不eval验收串、不预跑行为测试。复杂Shell需显式preflight，TASK规划门禁同步检查声明；包脚本/解释器导入/远程依赖不做传递推断。
+- RED3项失败：缺runner仍calls=1、链/checks缺runner仍编码、动态Shell无preflight仍预约。GREEN及父done35/35（约50秒），缺失时calls=0且无新record/attempt；本地权限、builtin、命令链及合法RED兼容。
+- 六维：有限识别无通用Shell框架，固定脚本+参数防求值，静态门禁和执行复用判据，零新依赖，保持phases→evidence方向。仅声明7文件，保留06投影/测试，0越界；git diff --check通过。
+
+<!-- ralph-task:T-FIX-08:begin -->
+### T-FIX-08 · verified
+
+- receipt: 8caea02440f80b60941d498e82b63c7877da035683df0737b12af3920fa2e7e7
+- attempt: a0715a67-e3ea-49ee-be2d-59c39eeb8a85; repairs: 0/3
+- verify: `node --test tests/loop-engineering.test.mjs tests/ralph-protocol.test.mjs` (exit 0, tests unknown)
+- problem: none
+- cause: none
+- next: none
+<!-- ralph-task:T-FIX-08:end -->
+
+
+## T-FIX-08 · 旧门禁fixture适配
+
+- 正式全量903项902通过，旧有效fixture缺verify，104行原成功断言变红；原失败输出TEST-FAILED-FIX4TO7.txt。
+- Fresh executor先focused重现RED，再仅补node --version的verify，规定verify与父done均28/28通过；原两条断言保留，生产实现不变。
+- 沿用grep：rg定位loop-engineering:99，参考ralph-protocol静态门禁；LESSONS runner/preflight/fixture无命中。
+- 边界：write_files仅tests/loop-engineering.test.mjs，实际仅该文件一行；EXECUTION为控制器记录。0越界；无UI/schema/破坏性API。
+- 六维：R1一行fixture；R2仅相关用例；R3复用node字面验证；R4不增抽象；R5不改依赖；R6补齐有效任务前提。测试修改有真实失败依据，不删除或弱化断言。
+- 独立质量复核确认原测试意图保持，不把历史902/903写为通过。

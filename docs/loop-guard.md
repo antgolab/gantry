@@ -1,140 +1,41 @@
-# gantry loop-guard · 上下文 / 步数熔断
+# Gantry 阶段熔断与运行预算
 
-> P2 交付、P4(2026-09-16)命令折叠后内联到 `gantry advance` 入口。
-> 独立的 `gantry loop-guard` 子命令已删除,同名纯函数 `checkLoopGuard` 保留。
-> 文档字段与代码一致来源于:
-> `src/lib/loop-guard.mjs` / `src/cli.mjs` preAdvanceLoopGuard / `src/loop/loop.sh`
+`gantry advance` 入口内联 `preAdvanceLoopGuard`，纯判据在 `src/lib/loop-guard.mjs`；独立 `gantry loop-guard` 命令已删除。任务执行的时限、进程回收和修复额度由 Node controller/task-cycle 控制，不能用阶段重试包住耗尽的DEV任务。
 
----
-
-## 何时熔断
-
-每次 `gantry advance` 入口先跑 `preAdvanceLoopGuard`(内联),按优先级判定:
-
-| 优先级 | 触发条件 | reason |
+| 优先级 | 条件 | reason |
 |---|---|---|
-| 1 | `state.contextUsage.windowPercent >= 阈值` | `context-window-exceeded` |
-| 2 | `state.contextUsage.tokens > 阈值` | `context-tokens-exceeded` |
-| 3 | `state.stagesRun >= state.maxStages` | `max-stages-exceeded` |
-| — | driver 层:同 token 连续 ≥ `LOOP_STUCK_LIMIT` | shell 内 `exit 5` |
+| 1 | contextUsage.windowPercent >= 配置阈值 | context-window-exceeded |
+| 2 | contextUsage.tokens > 配置阈值 | context-tokens-exceeded |
+| 3 | stagesRun >= maxStages | max-stages-exceeded |
 
-前三档触发时 `gantry advance` 直接:
-- exit 2 —— driver 视其为**硬停**,不重试、原样透传,
-  stderr 报 `✗ blocked: advance rc=2 phase=<phase> <advance 输出尾 3 行>`
-- stderr `[advance warn] <reason>`
-- 写 `fence.lastStageResult.blockedReason = 'loop-guard: <reason>'`(**不覆盖**已有非空值)
-
-> 对照:advance 因**门禁未过**失败时是 `exit 1`,driver 会带诊断退避重试(见
-> [`docs/loop.md`](loop.md) § 重试与自主决策)。熔断刻意不重试——它要的是人工介入,
-> 而不是再跑一轮。
-
-stuck 是 shell 侧检测,不写 fence(driver 短命,人工重启更合适)。
-
----
-
-## 阈值默认与调整
-
-`.gantry/planning/config.json`:
+触发返回exit2，写fence.lastStageResult.blockedReason（已有非空原因不覆盖），后续loop-next返回blocked。contextUsage需宿主提供真实值，CLI不估算；缺数据时前两项不触发。
 
 ```json
 {
-  "loopGuard": {
-    "contextPercent": 85,
-    "contextTokens": 200000,
-    "stuckTolerance": 2
-  }
+  "loopGuard": { "contextPercent": 85, "contextTokens": 200000 }
 }
 ```
 
-缺省定义在 `src/lib/loop-guard.mjs` 的 `DEFAULT_THRESHOLDS`;缺 config 或缺 `loopGuard` 段时全部取缺省。
+默认阈值85%与200000 tokens。达到上下文阈值时写任务PROGRESS并交接，不复用过长失败上下文。stagesRun上限表示一次自主推进的阶段数，不能通过反复重置绕过任务预算。
 
-**stuckTolerance**:目前只是文档字段,shell 侧通过环境变量 `LOOP_STUCK_LIMIT` 生效——两者等价,后者优先。
+## Node supervisor 的约束
 
----
+- `GANTRY_LOOP_MAX_STEPS` 默认40，限制阶段步数；同一DEV token内的多个task/修复不是stuck。
+- 无进展指advance未改变阶段/change等事实，返回5；不靠同token出现两次就停止。
+- `.gantry/planning/config.json` 的ralph配置控制executorTimeoutMs、verifyTimeoutMs、runTimeoutMs、killGraceMs，默认15分钟、10分钟、2小时、5秒，必须为正整数。
+- 一次任务初次执行 + 三次修复，额度先持久化；明确外部调用故障独立最多三次传输重试。无论从headless还是宿主入口恢复，都不能清零。
+- 取消/超时先清理受控POSIX进程组，再验证/启动下一轮；无法证明旧组归属时blocked。Windows headless启动前拒绝。
 
-## 恢复步骤
+`GANTRY_LOOP_DISPATCHER` 可为测试/嵌入替换adapter。CLI使用包内Node入口；旧GANTRY_BIN、LOOP_STUCK_LIMIT、GANTRY_LOOP_RETRIES、GANTRY_LOOP_BACKOFF不再控制DEV任务额度。配置时不要依赖这些旧变量重开修复。
 
-1. 检查 stderr / STATE.md 中的 `lastStageResult.blockedReason`,确认熔断原因
-2. 处理根因:
-   - **context 熔断**:清理会话上下文 / 拆分 change
-   - **stagesRun 熔断**:确认阶段进度符合预期,必要时 `updateState` 重置 `stagesRun`
-   - **stuck**:检查为何 `advance` 未推进 stage(通常是门禁未过)
-3. 清 fence 的 blocked 状态:手动编辑 STATE.md 的 fence JSON,把 `lastStageResult.blockedReason` 置 `null`
-4. 重跑 `gantry loop <client>`(client ∈ `claude` | `codex`),或单跑 `gantry advance`
+## 处理阻塞
 
----
+先检查实际reason和EXECUTION/PROGRESS/TaskRecord，处理根因。上下文达到上限时清窗接力；阶段上限时确认产物与本次run位置。人工关卡须审阅后显式 `advance --approve <当前阶段>`，普通重启不批准。修复耗尽需要审阅新的任务修订并保留旧账，不能仅清fence。
 
-## 与 P1 loop-next 的关系图
+确认具体阻塞已处理后才清理对应fence原因；它不是删除控制记录或重置预算的许可。未知锁/旧执行者保留现场核对，不盲杀或自动删除。
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                    src/loop/loop.sh                      │
-│  (bash driver, ADR-003:只调 gantry advance)             │
-└───────────────────┬─────────────────────────────────────┘
-                    │
-             ┌──────┴──────┐
-             ▼             ▼
-          gantry        gantry
-          loop-next     advance
-          (P1)          (既有 CLI + P4 内联 guard)
-             │             │
-             │      ┌──────┴─────────────┐
-             │      ▼                    ▼
-             │   preAdvance         transitionStage
-             │   LoopGuard          (state-must-advance)
-             │   (P4 内联)
-             ▼      │
-     computeNextStep│
-     (纯函数)        │
-             │      ▼
-             │   checkLoopGuard
-             │   (纯函数)
-             ▼      │
-    fence.lastStageResult ◀───┘
-    (P1 定义,advance 内联熔断时写 blockedReason)
-```
+## 输出
 
-**契约不变**:
-- `loop-next` 输出格式 / exit code 与 P1 一致
-- `computeNextStep` 判定序不变(P1 优先级:blockedReason → converge → nextStep → 兜底)
-- advance 内联熔断写 blockedReason 之后,下一次 loop-next 会自然返回 `blocked`(P1 判定序 step 1)
+默认流式转发adapter输出，并写 `.gantry/loop/last-dispatch.log`、`last-advance.log` 和metrics.jsonl。`--quiet/-q`只输出摘要；`--verbose/-v`是默认输出的兼容别名。
 
----
-
-## driver 环境变量
-
-| 变量 | 缺省 | 说明 |
-|---|---|---|
-| `GANTRY_BIN` | `gantry`(测试指向 mock) | CLI 入口 |
-| `GANTRY_LOOP_DISPATCHER` | `<包>/src/loop/dispatch-<client>.sh` | 覆盖 dispatcher 路径 |
-| `GANTRY_LOOP_MAX_STEPS` | `40` | 步数上限 |
-| `LOOP_STUCK_LIMIT` | `2` | stuck 阈值 |
-| `GANTRY_LOOP_RETRIES` | `config.autonomous.maxRetries`(3) | 失败重试上限 |
-| `GANTRY_LOOP_BACKOFF` | `1` | 退避基数秒(`0` = 不等待) |
-| `GANTRY_LOOP_RETRY_CONTEXT` | 由 driver 导出,指向 `last-failure.txt` | 失败上下文,dispatcher 读它重新决策 |
-
----
-
-## driver stdout 契约
-
-`--quiet` 下每次 iteration 收尾一行摘要:
-
-```
-^step=\d+/\d+ stage=[a-z-?]+ token=[a-z-]+ dispatch=\d+ms advance=\d+ms rc=0$
-```
-
-默认(全显示)模式下每步不再是单行:
-
-```
-[loop] step=<n>/<max> stage=<s> token=<t> attempt=<k>     ← 派发前的头行
-<dispatch stdout 流式转发>
-[loop] step=<n>/<max> ok dispatch=<d>ms advance=<a>ms attempt=<k>
-```
-
-重试行(仅默认模式可见于 stdout,`--quiet` 时仍走 stderr):
-
-```
-[loop] ↻ retry <k>/<N> token=<t> <kind>-rc=<rc> backoff=<s>s
-```
-
-断言按模式取对应契约,不要跨模式匹配。
+阶段日志用于诊断，receipt才是内容验收证据。返回码及完整运行示例见 [loop.md](loop.md)。

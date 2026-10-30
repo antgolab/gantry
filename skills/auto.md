@@ -7,50 +7,29 @@ stage: auto
 
 # /gantry:auto
 
-启动自主模式，自动推进管线直到遇到人工确认关卡或达到最大阶段数。DEV 阶段由当前 Agent 只负责编排，同一 wave 的每个 task 各创建一个新子 Agent 并发执行。
+读取仓库状态与当前 context pack，执行当前阶段产物，再通过门禁推进；最多运行 `config.autonomous.maxStagesPerRun`（默认 3）个阶段。full 的 Change、Design、Integration 保留人工关卡；light 在 fast 内按原出口门闭环，不使用 full task-cycle。
 
-## 用法
+## 阶段协议
 
-- `/gantry:auto` — 按 `config.autonomous.maxStagesPerRun`（默认 3）推进若干阶段
+1. 设置 autonomous=true，按 pack.loadOrder 加载当前阶段约束。`loop-next` 的 full token 表示当前阶段，不是下一阶段。
+2. 产物、自检与 verify 齐备后调用 `gantry advance`，不把机械推进当作阶段实现。
+3. 进入人工关卡后先完成可审阅工件再停下。用户明确审阅并继续时，由宿主调用 `gantry advance --approve <当前阶段>`。批准绑定工件摘要；工件变化须重新审阅，worker 和 headless 重启不得自行批准，`--trust/--skip` 不能绕过。
+4. 达阶段上限、门禁阻塞、取消/超时或管线完成时停止，报告实际证据与当前位置。
 
-`--trust` 已移除；Change、Design、Integration 三个人工确认关卡不可绕过——但这三关**只存在于 full 管线**。light 管线无任何人工关卡：它在 `fast` 里由 `gantry advance` 出口门自动收敛（守卫命中则自动升档 `full@change`，否则自动归档），`/gantry:auto` 不需要为它暂停。
+## DEV 单任务调度协议
 
-## 执行协议
+共享工作区一次只允许一个任务写者；wave / `[P]` 是依赖和冲突视图，不启动共享目录并行写。
 
-1. 设置 autonomous=true
-2. 非 DEV 阶段循环：
-   a. 计算下一阶段
-   b. 检查门禁
-   c. 检查是否需要人工确认
-   d. 需要人工确认 → 暂停，进入人工确认关卡
-   e. 执行阶段，推进
-3. 进入 DEV 时执行“连续任务调度协议”，全部 task 完成后再推进 TEST。
-4. 暂停条件：
-   - 门禁阻塞（缺少工件）
-   - 人工确认关卡
-   - 达到 maxStages
-   - 管线到达 idle（完成）
+1. 运行 `gantry dispatch --json`，CLI 重验已完成依赖，固定任务前基线/验收 contract，并先持久化一次预约。
+2. `dispatched` 含一个 `taskId`、`attemptId`、`repairOrdinal`；运行 `gantry context dev --task <id> --json`，把该任务 pack 交给一个新的 executor subagent。worker 是叶子执行者，不创建或恢复其他子 Agent，只执行本次候选编码。
+3. worker 只写 task.write_files，一次尝试内按 RED→GREEN→REFACTOR，报告真实命令、退出码、关键断言及 problem/cause/next；纯文档任务说明 TDD 例外。worker 不改 TASKS/EXECUTION/STATE/execution 控制 JSON，不调用 done/dispatch/advance/archive，不 commit，不改验收 contract，不启动逃逸后台写者。
+4. 等 worker 与受控写进程返回后，宿主运行 `gantry done <id> --json`。控制器独立执行 verify/checks、边界和弱化检查；成功凭据先落盘，再写 EXECUTION 和 TASKS。返回报告或勾选不算完成证据。
+5. 可修复失败保留诊断，下一次预约必须新建 fresh executor。总上限为初次执行 + 三次修复（0/1/2/3），先扣后启动，重启不清账。明确可重试的传输故障在同预约下最多额外三次，与业务额度分开。未知故障、越界、需求冲突或验收改写直接阻塞；额度耗尽不转主上下文无限接管，不整体回退 wave。
+6. 中断恢复先运行 done 重验已有候选；有效 receipt 可幂等补齐状态，不无条件重调模型。重复 dispatch 不代表已发生失败，不重复消费预约。记录损坏、旧锁所有权不明或旧任务缺任务前基线时保留现场并审阅迁移。
+7. 任务成功后重新 dispatch。`all_done` 时运行 `gantry advance`：最终组合验证、安全暂存和索引重验后由 CLI 统一一个 DEV commit，再推进 TEST。用户既有暂存内容、不可分的同文件修改不能混入自动提交。
 
-## DEV wave 调度协议
-
-主 Agent 默认是 orchestrator，除 `fallback_main` 降级分支外，**禁止直接修改 task 代码**：
-
-1. 运行 `gantry dispatch --json`。
-2. 返回 `{"status":"all_done"}`：按 `4-dev.md` § 0.5 做 DEV 末统一 commit，再运行 `gantry advance`，然后继续阶段循环。
-3. 返回 `{"status":"fallback_main","waveId":1,"taskIds":["T01"]}`：停止为该 wave 创建子 Agent，由主 Agent 在当前上下文接管 `taskIds`。对每个 task 仍须先运行 `gantry context dev --task <id>` 并重新读取 `.gantry/core/phases/4-dev.md`「单任务执行」与 context pack，逐 task 完成 TDD、verify 和 `gantry done <task-id>`（不单独 commit，R4.1）；任一 task 失败立即停止并保留证据。接管完成后重新 dispatch。
-4. 返回 `{"status":"dispatched","waveId":1,"taskIds":["T01","T02"]}`：按 taskIds 顺序**串行**运行 `gantry context dev --task <id> --json`，分别保存每个 task 的 pack。`.gantry/planning/context-pack.json` 是单文件、会被后一次覆盖，所以 pack 只通过 prompt 交给子 Agent。
-5. 在同一条消息里为每个 task 各创建一个新子 Agent 并发执行，每个子 Agent 只拿到 `waveId`、自己的 `taskId`、对应 pack 和共享工作区约束：
-   - 只执行自己的 task，只认 prompt 里的 pack，不读 `context-pack.json`；严格遵守该 task 的文件边界，完成 TDD 和 verify。
-   - 不 commit，不运行 `gantry done`，不改 `TASKS.md` / `EXECUTION.md`；pack 的 `next.onSuccess` 由 orchestrator 代为执行。执行记录和微复盘 `problem / cause / next` 写进返回报告。
-   - 子 Agent 是叶子执行者，禁止在内部创建、恢复或委派其他子 Agent。
-   - 子 Agent 禁止执行 `gantry advance`，阶段推进只属于 orchestrator。
-   - 共享工作区中不得撤销或覆盖其他人的既有修改。
-6. 同步等待本 wave 全部子 Agent 返回后，按 `4-dev.md` § 0.3 做 wave checkpoint：绿则按 taskIds 顺序串行运行成功 task 的 `gantry done <task-id>`，并把返回报告填进 `EXECUTION.md` 对应 task 段；红则整波 revert 后重跑。
-7. 重新运行 `gantry dispatch --json` 验证仓库事实；同一 canonical wave 仍有 pending task 时，CLI 机械递增 `STATE.retries`，并返回相同 `waveId` 和剩余 `taskIds`。在重试额度内为剩余 task 创建**新的子 Agent**，禁止复用失败子 Agent 的上下文。重试上限由 `gantry dispatch` 按 `autonomous.maxRetries` 机械执行；耗尽后返回 `fallback_main`，由主 Agent 接管，不因子 Agent 持续失败而等待人工介入。
-8. 当前 wave 的子 Agent 未全部返回前，不得启动下一个 wave。子 Agent 创建次数正常情况下等于 task 数。
-
-具体如何创建和等待子 Agent，由各运行时生成的适配协议规定。
+具体子 Agent 创建/等待 API 由宿主提供。headless 的 `gantry loop claude|codex` 使用相同任务内核，每次 adapter 调用一个 fresh 客户端。
 
 ## 恢复
 
-暂停后审阅当前阶段产物，再运行 `/gantry:auto` 或 `/gantry-next` 继续。
+只依赖仓库工件：STATE 的阶段、TASKS 的完成状态、execution JSON 的预算/receipt、EXECUTION/PROGRESS 的诊断。处理阻塞后重新调用 `/gantry:auto`；人工批准只适用于用户实际审阅的当前内容。

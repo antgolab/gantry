@@ -649,3 +649,45 @@ test('lessons: deprecated/superseded 条目被过滤(粗体状态字段)', () =>
     assert.deepEqual(ids, ['L-001'], '仅 active 条目应返回,deprecated/superseded 过滤');
   } finally { cleanup(root); }
 });
+
+function taskRecordFixture(root, taskId, { repairsUsed = 2, reason = 'focused assertion failed' } = {}) {
+  const path = join(root, '.gantry/specs/demo/execution');
+  mkdirSync(path, { recursive: true });
+  writeFileSync(join(path, `${taskId}.json`), JSON.stringify({
+    schemaVersion: 1, revision: 1, changeId: 'demo', taskId, contract: {}, baseline: {}, repairsUsed,
+    attempt: { id: 'attempt', repairOrdinal: repairsUsed, lifecycle: 'returned', externalRetriesUsed: 0, reservedAt: '2026-10-29T00:00:00Z' },
+    failure: { kind: 'verify-failed', reason, at: '2026-10-29T00:01:00Z' }, receipt: null,
+  }));
+}
+
+test('dev retry history is task record truth, never unrelated STATE retries', () => {
+  const root = createFixture('task-retry-history');
+  try {
+    writeState(root, { currentStage: 'dev', activeChange: 'demo', currentTask: 'T01', retries: 99, pauseReason: 'unrelated stage failure' });
+    taskRecordFixture(root, 'T01'); taskRecordFixture(root, 'T02', { repairsUsed: 3, reason: 'other task failure' });
+    const pack = buildPack(root);
+    assert.deepEqual(pack.retryHistory, { count: 2, lastFailure: { at: '2026-10-29T00:01:00Z', reason: 'focused assertion failed' } });
+  } finally { cleanup(root); }
+});
+
+test('dev corrupt task record blocks pack generation instead of resetting history', () => {
+  const root = createFixture('task-retry-corrupt');
+  try {
+    writeState(root, { currentStage: 'dev', activeChange: 'demo', currentTask: 'T01' });
+    taskRecordFixture(root, 'T01');
+    writeFileSync(join(root, '.gantry/specs/demo/execution/T01.json'), '{bad');
+    assert.throws(() => buildPack(root), /record corrupt/);
+  } finally { cleanup(root); }
+});
+
+test('legacy dev retry history only reads matching task diagnostics', () => {
+  const root = createFixture('task-retry-legacy');
+  try {
+    writeState(root, { currentStage: 'dev', activeChange: 'demo', currentTask: 'T01', retries: 88 });
+    mkdirSync(join(root, '.gantry/specs/demo'), { recursive: true });
+    writeFileSync(join(root, '.gantry/specs/demo/EXECUTION.md'), '# Execution\n\n## Self-Heal Log\n\n### T01 · attempt #1\n\n- at: legacy-at\n- reason: legacy-reason\n\n### T02 · attempt #1\n\n- at: other\n- reason: other-reason\n');
+    const pack = buildPack(root);
+    assert.deepEqual(pack.retryHistory, { count: 1, lastFailure: { at: 'legacy-at', reason: 'legacy-reason' } });
+    assert(pack.loadOrder.some(e => e.path.endsWith('EXECUTION.md') && e.focus.some(f => f.includes('T01'))));
+  } finally { cleanup(root); }
+});
