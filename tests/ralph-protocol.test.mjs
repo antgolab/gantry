@@ -7,29 +7,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { parseTasks } from '../src/lib/tasks.mjs';
-import { checkGate } from '../src/lib/phases.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = path => readFileSync(join(root, path), 'utf8');
-
-test('TASK planning rejects complex verification without actionable preflight declarations', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'ralph-runner-planning-'));
-  try {
-    const path = join(dir, 'TASKS.md');
-    const task = '<task id="T01"><write_files>x</write_files><verify>RUNNER=node "$RUNNER" --version</verify><checks></checks><preflight>PROBE</preflight></task>';
-    writeFileSync(path, task.replace('PROBE', ''));
-    const gate = checkGate('dev', dir, { pipeline: 'full' });
-    assert.equal(gate.passed, false); assert.equal(gate.hard, true);
-    assert.match(gate.reason, /T01.*preflight/);
-    writeFileSync(path, task.replace('PROBE', 'command -v node'));
-    assert.equal(checkGate('dev', dir, { pipeline: 'full' }).passed, true);
-    for (const file of ['templates/TASKS.md', 'phases/3-task.md']) {
-      const text = read(file);
-      assert.match(text, /传递依赖/); assert.match(text, /复杂 Shell/);
-      assert.match(text, /RED/); assert.match(text, /preflight/);
-    }
-  } finally { rmSync(dir, { recursive: true, force: true }); }
-});
 
 test('full DEV protocols agree on single-task reservation, candidate boundary and actual completion', () => {
   for (const file of ['phases/4-dev.md', 'skills/auto.md', 'skills/exec.md']) {
@@ -37,7 +17,7 @@ test('full DEV protocols agree on single-task reservation, candidate boundary an
     assert.match(text, /dispatch.*--json/);
     assert.match(text, /fresh executor/);
     assert.match(text, /done/);
-    assert.match(text, /三次修复|修复 3 次/);
+    assert.match(text, /ralph\.maxRepairs/);
     assert.doesNotMatch(text, /同一条消息里为每个 task|整波 revert 后重跑|status":"fallback_main"|禁止串行等待/);
     assert.match(text, /候选/);
   }
@@ -100,6 +80,8 @@ test('rendered Codex and Claude auto skills cannot reintroduce parallel waves or
     assert.match(text, /attemptId、repairOrdinal/);
     assert.match(text, /gantry done <id> --json/);
     assert.doesNotMatch(text, /fallback_main|同一条消息里为本 wave|全部创建后再逐个|本 wave 的每个 taskId/);
-    assert.match(text, /三次修复耗尽后停止/);
+    assert.match(text, /ralph\.maxRepairs 次修复（默认3）/);
+    assert.match(text, /宿主共用预算/);
+    assert.match(text, /精确恢复.*已保存 contract 原值/);
   }
 });

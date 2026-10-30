@@ -2,7 +2,7 @@
 
 ## Context Pack 优先
 
-> 如果存在 `.gantry/planning/context-pack.json`,**先读它**。pack 的 `checklists` 字段已替你完成"是否触发各子检查"的机械判定;你只需按 `trigger=true/false` 决定哪些段必跑、哪些跳过。
+> 复用入口已加载的 context pack；尚未加载时再读 `.gantry/planning/context-pack.json`。pack 的 `checklists` 字段已替你完成"是否触发各子检查"的机械判定;你只需按 `trigger=true/false` 决定哪些段必跑、哪些跳过。
 >
 > 下面的 prose 仍是执行参考(怎么做),但"该不该做"以 pack 为准。
 
@@ -13,12 +13,14 @@
 
 ## Pre-hook（可选）
 
+先消费 pack 的 `hook-before`：false 时直接跳过，不运行 hook 命令，也不反复探测。旧 pack 无该项时读一次有效 hook 配置；为空则本上下文内跳过，配置变化后重新判断。CLI 已执行的 before:change / before:dev 不重复执行。
+
 在进入本阶段主流程前，运行：
 ```bash
 gantry hook run before:integration
 ```
 - 退出码 0 或无配置 → 继续
-- 退出码非 0 → 停止并告知用户，等待指示
+- 退出码非 0 → 收集诊断，按宿主剩余预算修复后重跑；候选执行者将诊断交外层，不自行批准或另开重试循环。仅预算耗尽或人工/进程/内容保护条件才停止
 
 ## 输入
 
@@ -32,14 +34,18 @@ gantry hook run before:integration
 
 本阶段承担最终系统证据：全量自动化、远程依赖与端到端验证。TASK 的 `<verify>` 仍只代表单个 task 的完成证据，不在此扩展为新的字段。
 
-### 1. 跑全套自动化
+### 1. 收口全套自动化证据
 
 - 全量单测：`npm test`（或等价）
 - 集成测试 / e2e：`npm run e2e`（如有）
 - 类型检查 / 静态检查：`tsc --noEmit` / `lint` 等
 - 构建：`npm run build`
 
-**贴出每条命令的真实输出**到产出中。任何失败立即进入「失败诊断」。
+由一个验证负责人按 change 收口，不按 task / wave 重复部署和跑全套。先核对 TEST 中已有的全量证据：代码与索引内容、命令、配置、目标环境一致，覆盖范围满足本阶段且未被后续改动影响时，引用原始输出路径；只执行缺失或失效部分。单 task 的 focused verify 不能代替全量证据。
+
+远程依赖、部署版本或测试数据变化，或无法确认远程结果仍有效时，重跑对应 smoke / Journey；不以源码摘要替代环境确认。共享环境只部署同一候选版本一次、准备一次共用前置，各场景所需的数据隔离和清理仍必须执行。不同目标环境分别验证，不能因命令相同跨环境复用。
+
+**每条命令必须有真实输出或仍有效的原始证据引用**；UAT.md 记录目标环境、部署版本及复用依据。自动 AC 命令统一交给 `gantry verify-ac` 执行，不再手跑后重复记录。任何失败立即进入「失败诊断」。
 
 ### 2. 跨服务路径总验收（条件步骤 · 单 Coordinator 角色）
 
@@ -69,7 +75,7 @@ gantry hook run before:integration
 
 责任方修复后，**由 Coordinator 重跑该 Journey**，直到端到端通过——不是产完修复任务就结束。
 
-**R2.6 适用**:同一 Journey 的自动修复重试 ≤ 3 轮，超限停下要求人工决策。
+**R2.6 适用**:Journey 的修复共用宿主当前阶段 `autonomous.maxRetries` 剩余预算（默认3），不按 Journey 另加额度；耗尽后报告证据。
 
 #### 2.4 路径验收账本
 
@@ -97,7 +103,7 @@ gantry hook run before:integration
 3. 回到 `phases/4-dev.md` 执行修复
 4. 修完回到本步重跑
 
-**R2.6**：自动重试 ≤ 3 轮。第 3 轮仍失败必须停下来要求人工决策。
+**R2.6**：自动修复使用当前阶段 `autonomous.maxRetries` 剩余预算（默认3），耗尽且仍失败才返回错误。
 
 ### 5. 聚合反思（在 ARCHIVE 之前必跑）
 
@@ -184,7 +190,7 @@ DEV/TEST 阶段的 friction 事件已由 `src/lib/friction.mjs` 自动记录（v
 
 ## 约束（强制）
 
-- **R2.6**：UAT 失败的自动重试 ≤ 3 轮
+- **R2.6**：UAT 自动化失败按阶段剩余预算修复；人工 UAT 判断仍需用户确认
 - **R4.4**：禁止声称"通过"而没贴真实输出
 - **不在本阶段移动 / 删除 `.gantry/specs/<change-id>/`**——archive 归档只复制，源目录保留
 
@@ -193,28 +199,34 @@ DEV/TEST 阶段的 friction 事件已由 `src/lib/friction.mjs` 自动记录（v
 - [ ] 全量自动化结果已贴出且全绿
 - [ ] 跨服务:每条 Journey 端到端跑过 + 断点已判定归属 + 全部通过或已回退修复重跑通过（单服务已写明跳过）
 - [ ] 每条 UAT 都有人工通过/失败标注
-- [ ] 失败的项目都已经过最多 3 轮自动重试，超限的已暂停
+- [ ] 失败项目已在宿主预算内修复并重验，耗尽的已附诊断；未另加每项目重试额度
 - [ ] `EXECUTION.md` 只有一个 `## Retrospective`，Keep / Problem / Next 均有证据或明确为 none
 - [ ] CHANGELOG 已追加
 - [ ] `archive` 后源 `.gantry/specs/<change-id>/` 已移动到 `_archive/<change-id>/`，源目录不再存在；`unarchive <id>` 可恢复
 
 ## Post-hook（可选）
 
+先消费 pack 的 `hook-after`：false 时直接跳过，不运行 hook 命令，也不反复探测。旧 pack 无该项时复用已读取配置；为空则跳过。已配置 hook 每次真实阶段执行仍按配置运行，不缓存其成功结果。
+
 完成本阶段所有工作、自检通过后，运行：
 ```bash
 gantry hook run after:integration
 ```
 - 退出码 0 或无配置 → 继续
-- 退出码非 0 → 停止并告知用户，等待指示
+- 退出码非 0 → 收集诊断，按宿主剩余预算修复后重跑；候选执行者将诊断交外层，不自行批准或另开重试循环。仅预算耗尽或人工/进程/内容保护条件才停止
 
 ## 自主模式自检（autonomous=true）
 
 本阶段末尾禁止向用户反问「是否继续 / 要不要先扫一眼 / 是否推进下一阶段」。按 R2.6：
 - 产物齐备、门禁通过 → 直接按「触发下一步」执行
 - 多选场景 → 取推荐项（无推荐则取列表第一项），把选择与理由写进本阶段产物
-- 仅三类允许停：① `requiresApproval` 硬锁的 change / design / integration；② R5 / R6 / R7 触发；③ R2.5 自愈 3 次仍失败
+- 停止条件按 当前工具的 `gantry-next` 入口「门禁修复循环」：人工确认/所缺用户决策或凭据、宿主剩余预算耗尽、取消/时限、进程/控制记录/用户内容保护；可恢复门禁先在本次调用内诊断修复
 
 ## 触发下一步
 
 - 此 CHANGE 完成 → `gantry archive`（收尾 + 默认归档）→ `gantry change "<新>"`
 - 有未解决的 fix-plan → 暂停，告知用户决策
+
+## 当前代码的 AC 证据
+
+集成运行和最终源码确定后，运行 `gantry verify-ac --json`；涉及人工或跨服务观察时，记录当前 UAT/JOURNEY-VERIFY 及附件，再以 `--observation <临时JSON>` 关联实际观察。integration 的静态门禁只读校验这些证据，不自行启动验证命令。源码或验证配置变化后必须重验；fail/caveat/缺失证据不允许无保留通过。

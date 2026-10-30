@@ -13,6 +13,14 @@ function detectType(cmd) {
   return 'shell';
 }
 
+export function isEmptyHook(hookDef) {
+  if (hookDef == null || hookDef === false) return true;
+  if (typeof hookDef === 'string') return !hookDef.trim();
+  if (Array.isArray(hookDef)) return hookDef.length === 0;
+  if (typeof hookDef === 'object') return hookDef.cmd == null || (typeof hookDef.cmd === 'string' && !hookDef.cmd.trim());
+  return false;
+}
+
 async function runOne(hookDef, projectRoot, event) {
   const cmd = typeof hookDef === 'string' ? hookDef : hookDef.cmd;
   const type = (typeof hookDef === 'object' && hookDef.type) || detectType(cmd);
@@ -54,7 +62,9 @@ async function runOne(hookDef, projectRoot, event) {
  */
 export async function runHook(config, event, projectRoot) {
   const hookDef = config?.hooks?.[event];
-  if (!hookDef) return { ok: true, skipped: true };
+  if (isEmptyHook(hookDef)) return { ok: true, skipped: true };
+  const cmd = typeof hookDef === 'string' ? hookDef : hookDef?.cmd;
+  if (typeof cmd !== 'string') return { ok: false, error: '命令必须为字符串' };
 
   const label = typeof hookDef === 'string' ? hookDef : hookDef.cmd;
   console.log(`⚙ hook ${event}: ${label}`);
@@ -72,7 +82,7 @@ export async function runHook(config, event, projectRoot) {
  * 列出所有已配置的 hook
  */
 export function listHooks(config) {
-  return config?.hooks || {};
+  return Object.fromEntries(Object.entries(config?.hooks || {}).filter(([,def]) => !isEmptyHook(def)));
 }
 
 /**
@@ -85,7 +95,8 @@ export function listHooks(config) {
  */
 export function checkHook(hookDef, projectRoot) {
   const cmd = typeof hookDef === 'string' ? hookDef : hookDef?.cmd;
-  if (!cmd) return { ok: false, type: 'shell', reason: '配置为空' };
+  if (isEmptyHook(hookDef)) return { ok: true, skipped: true, type: 'shell' };
+  if (typeof cmd !== 'string') return { ok: false, type: 'shell', reason: '命令必须为字符串' };
 
   const type = (typeof hookDef === 'object' && hookDef.type) || detectType(cmd);
 

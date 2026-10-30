@@ -6,7 +6,7 @@ import { mkdtempSync,mkdirSync,writeFileSync,readFileSync,existsSync,rmSync } fr
 import { tmpdir } from 'node:os';
 import { join,dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { writeState,readState } from '../src/lib/state.mjs';
+import { writeState,readState,isStageApproved } from '../src/lib/state.mjs';
 const LOOP=join(dirname(fileURLToPath(import.meta.url)),'../src/loop/loop.sh');
 function project(script,config={}){
  const root=mkdtempSync(join(tmpdir(),'ralph-driver-'));
@@ -24,7 +24,7 @@ test('compatibility shell validates usage and accepts verbose alias',()=>{
  }
  const r=spawnSync('bash',[LOOP,'--help'],{encoding:'utf8',timeout:5000});assert.equal(r.status,0);assert.match(r.stdout,/用法/);
 });
-test('real driver streams candidate, writes metric, stops at concrete design gate',()=>{
+test('real driver --verbose streams candidate, writes metric, stops at concrete design gate',()=>{
  const f=project('echo "candidate stream"\necho reviewed > .gantry/specs/demo/DESIGN.md\n');
  try{
   const r=f.run(['--verbose']);assert.equal(r.status,2,r.stderr);
@@ -35,11 +35,23 @@ test('real driver streams candidate, writes metric, stops at concrete design gat
   assert.equal(existsSync(join(f.root,'.gantry/planning/ralph.lock')),false);
  }finally{f.clean();}
 });
-test('quiet keeps stream in log, unknown nonzero is blocked without dispatch retry',()=>{
+test('默认不把模型流打到控制台，全量落盘唯一临时目录，进度仍上屏',()=>{
+ const f=project('echo "candidate stream"\necho reviewed > .gantry/specs/demo/DESIGN.md\n');
+ try{
+  const logDir=join(f.root,'loop-logs');
+  const r=f.run([],{GANTRY_LOOP_LOG_DIR:logDir});assert.equal(r.status,2,r.stderr);
+  assert.doesNotMatch(r.stdout,/candidate stream/);          // 模型流不上屏
+  assert.match(r.stdout,/token=gantry-design/);               // 进度仍上屏
+  assert.match(r.stdout,/全量日志/);                          // 控制台给出日志路径
+  assert.match(readFileSync(join(logDir,'loop.log'),'utf8'),/candidate stream/); // 全量进唯一临时目录
+ }finally{f.clean();}
+});
+test('quiet keeps stream in log while nonzero candidate failures retry to the configured limit',()=>{
  const f=project('echo candidate stream\necho call >> calls\nexit 1\n');
  try{
   const r=f.run(['-q']);assert.equal(r.status,2,r.stderr);assert.doesNotMatch(r.stdout,/candidate stream/);
-  assert.equal(readFileSync(join(f.root,'calls'),'utf8'),'call\n');
+  assert.equal(readFileSync(join(f.root,'calls'),'utf8'),'call\n'.repeat(4));
+  assert.match(r.stderr,/exhausted/);
   assert.match(readFileSync(join(f.root,'.gantry/loop/last-dispatch.log'),'utf8'),/candidate stream/);
  }finally{f.clean();}
 });
@@ -56,5 +68,19 @@ test('run deadline cleans actual child writer before returning budget exit',asyn
 test('invalid stage limit rejects before model launch',()=>{
  const f=project('echo bad > called\n');try{
   const r=f.run([],{GANTRY_LOOP_MAX_STEPS:'0'});assert.equal(r.status,64);assert.equal(existsSync(join(f.root,'called')),false);
+ }finally{f.clean();}
+});
+test('--auto-approve 自动批准 design 关卡，不阻塞在人工确认',()=>{
+ const f=project('echo candidate stream\necho reviewed > .gantry/specs/demo/DESIGN.md\n');
+ try{
+  const r=f.run(['--auto-approve']);
+  // 不再以 exit 2（人工确认关卡）阻塞：批准已写入，推进卡在 design→task 门禁（缺 TASKS，exit 1）
+  assert.equal(r.status,1,r.stderr);
+  assert.equal(isStageApproved(f.root,'design'),true);
+  assert.doesNotMatch(r.stderr,/人工确认关卡/);
+  const lines=readFileSync(join(f.root,'.gantry/loop/metrics.jsonl'),'utf8').trim().split('\n');
+  const auto=lines.map(l=>JSON.parse(l)).find(m=>m.autoApprove===true);
+  assert.equal(auto.stage,'design');
+  assert.equal(existsSync(join(f.root,'.gantry/planning/ralph.lock')),false);
  }finally{f.clean();}
 });

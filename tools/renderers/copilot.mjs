@@ -50,11 +50,17 @@ ${withPhaseRef(body, frontmatter.stage)}
 }
 
 function withPhaseRef(body, stage) {
-  const phase = stage && STAGE_PHASE_MAP[stage] ? `${STAGE_PHASE_MAP[stage]}.md` : null;
-  const ref = phase
-    ? `\n\n## Context Pack 协议\n\n执行阶段型 prompt 时先读取 \`.gantry/planning/context-pack.json\` (schema v2)。若 pack 不存在:\n- \`gantry-change\`:先按编排协议运行 \`gantry change "<描述>"\`,由 CLI 创建 pack,再读取 pack 继续。\n- 其他阶段型 prompt:停手并提示运行 \`gantry context\` 刷新,或先用 \`gantry status\` 查看状态。\n\n读取到 pack 后，校验 \`schemaVersion === 2\`，按 \`loadOrder\` 最小加载；\`agent-prompt.required === true\` 时必须读取，其 constraints 与 phase prompt 同时生效。按 \`checklists[]\` 执行子检查。仅当当前 skill 的编排协议要求推进时，才执行 \`next.onSuccess\`；明确要求停在人工确认关卡时禁止执行，等待后续 \`/gantry-auto\` 或 \`/gantry-next\`。\n\n## 阶段执行指令\n\n读取并严格执行 \`.gantry/core/phases/${phase}\` 中的完整阶段协议。`
-    : '';
-  return `${body.trim()}${ref}`;
+  if (!stage || !STAGE_PHASE_MAP[stage]) return body.trim();
+  return `${body.trim()}
+
+## Context Pack 协议
+
+在编排协议的加载步骤读取一次 \`.gantry/planning/context-pack.json\`，校验 \`schemaVersion === 2\`；change 首次由 \`gantry change\` 创建，其余缺失时用 \`gantry context\` 生成。
+
+- 按 \`loadOrder\` 消费 \`required\` 项，按 \`focus\` 读相关章节；同一上下文已读且未变化的内容复用，新上下文重新加载。agent constraints 与 phase 同时生效。
+- \`checklists\`：\`trigger=true\` 必跑；\`false+confidence=high\` 跳过；\`false+confidence=low\` 据相关任务和设计复核，只能上调补跑，不得下调 true。
+- 仅按编排协议执行 \`next.onSuccess\`；人工关卡先完成可审阅工件再等待明确批准，不自行推进。不增造 schema 字段。
+`;
 }
 
 function splitFrontmatter(content) {

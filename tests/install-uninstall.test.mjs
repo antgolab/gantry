@@ -219,9 +219,9 @@ describe('install', () => {
   it('generated change skill matches current bootstrap contract', () => {
     run('install --tool codex', { cwd: tmpDir });
     const changeSkill = readFileSync(join(tmpDir, '.agents/skills/gantry-change', 'SKILL.md'), 'utf8');
-    assert.ok(changeSkill.includes('若 pack 不存在'));
-    assert.ok(changeSkill.includes('gantry change "<描述>"'));
-    assert.ok(changeSkill.includes('明确要求停在人工确认关卡时禁止执行'));
+    assert.match(changeSkill, /change 首次由.*gantry change.*创建/);
+    assert.ok(changeSkill.includes('gantry change --id <id> "<描述>"'));
+    assert.match(changeSkill, /人工关卡.*等待明确批准/);
     assert.ok(!changeSkill.includes('完成后执行 `next.onSuccess` (失败走 `next.onFailure`)'));
   });
 

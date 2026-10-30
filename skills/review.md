@@ -87,7 +87,7 @@ requiresApproval: false
 4. 完整性：是否遗漏需求条件。
 5. 风险：最可能出错的地方是什么。
 
-输出写入 `EXECUTION.md` 的当前 task 段「对抗审查」小节；例外任务可同步写入 `SUMMARY.md`。最多 3 轮，3 轮后仍有 unresolved critical 时停止开发并升级人工决策。
+输出写入 `EXECUTION.md` 的当前 task 段「对抗审查」小节；例外任务可同步写入 `SUMMARY.md`。发现 unresolved critical 时交 executor 修复并重新审查，使用宿主当前 task/阶段的剩余预算（ralph.maxRepairs / autonomous.maxRetries，默认3），不单独增加审查重试轮次；耗尽后才报告具体证据。Reviewer 不直接修改实现。
 
 ## Agent 指令
 

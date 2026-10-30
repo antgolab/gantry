@@ -2,7 +2,7 @@
 
 ## Context Pack 优先
 
-> 如果存在 `.gantry/planning/context-pack.json`,**先读它**。pack 的 `checklists` 字段已替你完成"是否触发各子检查"的机械判定;你只需按 `trigger=true/false` 决定哪些段必跑、哪些跳过。
+> 复用入口已加载的 context pack；尚未加载时再读 `.gantry/planning/context-pack.json`。pack 的 `checklists` 字段已替你完成"是否触发各子检查"的机械判定;你只需按 `trigger=true/false` 决定哪些段必跑、哪些跳过。
 >
 > 下面的 prose 仍是执行参考(怎么做),但"该不该做"以 pack 为准。
 
@@ -16,24 +16,33 @@ Test Engineer。
 
 ## Pre-hook（可选）
 
+先消费 pack 的 `hook-before`：false 时直接跳过，不运行 hook 命令，也不反复探测。旧 pack 无该项时读一次有效 hook 配置；为空则本上下文内跳过，配置变化后重新判断。CLI 已执行的 before:change / before:dev 不重复执行。
+
 在进入本阶段主流程前，运行：
 ```bash
 gantry hook run before:test
 ```
 - 退出码 0 或无配置 → 继续
-- 退出码非 0 → 停止并告知用户，等待指示
+- 退出码非 0 → 收集诊断，按宿主剩余预算修复后重跑；候选执行者将诊断交外层，不自行批准或另开重试循环。仅预算耗尽或人工/进程/内容保护条件才停止
 
 ## 输入
 
 - `@.gantry/specs/<change-id>/SPEC.md`（AC + 非功能性需求）
-- `@.gantry/specs/<change-id>/DESIGN.md`（**必读 `## 0. 技术栈选定`**——5 轮各项的工具选择必须匹配栈：JS 用 Vitest / Playwright / k6，Python 用 pytest / locust，Go 用 testing / vegeta）
+- `@.gantry/specs/<change-id>/DESIGN.md`（只读 `## 0. 技术栈选定` 及当前测试相关的契约；工具选择必须匹配栈）
 - `@.gantry/specs/<change-id>/TASKS.md`
-- `@.gantry/specs/<change-id>/EXECUTION.md`
-- 各任务的 `*-SUMMARY.md`（仅高风险/例外任务存在）
+- `@.gantry/specs/<change-id>/EXECUTION.md` 的相关 task 证据；需要独立交接细节时才跟随 SUMMARY 链接，不扫描或复制全部报告
 - 已存在的测试代码
 - `@gantry/reference/test-pyramid.md`（5 轮的工具 / 标准 / 清单）
 
 ## 你的职责
+
+### 共用验证先收口
+
+TEST 按 change 执行一次覆盖评估，不按 task / wave 启动完整五轮。由一个验证负责人先检查 EXECUTION 和已有 TEST 证据，列出未覆盖或已失效的检查，再统一准备目标环境与测试数据。独立检查可并发；共享部署、可写测试数据及有副作用的操作由负责人串行组织。
+
+在现有范围声明中记录共用命令、目标环境、负责阶段及已有证据路径。相同命令覆盖多个 AC 时优先在 test-commands.yml 使用一条命令和多个 covers；`gantry verify-ac` 同次调用会合并完全相同的命令。先配置完整映射，再统一执行 verify-ac；不要先手跑同一命令后立即让 CLI 再跑，也不要为每个 AC 各调用一次。
+
+下游仅在证据绑定的代码、索引、命令、配置和目标环境仍匹配且满足当前覆盖要求时引用；缺失、过期或无法确认则重跑。远程状态、部署版本或测试数据变化时重跑对应检查；本地源码摘要不能证明远程结果仍有效。复用不是跳过，不把单 task 的通过当成全量或端到端通过。
 
 ### 步骤 0 · 声明本次走哪几轮（强制）
 
@@ -82,12 +91,11 @@ UAT-1：<场景>
   前置：<状态>
   步骤：1. ... 2. ... 3. ...
   期望：- ... - ...
-  通过/失败：
 ```
 
 #### 1.3 覆盖率与边界
 
-- 跑 `<test-cmd> --coverage`，贴输出
+- 需要覆盖率时，将 `<test-cmd> --coverage` 作为本阶段相应的实际验证命令，输出保留一份；避免先跑同套测试再仅为覆盖率重跑
 - 关键路径行覆盖 ≥ 项目门槛（默认 80%；core 模块 ≥ 90%）
 - 边界值用例（空 / 极大 / 极小 / Unicode / null）≥ 3 条
 - 错误路径必须有显式测试
@@ -138,7 +146,7 @@ UAT-1：<场景>
 
 #### 2.1 性能预算确认
 
-从 `SPEC.md` 的「非功能性需求」提取性能预算。**没有就停下来**，让用户先补。
+从 `SPEC.md` 的「非功能性需求」提取性能预算；缺失时先查 DESIGN、既有项目配置与测量基线。可自行测量的先测并记录，不能编造验收阈值；仅需用户决定的新性能目标才提问，不因缺少报告字段立即暂停。
 
 #### 2.2 前端性能（Web 项目）
 
@@ -256,7 +264,7 @@ Semgrep / CodeQL / Bandit 选一。无 high；medium 有处理记录。
 
 ### 步骤 N · 回归测试登记
 
-本次新加 / 修复的测试用例，统一登记到 `TEST.md` 末尾，方便未来 grep 找到。
+本次新加 / 修复的测试用例，在 TEST 的 AC 矩阵标注类型、位置和新增 / 修改性质；不在文末再复制一份同义清单。
 
 ## 输出
 
@@ -285,21 +293,27 @@ Semgrep / CodeQL / Bandit 选一。无 high；medium 有处理记录。
 
 ## Post-hook（可选）
 
+先消费 pack 的 `hook-after`：false 时直接跳过，不运行 hook 命令，也不反复探测。旧 pack 无该项时复用已读取配置；为空则跳过。已配置 hook 每次真实阶段执行仍按配置运行，不缓存其成功结果。
+
 完成本阶段所有工作、自检通过后，运行：
 ```bash
 gantry hook run after:test
 ```
 - 退出码 0 或无配置 → 继续
-- 退出码非 0 → 停止并告知用户，等待指示
+- 退出码非 0 → 收集诊断，按宿主剩余预算修复后重跑；候选执行者将诊断交外层，不自行批准或另开重试循环。仅预算耗尽或人工/进程/内容保护条件才停止
 
 ## 自主模式自检（autonomous=true）
 
 本阶段末尾禁止向用户反问「是否继续 / 要不要先扫一眼 / 是否推进下一阶段」。按 R2.6：
 - 产物齐备、门禁通过 → 直接按「触发下一步」执行
 - 多选场景 → 取推荐项（无推荐则取列表第一项），把选择与理由写进本阶段产物
-- 仅三类允许停：① `requiresApproval` 硬锁的 change / design / integration；② R5 / R6 / R7 触发；③ R2.5 自愈 3 次仍失败
+- 停止条件按 当前工具的 `gantry-next` 入口「门禁修复循环」：人工确认/所缺用户决策或凭据、宿主剩余预算耗尽、取消/时限、进程/控制记录/用户内容保护；可恢复门禁先在本次调用内诊断修复
 
 ## 触发下一步
 
 - 任何轮次发现 🔴 问题 → 回到 `phases/4-dev.md` 修复（产 fix 任务）
 - 全部通过 → `phases/6-review.md`（review 阶段会再检查 5 轮都做了）
+
+## 执行证据收口
+
+完成 AC 覆盖矩阵后运行 `gantry verify-ac --json`。CLI 运行映射命令并绑定当前代码和索引；缺依赖、取消、超时、非零退出、空测试或源码变化都不能算通过。人工观察记录到 UAT，并通过 `gantry verify-ac --observation <临时JSON>` 关联 AC、步骤、实际结果和证据文件（格式见 `docs/loop.md` 的「AC 执行证据」）。不能仅填写 covers 或截图路径就声称已验证。

@@ -3,8 +3,8 @@
 //   AGENTS.md                                    — compact entry contract
 //   .agents/skills/gantry-<name>/SKILL.md        — merged skill (orchestration + phase)
 //
-// Strategy: public orchestration commands that have a matching phase get the
-// phase content appended at install time. Internal phases are not emitted as
+// Strategy: public orchestration commands load their phase through the context
+// pack. Internal phases are not emitted as
 // standalone user-facing skills.
 // All public entry points are unified under gantry-* skills.
 // Source files (phases/*.md, skills/*.md) remain unchanged.
@@ -34,18 +34,16 @@ export function render(core, commands, agents) {
       const skillName = `gantry-${name}`;
 
       let phaseContent = null;
-      let phaseFileName = null;
       if (stage && STAGE_PHASE_MAP[stage]) {
         const phaseCmd = toSkillName(STAGE_PHASE_MAP[stage] + '.md');
         if (phaseLookup[phaseCmd]) {
           phaseContent = phaseLookup[phaseCmd].content;
-          phaseFileName = phaseLookup[phaseCmd].fileName;
           consumedPhases.add(phaseCmd);
         }
       }
 
       if (phaseContent) {
-        files[`.agents/skills/${skillName}/SKILL.md`] = mergedSkill(skillName, content, phaseContent, phaseFileName);
+        files[`.agents/skills/${skillName}/SKILL.md`] = mergedSkill(skillName, content, phaseContent);
       } else {
         files[`.agents/skills/${skillName}/SKILL.md`] = flowSkill(skillName, name, content);
       }
@@ -65,7 +63,7 @@ function codexRoot(core, commands) {
 - 不依赖聊天记忆；以仓库工件为准。
 - 执行阶段型 gantry skill 时读取 \`.gantry/planning/context-pack.json\`，按 \`loadOrder\` 最小加载当前阶段所需文件；其中 \`agent-prompt\` 与 \`phase-prompt\` 都是执行约束。 \`gantry-change\` 首次执行若 pack 不存在，先运行 \`gantry change "<描述>"\` 创建 pack。
 - \`docs/RULES.md\` / \`docs/METHODOLOGY.md\` 是规则源文件；仅在解释规则、修改 gantry 框架或 \`context-pack\` 明确要求时读取。
-- 严格遵守 \`TASKS.md\` 的 \`read_files\` / \`write_files\` 边界。
+- 按 \`TASKS.md\` 的 \`read_files\` / \`write_files\` 计划加载与实现；full DEV 文件列表差异记录提示，不代替实际验收或自动提交归属判断，保留用户内容。
 - 完成前必须运行并报告 verify 证据。
 - 累计 / 输入 token > 200k 或上下文窗口使用率 > 85% 时，写 \`<task-id>-PROGRESS.md\` 后清窗。
 - 禁止把长规则或长工件复制进聊天；用 \`@文件路径\` 引用。
@@ -108,7 +106,7 @@ function codexRoot(core, commands) {
  * Phase content lives at .gantry/core/phases/<fileName> — skill tells
  * agent to read it at execution time (thin transcoder mode).
  */
-function mergedSkill(skillName, skillContent, phaseContent, phaseFileName) {
+function mergedSkill(skillName, skillContent, phaseContent) {
   const { frontmatter, body } = splitFrontmatter(skillContent);
   const phaseTitle = extractTitle(phaseContent);
   const description = frontmatter.description || phaseTitle || `gantry skill ${skillName}`;
@@ -126,25 +124,12 @@ ${body.trim()}
 
 ## Context Pack 协议
 
-每次执行阶段型 skill 时先读取 \`.gantry/planning/context-pack.json\`,严格按 schema v2 行事。
-若 pack 不存在:
-- \`gantry-change\`:先按上方编排协议运行 \`gantry change "<描述>"\`,由 CLI 创建 pack,再读取 pack 继续。
-- 其他阶段型 skill:停手并提示运行 \`gantry context\` 刷新,或先用 \`gantry status\` 查看状态。
+在编排协议的加载步骤读取一次 \`.gantry/planning/context-pack.json\`，校验 \`schemaVersion === 2\`；change 首次由 \`gantry change\` 创建，其余缺失时用 \`gantry context\` 生成。
 
-读取到 pack 后:
-- 校验 \`schemaVersion === 2\`,否则停手。
-- 顺序消费 \`loadOrder\` (agent-prompt / phase-prompt / artifacts / context-doc / LESSONS)；\`agent-prompt.required === true\` 时必须读取，其 constraints 与 phase prompt 同时生效。
-- 子检查按**非对称信任**执行 \`checklists[]\`:
-  - \`trigger === true\`:必跑,不得跳过。
-  - \`trigger === false && confidence === "high"\`:确定不用跑,跳过。
-  - \`trigger === false && confidence === "low"\`:关键词判定可能漏,**据完整上下文复核**,涉及就补跑。
-  - 只能把 low 的 false 上调为"跑",不得把 true 下调为"跳过"。
-- 仅当当前 skill 的编排协议要求推进时，才执行 \`next.onSuccess\` (失败走 \`next.onFailure\`)；明确要求停在人工确认关卡时禁止执行，等待后续 \`/gantry-auto\` 或 \`/gantry-next\`。
-- 不允许在 v2 schema 上自行发明字段。
+- 按 \`loadOrder\` 消费 \`required\` 项，按 \`focus\` 读相关章节；同一上下文已读且未变化的内容复用，新上下文重新加载。agent constraints 与 phase 同时生效。
+- \`checklists\`：\`trigger=true\` 必跑；\`false+confidence=high\` 跳过；\`false+confidence=low\` 据相关任务和设计复核，只能上调补跑，不得下调 true。
+- 仅按编排协议执行 \`next.onSuccess\`；人工关卡先完成可审阅工件再等待明确批准，不自行推进。不增造 schema 字段。
 
-## 阶段执行指令
-
-读取并严格执行 \`.gantry/core/phases/${phaseFileName}\` 中的完整阶段协议。
 `;
 }
 
@@ -175,8 +160,9 @@ function codexAutoAdapter() {
     '- message 必须包含 taskId、attemptId、repairOrdinal 和已冻结的单任务 pack 全文，以及“你不是唯一在工作区工作的 Agent，不得撤销他人修改”。不得继承 orchestrator 的长对话。',
     '- message 要求读取 `.gantry/core/agents/executor.md` 与 `.gantry/core/phases/4-dev.md`「单任务执行」；只按自己的 pack 产候选和实际 TDD/verify 报告，不读取后续被覆盖的共享 pack。',
     '- 子 Agent 是叶子执行者：禁止调用 `spawn_agent` 或 `followup_task` 创建、恢复或委派其他子 Agent；禁止 commit、gantry done/dispatch/advance/approve/archive，禁止改 TASKS/EXECUTION/STATE/execution 控制 JSON/锁/验收 contract。',
+    '- 唯一例外：验收字段被误改时，只允许将当前任务的 verify/done/checks/preflight 精确恢复为传入的已保存 contract 原值；不修改 contract 控制记录、TASKS 完成状态或其他任务，不重新定义验收。',
     '- worker 返回后由 orchestrator 运行 `gantry done <id> --json`，真实验收通过才完成任务；pack 的 next.onSuccess 不由 worker 执行。',
-    '- 可修复失败先经 dispatch 持久化扣额度，再创建新子 Agent；不得 resume/continue/followup 复用失败上下文，不得在主上下文接管清零。初次执行 + 三次修复耗尽后停止，未知失败保留现场阻塞。',
+    '- 可修复失败先经 dispatch 持久化扣额度，再创建新子 Agent；不得 resume/continue/followup 复用失败上下文，不得在主上下文接管清零。初次执行 + 最新 ralph.maxRepairs 次修复（默认3），耗尽后报告最后诊断；安全返回的未知失败先分析修复。消费 gateFeedback/retryHistory，阶段采用 autonomous.maxRetries，与宿主共用预算，不在 skill/phase/hook 另套计数。',
     '- 已有候选或 receipt 时先恢复验证，不无条件重新预约。all_done 后仅由 orchestrator 调用 advance，完成最终组合检查、安全统一提交和阶段推进。',
     '',
   ].join('\n');

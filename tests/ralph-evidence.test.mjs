@@ -24,7 +24,7 @@ test('contract fixes acceptance and ignores mutable status', () => {
   const task = { verify: 'node --test', readFiles: ['src/*'], writeFiles: ['src/a.js'], done: 'works' };
   const a = createContract(task, { checks: ['lint'], deadlineSnapshot: { verifyMs: 100 } });
   assert.equal(a.digest, createContract({ ...task, status: 'done' }, { checks: ['lint'], deadlineSnapshot: { verifyMs: 100 } }).digest);
-  for (const patch of [{ verify: 'true' }, { writeFiles: ['**'] }, { done: 'other' }]) assert.notEqual(a.digest, createContract({ ...task, ...patch }).digest);
+  for (const patch of [{ verify: 'true' }, { done: 'other' }]) assert.notEqual(a.digest, createContract({ ...task, ...patch }).digest);
 });
 
 test('manifest observes clean, dirty, index, untracked, deletion and modes', t => {
@@ -63,21 +63,21 @@ test('removing a tracked parent directory is represented as deletion', t => {
   assert.equal(after.entries.find(e => e.path === 'src/a.js').worktreeHash, null);
 });
 
-test('staged-only weakening cannot be hidden by restoring worktree assertions', t => {
+test('staged test deletion cannot be hidden by restoring the worktree', t => {
   const { root, git, put } = repo(t); const before = captureManifest(root);
-  put('tests/a.test.js', "test('a', () => {});"); git('add', 'tests/a.test.js');
+  rmSync(join(root, 'tests/a.test.js')); git('add', 'tests/a.test.js');
   put('tests/a.test.js', "test('a', () => { assert.equal(1, 1); });");
   const result = detectTaskWeakening(before, captureManifest(root));
   assert.equal(result.hit, true);
   assert(result.reasons.some(r => r.source === 'indexContent'));
 });
 
-test('normal new test preserves green while added skip is detected', t => {
+test('normal new tests and added todo do not imply weakening', t => {
   const { root, put } = repo(t); const before = captureManifest(root);
   put('tests/new.test.js', "test('new', () => { assert.ok(true); });");
   assert.equal(detectTaskWeakening(before, captureManifest(root)).hit, false);
   put('tests/new.test.js', "test.todo('new');");
-  assert.equal(detectTaskWeakening(before, captureManifest(root)).hit, true);
+  assert.equal(detectTaskWeakening(before, captureManifest(root)).hit, false);
 });
 
 test('non-executable permission changes invalidate evidence', t => {
@@ -103,18 +103,20 @@ test('scope supports recursive glob and never exempts gantry acceptance config',
   assert.equal(checkTaskScope(a, b, ['../**']).ok, false);
 });
 
-test('weakening detects baseline loss, new skips and discovery configuration', t => {
+test('weakening detects deleted test files without treating package edits as weakening', t => {
   const { root, put } = repo(t); const a = captureManifest(root);
-  put('tests/a.test.js', "test.skip('a', () => {});"); put('package.json', '{"scripts":{"test":"true"}}');
+  rmSync(join(root, 'tests/a.test.js')); put('package.json', '{"scripts":{"test":"true"}}');
   const result = detectTaskWeakening(a, captureManifest(root));
   assert.equal(result.hit, true); assert.equal(result.reviewRequired, true);
-  assert(result.files.includes('tests/a.test.js')); assert(result.files.includes('package.json'));
+  assert(result.files.includes('tests/a.test.js')); assert(!result.files.includes('package.json'));
 });
 
-test('TAP verification rejects empty, failing, skipped and todo; unknown counts stay null', () => {
+test('TAP verification rejects empty, failing and wholly skipped suites; partial skips remain counts', () => {
   const tap = (tests, pass, fail = 0, skipped = 0, todo = 0) => `TAP version 13\n# tests ${tests}\n# pass ${pass}\n# fail ${fail}\n# skipped ${skipped}\n# todo ${todo}\n`;
   assert.equal(inspectVerificationOutput(tap(2, 2)).ok, true);
-  for (const output of [tap(0, 0), tap(2, 1, 1), tap(2, 1, 0, 1), tap(2, 1, 0, 0, 1)]) assert.equal(inspectVerificationOutput(output).ok, false);
+  assert.equal(inspectVerificationOutput(tap(2, 1, 0, 1)).ok, true);
+  assert.equal(inspectVerificationOutput(tap(2, 1, 0, 0, 1)).ok, true);
+  for (const output of [tap(0, 0), tap(2, 1, 1), tap(2, 0, 0, 2), tap(2, 0, 0, 0, 2)]) assert.equal(inspectVerificationOutput(output).ok, false);
   assert.equal(inspectVerificationOutput('other runner passed').counts, null);
   assert.equal(inspectVerificationOutput('docs generated', { kind: 'command' }).ok, true);
 });
@@ -194,5 +196,48 @@ test('explicit coverage map is acceptance input while loop logs remain excluded'
   put('.gantry/loop/test-commands.yml', 'unit:\n  cmd: true\n  covers: [AC-1]\n');
   const next = captureManifest(root, options);
   assert.notEqual(next.manifestDigest, first.manifestDigest);
-  assert.equal(detectTaskWeakening(first, next).hit, true);
+  assert.equal(detectTaskWeakening(first, next).hit, false);
+});
+
+test('runtime deadlines and planned write scope do not change acceptance but verify does',()=>{
+  const task={verify:'node --test',writeFiles:['src/a.js'],done:'works'};
+  const first=createContract(task,{deadlineSnapshot:{verifyTimeoutMs:1}});
+  assert.equal(first.digest,createContract(task,{deadlineSnapshot:{verifyTimeoutMs:9999}}).digest);
+  assert.notEqual(first.digest,createContract({...task,verify:'true'}).digest);
+  assert.equal(first.digest,createContract({...task,writeFiles:['**']}).digest);
+});
+
+test('project config formatting is stable; substantive settings invalidate evidence without scope violation',t=>{
+  const {root,git,put}=repo(t); const path='.gantry/planning/config.json';
+  put(path,'{"ralph":{"verifyTimeoutMs":1000},"autonomous":{"maxStagesPerRun":5}}');
+  git('add','-f',path);
+  const options={includePaths:[path]};const first=captureManifest(root,options);
+  put(path,'{\n "autonomous": {"maxStagesPerRun": 5}, "ralph": {"verifyTimeoutMs": 1000}\n}');
+  git('add','-f',path);
+  assert.equal(first.manifestDigest,captureManifest(root,options).manifestDigest);
+  put(path,'{"ralph":{"verifyTimeoutMs":2000}}');
+  const changed=captureManifest(root,options);
+  assert.notEqual(first.manifestDigest,changed.manifestDigest);
+  assert.equal(checkTaskScope(first,changed,['src/a.js']).ok,true);
+  assert.equal(detectTaskWeakening(first,changed).hit,false);
+});
+
+
+test('package and runner config edits invalidate evidence without declaring weakening',t=>{
+  const {root,put,git}=repo(t);
+  for(const path of ['package.json','vitest.config.mjs','playwright.config.mjs','eslint.config.mjs'])put(path,'{}');
+  git('add','.');const before=captureManifest(root);
+  for(const path of ['package.json','vitest.config.mjs','playwright.config.mjs','eslint.config.mjs'])put(path,'{"updated":true}');
+  const after=captureManifest(root);
+  assert.notEqual(before.manifestDigest,after.manifestDigest);
+  assert.equal(detectTaskWeakening(before,after).hit,false);
+});
+
+
+test('reference list changes keep acceptance stable and test refactors are not judged by token counts',t=>{
+  const task={verify:'node --test',readFiles:['src/a.js'],writeFiles:['src/a.js'],done:'works'};
+  assert.equal(createContract(task).digest,createContract({...task,readFiles:['src/**']}).digest);
+  const {root,put}=repo(t);const before=captureManifest(root);
+  put('tests/a.test.js',"test('combined',()=>{}); test.todo('later');");
+  assert.equal(detectTaskWeakening(before,captureManifest(root)).hit,false);
 });

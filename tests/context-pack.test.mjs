@@ -123,6 +123,33 @@ test('loadOrder: idle 阶段不加载 agent prompt', () => {
   } finally { cleanup(root); }
 });
 
+test('loadOrder: 各阶段仅消费职责所需工件，integration 包含审查结果', () => {
+  const root = createFixture('stage-inputs');
+  try {
+    const changeId = 'feat-x';
+    const dir = join(root, '.gantry/specs', changeId);
+    mkdirSync(dir, { recursive: true });
+    for (const name of ['PROPOSAL', 'SPEC', 'DESIGN', 'TASKS', 'TEST', 'REVIEW', 'EXECUTION']) {
+      writeFileSync(join(dir, `${name}.md`), `# ${name}\n`);
+    }
+    const cases = {
+      requirement: ['PROPOSAL'],
+      design: ['SPEC'],
+      task: ['SPEC', 'DESIGN'],
+      test: ['SPEC', 'TASKS'],
+      review: ['SPEC', 'DESIGN', 'TASKS', 'TEST'],
+      integration: ['SPEC', 'DESIGN', 'TEST', 'REVIEW'],
+    };
+    for (const [stage, names] of Object.entries(cases)) {
+      writeState(root, { currentStage: stage, activeChange: changeId });
+      const pack = buildPack(root);
+      assert.deepEqual(pack.loadOrder.filter(item => item.kind === 'artifact').map(item => item.path),
+        names.map(name => `.gantry/specs/${changeId}/${name}.md`), stage);
+      assert.equal(pack.warnings?.length ?? 0, 0, `${stage} 不应泄漏 DEV 上下文`);
+    }
+  } finally { cleanup(root); }
+});
+
 test('loadOrder: dev 自足任务只加载当前 TASK、聚焦 DESIGN 和 LESSONS', () => {
   const root = createFixture('load-dev');
   try {
@@ -248,7 +275,7 @@ test('loadOrder: 存量 light@integration 归一化为 full 并按 full 加载(A
     assert.equal(pack.pipeline, 'full', '旧 light@integration 应归一化为 full');
     assert.equal(pack.stage, 'integration');
     const paths = pack.loadOrder.map(item => item.path);
-    assert.ok(paths.some(path => path.endsWith('/PROPOSAL.md')));
+    assert.ok(!paths.some(path => path.endsWith('/PROPOSAL.md')), '归一化后也不累积无关历史');
     assert.ok(paths.some(path => path.endsWith('/SPEC.md')));
     assert.ok(!paths.some(path => path.endsWith('/EXECUTION.md')), 'full@integration 上游不含 EXECUTION');
   } finally { cleanup(root); }
@@ -690,4 +717,15 @@ test('legacy dev retry history only reads matching task diagnostics', () => {
     assert.deepEqual(pack.retryHistory, { count: 1, lastFailure: { at: 'legacy-at', reason: 'legacy-reason' } });
     assert(pack.loadOrder.some(e => e.path.endsWith('EXECUTION.md') && e.focus.some(f => f.includes('T01'))));
   } finally { cleanup(root); }
+});
+
+test('hook checklists suppress empty CLI calls and refresh when config changes',()=>{
+ const root=createFixture('empty-hooks');try{
+  writeState(root,{currentStage:'test'});
+  writeFileSync(join(root,'.gantry/planning/config.json'),JSON.stringify({hooks:{'before:test':'  ','after:test':{}}}));
+  const hooks=buildPack(root).checklists.filter(item=>item.id.startsWith('hook-'));
+  assert.equal(hooks.length,2);assert.ok(hooks.every(item=>item.trigger===false&&item.confidence==='high'));
+  writeFileSync(join(root,'.gantry/planning/config.json'),JSON.stringify({hooks:{'after:test':'npm test'}}));
+  assert.equal(buildPack(root).checklists.find(item=>item.id==='hook-after').trigger,true);
+ }finally{cleanup(root);}
 });

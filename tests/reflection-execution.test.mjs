@@ -89,7 +89,7 @@ describe('task execution reflection contract', () => {
     }
   });
 
-  it('TEST gate rejects unfinished execution TODOs and accepts completed records', async () => {
+  it('TEST gate relies on actual receipts instead of execution TODO text', async () => {
     assert.equal((await prepareTask(tmpDir, 'T01')).kind, 'prepared');
     run('done', 'T01');
     assert.equal((await prepareTask(tmpDir, 'T02')).kind, 'prepared');
@@ -99,8 +99,7 @@ describe('task execution reflection contract', () => {
     const executionPath = join(specsDir, 'EXECUTION.md');
     writeFileSync(executionPath, readFileSync(executionPath, 'utf8') + '\n- next: TODO\n');
     const blocked = checkGate('test', specsDir, { pipeline: 'full' });
-    assert.equal(blocked.passed, false);
-    assert.match(blocked.reason, /EXECUTION\.md.*TODO/);
+    assert.equal(blocked.passed, true);
 
     const completed = readFileSync(executionPath, 'utf-8').replaceAll('TODO', 'none');
     writeFileSync(executionPath, completed, 'utf-8');

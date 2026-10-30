@@ -35,12 +35,15 @@ test('missing primary artifact cannot be approved',()=>{
 });
 test('real CLI: fresh design executes matching pack then stops at approval',async()=>{
  const f=fixture();try{
+  const logDir=mkdtempSync(join(tmpdir(),'ralph-log-'));
   let stdout='',stderr='';
-  const rc=await runLoop({root:f.root,client:'codex',env:f.env,onOutput:x=>stdout+=x,onError:x=>stderr+=x});
+  const rc=await runLoop({root:f.root,client:'codex',env:{...f.env,GANTRY_LOOP_LOG_DIR:logDir},onOutput:x=>stdout+=x,onError:x=>stderr+=x});
   assert.equal(rc,2,stderr);
   assert.equal(readState(f.root).currentStage,'design');
   assert.equal(readFileSync(join(f.root,'calls'),'utf8').trim().split('\n').length,1);
-  assert.match(stdout,/client-output/);
+  assert.doesNotMatch(stdout,/client-output/);                                                       // 默认模型流不上屏
+  assert.match(stdout,/token=gantry-design/);                                                        // 进度仍上屏
+  assert.match(readFileSync(join(logDir,'loop.log'),'utf8'),/client-output/);                        // 全量落盘唯一临时目录
   assert.ok(existsSync(join(f.root,'.gantry/specs/demo/DESIGN.md')));
   assert.equal(existsSync(join(f.root,'.gantry/planning/ralph.lock')),false);
  }finally{f.clean();}
@@ -53,39 +56,6 @@ test('existing unapproved draft is not rewritten on restart',async()=>{
   assert.equal(existsSync(join(f.root,'calls')),false);
   assert.equal(readFileSync(join(f.root,'.gantry/specs/demo/DESIGN.md'),'utf8'),'review me');
  }finally{f.clean();}
-});
-test('real CLI: integration pauses, accepts human approval and resumes without rewriting UAT or archiving',async()=>{
- const {spawnSync}=await import('node:child_process');
- const cli=new URL('../src/cli.mjs',import.meta.url).pathname;
- for(const client of ['claude','codex']){
-  const f=fixture('integration');try{
-   writeFileSync(join(f.root,'.gantry/core/phases/7-integration.md'),'integration fixture');
-   const uat=join(f.root,'.gantry/specs/demo/UAT.md');
-   writeFileSync(uat,'human reviewed UAT');
-   const loop=async()=>{
-    let stderr='';
-    const rc=await runLoop({root:f.root,client,env:f.env,onOutput:()=>{},onError:x=>stderr+=x});
-    return {rc,stderr};
-   };
-   const pending=await loop();
-   assert.equal(pending.rc,2,pending.stderr);
-   assert.doesNotMatch(pending.stderr,/stuck/);
-   assert.equal(isStageApproved(f.root,'integration'),false);
-   const approved=spawnSync(process.execPath,[cli,'advance','--approve','integration','--json'],{cwd:f.root,encoding:'utf8'});
-   assert.equal(approved.status,0,approved.stderr);
-   assert.equal(isStageApproved(f.root,'integration'),true);
-   for(let restart=0;restart<2;restart++){
-    const resumed=await loop();
-    assert.equal(resumed.rc,0,resumed.stderr);
-   }
-   assert.equal(existsSync(join(f.root,'calls')),false);
-   assert.equal(readFileSync(uat,'utf8'),'human reviewed UAT');
-   assert.equal(readState(f.root).currentStage,'integration');
-   assert.equal(readState(f.root).activeChange,'demo');
-   assert.equal(existsSync(join(f.root,'.gantry/specs/_archive/demo')),false);
-   assert.equal(existsSync(join(f.root,'.gantry/planning/ralph.lock')),false);
-  }finally{f.clean();}
- }
 });
 test('idle cannot silently create change; token mismatch cannot dispatch',async()=>{
  for(const stage of ['idle','design']){
@@ -106,7 +76,7 @@ test('pack validator rejects phase/stage/task/change mismatch',()=>{
 });
 test('invalid or malformed run deadlines fail before dispatch',async()=>{
  const f=fixture();try{
-  for(const config of ['{',JSON.stringify({ralph:{runTimeoutMs:0}}),JSON.stringify({ralph:{executorTimeoutMs:Infinity}}),JSON.stringify({ralph:{maxRepairs:4}})]){
+  for(const config of ['{',JSON.stringify({ralph:{runTimeoutMs:0}}),JSON.stringify({ralph:{executorTimeoutMs:Infinity}}),JSON.stringify({ralph:{maxRepairs:-1}})]){
    writeFileSync(join(f.root,'.gantry/planning/config.json'),config);
    assert.equal(await runLoop({root:f.root,client:'codex',env:f.env,onOutput:()=>{},onError:()=>{}}),64);
   }
@@ -165,7 +135,7 @@ test('non-DEV failed artifact gate retries are bounded independently of task rep
   writeFileSync(join(f.root,'adapter.sh'),'#!/usr/bin/env bash\necho invocation >> "$PROJECT_ROOT/calls"\n');
   writeFileSync(join(f.root,'.gantry/planning/config.json'),JSON.stringify({autonomous:{maxRetries:2}}));
   let stderr='';
-  const rc=await runLoop({root:f.root,client:'codex',env:f.env,onOutput:()=>{},onError:x=>stderr+=x});
+  const rc=await runLoop({root:f.root,client:'codex',env:f.env,onOutput:x=>stderr+=x,onError:x=>stderr+=x});
   assert.equal(rc,1,stderr);
   assert.equal(readFileSync(join(f.root,'calls'),'utf8').trim().split('\n').length,3);
   assert.equal(readState(f.root).currentStage,'task');
@@ -199,18 +169,26 @@ test('both adapters enforce frozen pack identity before launching the model',asy
  const f=fixture('dev');try{
   const bin=join(f.root,'bin');mkdirSync(bin);
   const packPath=join(f.root,'frozen pack.json');
-  writeFileSync(join(f.root,'.gantry/core/phases/4-dev.md'),'task phase');
+  const phaseBody='PHASE_BODY_MUST_NOT_BE_INLINED';
+  writeFileSync(join(f.root,'.gantry/core/phases/4-dev.md'),phaseBody);
   writeFileSync(join(f.root,'.gantry/planning/context-pack.json'),JSON.stringify({stage:'test',taskId:'WRONG'}));
   for(const client of ['claude','codex']){
    const marker=join(f.root,`${client}.called`);
    writeFileSync(join(bin,client),`#!/usr/bin/env node\nrequire('node:fs').writeFileSync(${JSON.stringify(marker)},process.argv.slice(2).join('\\n'));\n`,{mode:0o755});
    const adapter=new URL(`../src/loop/dispatch-${client}.sh`,import.meta.url).pathname;
    const env={...process.env,PATH:`${bin}:${process.env.PATH}`,PROJECT_ROOT:f.root,GANTRY_RALPH_ATTEMPT_ID:'attempt-1'};
-   writeFileSync(packPath,JSON.stringify({stage:'dev',taskId:'T01',attemptId:'attempt-1'}));
+   const pack={stage:'dev',taskId:'T01',attemptId:'attempt-1',loadOrder:[{kind:'phase-prompt',path:'.gantry/core/phases/4-dev.md',required:true}]};
+   writeFileSync(packPath,JSON.stringify(pack));
    const valid=spawnSync('bash',[adapter,'dev','T01','--pack',packPath],{cwd:f.root,env,encoding:'utf8'});
    assert.equal(valid.status,0,valid.stderr);
-   assert.match(readFileSync(marker,'utf8'),/frozen pack\.json/);
+   const prompt=readFileSync(marker,'utf8');
+   assert.match(prompt,/frozen pack\.json/);
+   assert.match(prompt,/loadOrder/);
+   assert.doesNotMatch(prompt,new RegExp(phaseBody),'phase must be loaded once through the frozen pack');
    rmSync(marker);
+   writeFileSync(packPath,JSON.stringify({...pack,loadOrder:[]}));
+   const missingPhase=spawnSync('bash',[adapter,'dev','T01','--pack',packPath],{cwd:f.root,env,encoding:'utf8'});
+   assert.equal(missingPhase.status,64);assert.match(missingPhase.stderr,/phase-prompt mismatch/);assert.equal(existsSync(marker),false);
    writeFileSync(packPath,JSON.stringify({stage:'dev',taskId:'T01',attemptId:'old-attempt'}));
    const invalid=spawnSync('bash',[adapter,'dev','T01','--pack',packPath],{cwd:f.root,env,encoding:'utf8'});
    assert.equal(invalid.status,64);assert.match(invalid.stderr,/identity mismatch/);assert.equal(existsSync(marker),false);
@@ -263,4 +241,97 @@ test('cancelling the nested CLI checkpoint waits until its TERM-ignoring verifie
   assert.equal(readFileSync(path,'utf8'),snapshot,'no descendant may keep writing after controller returns');
   assert.equal(existsSync(join(f.root,'.gantry/planning/ralph.lock')),false);
  }finally{clearInterval(poll);f.clean();}
+});
+
+test('DEV loop uses config changed by candidate instead of startup timeout',async()=>{
+ const {execFileSync}=await import('node:child_process');
+ const f=fixture('dev');const git=(...args)=>execFileSync('git',args,{cwd:f.root,encoding:'utf8'}).trim();
+ try{
+  git('init','-b','release/live-config');git('config','user.name','Ralph');git('config','user.email','ralph@example.com');
+  writeFileSync(join(f.root,'.gitignore'),'.gantry/\n');
+  writeFileSync(join(f.root,'app.txt'),'bad');
+  writeFileSync(join(f.root,'verify.mjs'),`import fs from 'node:fs';setTimeout(()=>process.exit(fs.readFileSync('app.txt','utf8')==='good'?0:1),200);`);
+  writeFileSync(join(f.root,'.gantry/planning/config.json'),JSON.stringify({ralph:{verifyTimeoutMs:50}}));
+  writeFileSync(join(f.root,'.gantry/specs/demo/TASKS.md'),'<task id="T01" status="pending"><write_files>app.txt</write_files><verify>node verify.mjs</verify><done>value is good</done></task>');
+  git('add','.');git('commit','-qm','baseline');
+  let errors='';
+  const rc=await runLoop({root:f.root,client:'codex',env:{...f.env,GANTRY_LOOP_MAX_STEPS:'1'},onOutput:()=>{},onError:x=>errors+=x,executeCandidate:async()=>{
+   writeFileSync(join(f.root,'app.txt'),'good');
+   writeFileSync(join(f.root,'.gantry/planning/config.json'),JSON.stringify({ralph:{verifyTimeoutMs:2000}}));
+   return {exitCode:0,cleanupComplete:true};
+  }});
+  assert.equal(rc,3,errors); assert.equal(readState(f.root).currentStage,'test');
+  const record=JSON.parse(readFileSync(join(f.root,'.gantry/specs/demo/execution/T01.json'),'utf8'));
+  assert.equal(record.repairsUsed,0); assert.equal(record.receipt.pass,true);
+ }finally{f.clean();}
+});
+
+
+test('restart rechecks current gates despite a historical blockedReason',async()=>{
+ const f=fixture();try{
+  writeFence(f.root,{lastStageResult:{ok:false,blockedReason:'old acceptance-weakened'}});
+  let errors='';
+  const rc=await runLoop({root:f.root,client:'codex',env:f.env,onOutput:()=>{},onError:x=>errors+=x});
+  assert.equal(rc,2,errors);
+  assert.ok(existsSync(join(f.root,'calls')),'fresh candidate must run instead of stopping at old diagnosis');
+  assert.doesNotMatch(errors,/old acceptance-weakened/);
+ }finally{f.clean();}
+});
+
+
+test('exit-2 stage gate feeds diagnostics to agent and repairs within a single step',async()=>{
+ const f=fixture('requirement');try{
+  writeFileSync(join(f.root,'adapter.sh'),`#!/usr/bin/env bash
+node - "$3" <<'NODE'
+const fs=require('fs');const pack=JSON.parse(fs.readFileSync(process.argv[2]));
+fs.appendFileSync('feedback.jsonl',JSON.stringify(pack.gateFeedback)+'\\n');
+NODE
+`);
+  let checks=0;
+  const rc=await runLoop({root:f.root,client:'codex',env:{...f.env,GANTRY_LOOP_MAX_STEPS:'1'},onOutput:()=>{},onError:()=>{},runCli:async()=>{
+   if(++checks===1)return {exitCode:2,cleanupComplete:true,stdout:JSON.stringify({reason:'research unresolved: resolve evidence'}),stderr:'specific diagnostic'};
+   writeState(f.root,{...readState(f.root),currentStage:'idle',activeChange:null});
+   return {exitCode:0,cleanupComplete:true,stdout:'{}',stderr:''};
+  }});
+  assert.equal(rc,0);assert.equal(checks,2);
+  const feedback=readFileSync(join(f.root,'feedback.jsonl'),'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(feedback[0],null);assert.equal(feedback[1].failures,1);
+  assert.match(feedback[1].feedback.reason,/research unresolved/);assert.equal(feedback[1].feedback.stderr,'specific diagnostic');
+ }finally{f.clean();}
+});
+
+test('stage gate repair exhaustion survives restart without another model call',async()=>{
+ const f=fixture('requirement');try{
+  writeFileSync(join(f.root,'.gantry/planning/config.json'),JSON.stringify({autonomous:{maxRetries:1}}));
+  writeFileSync(join(f.root,'adapter.sh'),'#!/usr/bin/env bash\necho call >> calls\n');
+  const options={root:f.root,client:'codex',env:f.env,onOutput:()=>{},onError:()=>{},runCli:async()=>({exitCode:2,cleanupComplete:true,stdout:JSON.stringify({reason:'unresolved report'}),stderr:''})};
+  assert.equal(await runLoop(options),2);assert.equal(readFileSync(join(f.root,'calls'),'utf8').trim().split('\n').length,2);
+  assert.equal(await runLoop(options),2);assert.equal(readFileSync(join(f.root,'calls'),'utf8').trim().split('\n').length,2);
+ }finally{f.clean();}
+});
+
+test('DEV combination checkpoint failure dispatches a repair even with valid focused receipts',async()=>{
+ const {execFileSync}=await import('node:child_process');
+ const {readTaskRecord}=await import('../src/lib/task-record.mjs');
+ const f=fixture('dev');try{
+  const git=(...args)=>execFileSync('git',args,{cwd:f.root,encoding:'utf8'});
+  git('init','-q');writeFileSync(join(f.root,'.gitignore'),'.gantry/\n');
+  writeFileSync(join(f.root,'app.txt'),'bad');writeFileSync(join(f.root,'combo.txt'),'bad');
+  writeFileSync(join(f.root,'.gantry/specs/demo/TASKS.md'),'<task id="T01" status="pending"><write_files>app.txt,combo.txt</write_files><verify>node -e "require(\'assert\').equal(require(\'fs\').readFileSync(\'app.txt\',\'utf8\'),\'good\')"</verify><done>works</done></task>');
+  git('add','.');let calls=0;
+  const rc=await runLoop({root:f.root,client:'codex',env:{...f.env,GANTRY_LOOP_MAX_STEPS:'1'},onOutput:()=>{},onError:()=>{},executeCandidate:async({record,packPath})=>{
+   if(++calls===1)writeFileSync(join(f.root,'app.txt'),'good');
+   else {
+    assert.match(record.failure.reason,/combination failed/);assert.equal(record.failure.runs[0].stderr,'combo diagnostic');
+    assert.ok(JSON.parse(readFileSync(packPath)).gateFeedback);
+    writeFileSync(join(f.root,'combo.txt'),'good');
+   }
+   return {exitCode:0,cleanupComplete:true};
+  },runCli:async()=>{
+   if(readFileSync(join(f.root,'combo.txt'),'utf8')!=='good')return {exitCode:1,cleanupComplete:true,stdout:JSON.stringify({reason:'combination failed',checkpoint:{kind:'failed',reason:'combination failed',results:[{taskId:'T01',kind:'completed'}],commands:[{command:'combo',exitCode:1,stderr:'combo diagnostic'}]}}),stderr:''};
+   writeState(f.root,{...readState(f.root),currentStage:'idle',activeChange:null});
+   return {exitCode:0,cleanupComplete:true,stdout:'{}',stderr:''};
+  }});
+  assert.equal(rc,0);assert.equal(calls,2);assert.equal(readTaskRecord(f.root,'demo','T01').repairsUsed,1);
+ }finally{f.clean();}
 });

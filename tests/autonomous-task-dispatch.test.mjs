@@ -122,14 +122,14 @@ describe('Codex auto skill', () => {
     assert.match(skill, /spawn_agent/);
     assert.match(skill, /wait_agent/);
     assert.match(skill, /每次成功预约只创建一个 fresh executor subagent/);
-    assert.match(skill, /context dev --task <id> --json/);
+    assert.match(skill, /gantry done <id> --json/);
     assert.match(skill, /真实验收通过才完成任务/);
     assert.match(skill, /共享工作区不并行写/);
     assert.match(skill, /禁止 commit、gantry done\/dispatch\/advance/);
     assert.doesNotMatch(skill, /fallback_main/);
     assert.match(skill, /禁止调用 `spawn_agent` 或 `followup_task`/);
     assert.match(skill, /不得在主上下文接管清零/);
-    assert.match(skill, /初次执行 \+ 三次修复/);
+    assert.match(skill, /ralph\.maxRepairs/);
   });
 });
 
@@ -144,12 +144,38 @@ describe('Claude Code auto skill', () => {
     assert.match(skill, /同步等待/);
     assert.match(skill, /每次成功预约只创建一个 fresh executor subagent/);
     assert.match(skill, /共享工作区不并行写/);
-    assert.match(skill, /context dev --task <id> --json/);
+    assert.match(skill, /gantry done <id> --json/);
     assert.doesNotMatch(skill, /禁止使用并行 Agent 调用/);
     assert.match(skill, /禁止 commit、gantry done\/dispatch\/advance/);
     assert.doesNotMatch(skill, /fallback_main/);
     assert.match(skill, /禁止调用 `Agent` 工具或通过 resume/);
     assert.match(skill, /不得在主上下文接管清零/);
-    assert.match(skill, /初次执行 \+ 三次修复/);
+    assert.match(skill, /ralph\.maxRepairs/);
+  });
+});
+
+
+describe('generated skill gate recovery contract', () => {
+  it('all tool entries and installed phases preserve bounded repair instead of first-error stops', () => {
+    run('install', '--tool', 'all');
+    for (const prefix of ['.agents', '.claude']) {
+      const next=readFileSync(join(tmpDir,prefix,'skills/gantry-next/SKILL.md'),'utf8');
+      const auto=readFileSync(join(tmpDir,prefix,'skills/gantry-auto/SKILL.md'),'utf8');
+      const resume=readFileSync(join(tmpDir,prefix,'skills/gantry-resume/SKILL.md'),'utf8');
+      assert.match(next,/gateFeedback/);assert.match(next,/ralph.maxRepairs/);assert.match(next,/autonomous.maxRetries/);
+      assert.match(next,/不相乘放大预算/);assert.match(next,/候选进程内再启动/);assert.match(next,/空 hook/);
+      assert.match(auto,/可恢复门禁.*持续诊断、修复、重验/);
+      assert.match(resume,/历史 pauseReason\/blockedReason 不单独阻断/);
+      assert.doesNotMatch(auto,/未知故障、越界、需求冲突或验收改写直接阻塞|初次执行 \+ 三次修复/);
+    }
+    // Check the other two tool entry surfaces through their generated files.
+    const cursor=readFileSync(join(tmpDir,'.cursor/rules/00-system.mdc'),'utf8');
+    const copilot=readFileSync(join(tmpDir,'.github/copilot-instructions.md'),'utf8');
+    for(const rules of [cursor,copilot]) {assert.match(rules,/ralph.maxRepairs/);assert.match(rules,/宿主统一持久化计数/);}
+    for(const name of ['0-change','1-requirement','2-design','3-task','4-dev','5-test','6-review','7-integration']) {
+      const phase=readFileSync(join(tmpDir,'.gantry/core/phases',name+'.md'),'utf8');
+      assert.doesNotMatch(phase,/退出码非 0 → 停止并告知用户/);
+      assert.match(phase,/宿主.*预算/);
+    }
   });
 });

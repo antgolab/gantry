@@ -11,10 +11,13 @@ import { validateIntentScope } from './light-guard.mjs';
 // T-FIX-01(REVIEW Round 2 · R5):直接 import 叶子模块,不再走 loop.mjs 的
 // re-export,避免 phases → loop → phases 的循环 import。
 import { checkAcCoverage } from './ac-coverage.mjs';
+import { checkAcEvidence } from './ac-evidence.mjs';
+import { checkResearchLedger } from './research-ledger.mjs';
+import { checkPrototypeGate } from './prototype.mjs';
 import { parseTestCommands } from './test-commands.mjs';
 import { SPECS_DIR } from './paths.mjs';
 import { readTaskRecord } from './task-record.mjs';
-import { createContract, captureManifest, assertTaskPathsObservable, inspectTaskRunnerReadiness, receiptIsValid, DEFAULT_RALPH_DEADLINES } from './task-evidence.mjs';
+import { createContract, contractsMatch, captureManifest, receiptIsValid, DEFAULT_RALPH_DEADLINES } from './task-evidence.mjs';
 import { readConfig } from './config.mjs';
 
 // 固定管线阶段定义
@@ -78,6 +81,15 @@ export const PHASE_FILES = {
  * @returns {{ passed: boolean, reason?: string, skipReason?: string }}
  */
 export function checkGate(targetStage, specsDir, config, state, projectRoot) {
+  if (['requirement', 'design', 'task', 'dev'].includes(targetStage)) {
+    const ledger = checkResearchLedger(specsDir);
+    if (!ledger.passed) return { passed: false, hard: true, reason: ledger.reason };
+  }
+  if (['review', 'integration'].includes(targetStage)) {
+    const root = projectRoot ?? deriveProjectRootFromSpecsDir(specsDir);
+    const prototype = checkPrototypeGate(specsDir, root, { validateTask: () => checkAllTasksDone(specsDir, root).passed });
+    if (!prototype.passed) return { ...prototype, hard: true };
+  }
   // 跳过已禁用的阶段
   if (config?.stages?.[targetStage]?.enabled === false) {
     return { passed: true, reason: 'stage disabled, skipping' };
@@ -91,7 +103,8 @@ export function checkGate(targetStage, specsDir, config, state, projectRoot) {
     integration: () => {
       const base = checkReviewPassed(specsDir);
       if (!base.passed) return base;
-      return checkAcGate(specsDir, projectRoot);
+      const evidence = checkAcGate(specsDir, projectRoot);
+      return evidence.passed ? evidence : { ...evidence, hard: true };
     },
   };
 
@@ -109,13 +122,7 @@ export function checkGate(targetStage, specsDir, config, state, projectRoot) {
     return checkLightIntent(specsDir);
   }
   if (targetStage === 'dev') {
-    const artifact = checkArtifact(specsDir, 'tasks');
-    if (!artifact.passed) return artifact;
-    for (const task of parseTasks(resolveArtifactPath(specsDir, 'tasks').path)) {
-      const readiness = inspectTaskRunnerReadiness(null, createContract(task, config?.ralph ?? {}), { probe: false });
-      if (!readiness.ok) return { passed: false, hard: true, reason: `任务 ${task.id}: ${readiness.diagnostic}` };
-    }
-    return artifact;
+    return checkArtifact(specsDir, 'tasks');
   }
   if (targetStage === 'review') {
     return checkArtifact(specsDir, 'test');
@@ -294,10 +301,6 @@ function checkAllTasksDone(specsDir, projectRoot) {
     if (!executionFile || !existsSync(executionFile)) {
       return { passed: false, reason: `缺少 ${getPreferredArtifactName('execution')}` };
     }
-    const execution = readFileSync(executionFile, 'utf-8');
-    if (/^\s*-\s*[a-z][a-z-]*:\s*TODO\b/im.test(execution)) {
-      return { passed: false, reason: `${getPreferredArtifactName('execution')} 仍有 TODO，需填写真实内容或 none` };
-    }
     // A checkbox and prose are insufficient. Queries only inspect durable
     // receipts; actual revalidation belongs to the async checkpoint controller.
     try {
@@ -313,13 +316,12 @@ function checkAllTasksDone(specsDir, projectRoot) {
       if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('invalid ralph config');
       const deadlines = Object.fromEntries(Object.entries(DEFAULT_RALPH_DEADLINES).map(([key, value]) => [key, config[key] ?? value]));
       if (Object.values(deadlines).some(value => !Number.isSafeInteger(value) || value <= 0)) throw new Error('invalid ralph deadlines');
-      for (const task of tasks) assertTaskPathsObservable(root, task);
       const manifest = captureManifest(root, { includePaths: [relative(root, resolved.path), '.gantry/planning/config.json', '.gantry/loop/test-commands.yml'] });
       const changeId = specsDir.split(sep).at(-1);
       for (const task of tasks) {
         const record = readTaskRecord(root, changeId, task.id);
         const contract = createContract(task, { ...config, deadlineSnapshot: deadlines });
-        if (!record?.attempt || record.contract.digest !== contract.digest || record.receipt?.attemptId !== record.attempt.id || !receiptIsValid(record.receipt, contract, manifest)) {
+        if (!record?.attempt || !contractsMatch(record.contract, contract) || record.receipt?.attemptId !== record.attempt.id || !receiptIsValid(record.receipt, contract, manifest)) {
           return { passed: false, hard: true, reason: `任务 ${task.id} 的验证凭据缺失或过期，请执行 done/DEV checkpoint；旧任务需明确审阅迁移` };
         }
       }
@@ -364,6 +366,8 @@ function checkAcGate(specsDir, projectRoot) {
   if (root == null) {
     return { passed: true, skipReason: 'ac-gate: 无法定位项目根,跳过 AC 覆盖检查' };
   }
+  const evidence = checkAcEvidence(root, specsDir);
+  if (evidence.passed && !evidence.skipped) return evidence;
   const tcPath = join(root, '.gantry/loop/test-commands.yml');
 
   // fail-closed(2026-10-12):此前 test-commands.yml 缺失即放行,而 install 从不
@@ -397,7 +401,7 @@ function checkAcGate(specsDir, projectRoot) {
       reason: `ac-gate: missing ${cov.missing.join(', ')}${hint}`,
     };
   }
-  return { passed: true };
+  return checkAcEvidence(root, specsDir);
 }
 
 /**

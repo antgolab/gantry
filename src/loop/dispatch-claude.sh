@@ -33,26 +33,29 @@ if [[ "${PHASE}" == dev && -z "${TASK_ID}" ]]; then
   echo 'DEV 必须指定单个 task-id' >&2; exit 64
 fi
 # Mechanical identity check precedes the client. The prompt is not the guard.
-node - "${PACK_FILE}" "${PHASE}" "${TASK_ID}" <<'NODE'
+node - "${PACK_FILE}" "${PHASE}" "${TASK_ID}" ".gantry/core/phases/${FILE}" <<'NODE'
 const fs = require('node:fs');
-const [file, phase, task] = process.argv.slice(2);
+const [file, phase, task, phasePath] = process.argv.slice(2);
 try {
   const pack = JSON.parse(fs.readFileSync(file, 'utf8'));
   if (pack.stage !== phase || (pack.taskId ?? '') !== task ||
       (process.env.GANTRY_RALPH_ATTEMPT_ID && pack.attemptId !== process.env.GANTRY_RALPH_ATTEMPT_ID)) {
     throw new Error('context-pack identity mismatch');
   }
+  if (!pack.loadOrder?.some(entry => entry.kind === 'phase-prompt' && entry.path === phasePath)) {
+    throw new Error('context-pack phase-prompt mismatch');
+  }
 } catch (error) { console.error(error.message); process.exit(64); }
 NODE
 PROMPT="执行 Gantry 当前阶段 ${PHASE}；当前 task=${TASK_ID}。
 先读取 ${PACK_FILE}，按 loadOrder 加载约束；此文件是本次尝试的冻结输入。
 必须核对 pack.stage=${PHASE}、pack.taskId=${TASK_ID}（非DEV应为空）与 STATE 的 change/stage；pack.attemptId须与环境GANTRY_RALPH_ATTEMPT_ID一致（若有）。
+若 pack.gateFeedback 或 retryHistory 含失败，先读取具体诊断，分析根因、排除已失败方案，修复后返回候选，交外层重新验收；不要把可修复门禁直接抛给用户，不得通过删测试/弱化验收让门禁消失。
 DEV只执行此task的一次候选编码；读取其 execution/<task>.json 与 PROGRESS 的失败诊断，采用有证据差异的修复方案。遵守 read_files/write_files；必要时写当前task的PROGRESS。
+若当前验收与保存的contract不一致，只能恢复原验收，不得降低标准。
 禁止更改TASKS状态、验收contract、execution控制JSON、STATE、锁；禁止调用gantry done/dispatch/advance/approve/archive；禁止commit；禁止启动逃逸进程组的后台写者。
-阶段工件或候选代码写完即返回；外层控制器独立运行验收并决定完成。遇到人工关卡或需求歧义记录阻塞，不能自行批准。
-不要输出思考过程；输出实际改动、验证结果与阻塞事实。
-阶段协议：
-$(cat "$PHASE_FILE")"
+阶段工件或候选代码完成且本地验证通过后返回；外层控制器仍独立运行验收并决定完成。验证失败继续基于新证据调查和修复，禁止无差异重跑同一失败命令；确实无法继续时给出已调查路径、已排除方案与具体外部阻塞。遇到人工关卡或需求歧义记录阻塞，不能自行批准。
+不要输出思考过程；输出实际改动、验证结果与阻塞事实。阶段协议仅通过冻结 pack 的 loadOrder 加载。"
 exec claude -p "$PROMPT" \
   --dangerously-skip-permissions \
   --output-format text

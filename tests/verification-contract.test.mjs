@@ -43,3 +43,19 @@ test('verify 命令允许任务必需的数据库或远程依赖，但不扩展�
   assert.match(contract, /数据库或远程依赖/);
   assert.doesNotMatch(contract, /<integration_verify>|<test_verify>|verifyProfile|verify_profile/);
 });
+
+test('任务按独立验收切分，共用环境验证按 change 收口并保留失效重验', () => {
+  const task = read('phases/3-task.md');
+  const testPhase = read('phases/5-test.md');
+  const integration = read('phases/7-integration.md');
+  assert.doesNotMatch(task, /2~10 分钟/);
+  assert.match(task, /相同目标、共用验收.*合并/);
+  assert.match(task, /不能仅因命令相同合并不同目标/);
+  assert.match(testPhase, /不按 task \/ wave 启动完整五轮/);
+  assert.match(testPhase, /不要先手跑同一命令后立即让 CLI 再跑/);
+  assert.match(integration, /只执行缺失或失效部分/);
+  assert.match(integration, /不同目标环境分别验证/);
+  assert.match(integration, /单 task 的 focused verify 不能代替全量证据/);
+  assert.match(read('templates/TEST.md'), /共用执行与证据归属/);
+  assert.match(read('templates/UAT.md'), /自动化证据收口/);
+});

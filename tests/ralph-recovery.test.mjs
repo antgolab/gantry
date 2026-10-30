@@ -16,42 +16,6 @@ function fixture(t) {
 }
 const opts = { changeId: 'change' };
 
-test('executor diagnosis survives real controller restart and legacy record reservation', async t => {
-  const root = fixture(t);
-  const cycleUrl = new URL('../src/lib/task-cycle.mjs', import.meta.url).href;
-  const runnerUrl = new URL('../src/lib/process-runner.mjs', import.meta.url).href;
-  const packUrl = new URL('../src/lib/context-pack.mjs', import.meta.url).href;
-  const diagnosis = 'RESTART_DIAGNOSIS: excluded cache; hypothesis locale';
-  const first = execFileSync(process.execPath, ['--input-type=module', '-e', `
-    import {convergeTask} from ${JSON.stringify(cycleUrl)};
-    import {runProcess} from ${JSON.stringify(runnerUrl)};
-    const abort = new AbortController();
-    const result = await convergeTask(${JSON.stringify(root)}, 'T01', {changeId:'change',signal:abort.signal,execute:async()=>{
-      const output = await runProcess(process.execPath,['-e',${JSON.stringify(`console.log(${JSON.stringify(diagnosis)})`)}],{cwd:${JSON.stringify(root)}});
-      abort.abort(); return output;
-    }}); console.log(result.kind);
-  `], { encoding: 'utf8' });
-  assert.equal(first.trim(), 'cancelled');
-  const legacy = readTaskRecord(root, 'change', 'T01'); delete legacy.executorReports;
-  writeTaskRecord(root, legacy);
-  assert.equal(readTaskRecord(root, 'change', 'T01').executorReports, undefined, 'old records without optional reports remain readable');
-  const second = execFileSync(process.execPath, ['--input-type=module', '-e', `
-    import assert from 'node:assert/strict'; import {readFileSync,writeFileSync} from 'node:fs'; import {join} from 'node:path';
-    import {convergeTask} from ${JSON.stringify(cycleUrl)}; import {buildPack} from ${JSON.stringify(packUrl)};
-    const root=${JSON.stringify(root)};
-    const result=await convergeTask(root,'T01',{changeId:'change',execute:async({record})=>{
-      const pack=buildPack(root,{stage:'dev',changeId:'change',taskId:'T01'});
-      const entry=pack.loadOrder.find(item=>item.path.endsWith('EXECUTION.md'));
-      assert(entry.focus.includes('### T01 · executor reports'));
-      assert(readFileSync(join(root,entry.path),'utf8').includes(${JSON.stringify(diagnosis)}));
-      assert.equal(record.executorReports[0].source,'executor'); assert.equal(record.repairsUsed,1);
-      assert(!JSON.stringify(record.failure).includes(${JSON.stringify(diagnosis)}));
-      writeFileSync(join(root,'app.txt'),'good'); return {exitCode:0};
-    }}); console.log(JSON.stringify({kind:result.kind,used:result.record.repairsUsed}));
-  `], { encoding: 'utf8' });
-  assert.deepEqual(JSON.parse(second), { kind: 'completed', used: 1 });
-});
-
 test('existing candidate is verified on restart without another executor call', async t => {
   const root = fixture(t); await prepareTask(root, 'T01', opts); writeFileSync(join(root, 'app.txt'), 'good');
   const result = await convergeTask(root, 'T01', { ...opts, execute: async () => { throw Error('must not call'); } });
@@ -117,4 +81,67 @@ test('cancellation during retry backoff preserves its reservation for explicit r
     calls++; assert.equal(attempt.externalRetriesUsed, 1); writeFileSync(join(root, 'app.txt'), 'good'); return { exitCode: 0 };
   } });
   assert.equal(second.kind, 'completed'); assert.equal(second.record.repairsUsed, 0); assert.equal(calls, 2);
+});
+
+test('legacy deadline-bound reservation adopts current config without resetting history', async t => {
+  const {createHash}=await import('node:crypto');
+  const root=fixture(t); await prepareTask(root,'T01',opts);
+  let record=readTaskRecord(root,'change','T01');
+  record=writeTaskRecord(root,{...record,attempt:{...record.attempt,lifecycle:'returned'}});
+  record=reserveAttempt(root,record,{repair:true});
+  const {digest,...legacy}=record.contract;
+  legacy.deadlineSnapshot={executorTimeoutMs:15,verifyTimeoutMs:20,runTimeoutMs:30,killGraceMs:5};
+  const canonical=value=>Array.isArray(value)?value.map(canonical):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])])):value;
+  record=writeTaskRecord(root,{...record,contract:{...legacy,digest:createHash('sha256').update(JSON.stringify(canonical(legacy))).digest('hex')},attempt:{...record.attempt,externalRetriesUsed:2}});
+  mkdirSync(join(root,'.gantry/planning'),{recursive:true});
+  writeFileSync(join(root,'.gantry/planning/config.json'),JSON.stringify({ralph:{executorTimeoutMs:60000,verifyTimeoutMs:2000},autonomous:{maxStagesPerRun:10}}));
+  writeFileSync(join(root,'app.txt'),'good');
+  const result=await verifyAndComplete(root,'T01',opts);
+  assert.equal(result.kind,'completed',result.reason);
+  assert.equal(result.record.repairsUsed,1);
+  assert.equal(result.record.attempt.id,record.attempt.id);
+  assert.equal(result.record.attempt.externalRetriesUsed,2);
+  assert.deepEqual(result.record.baseline,record.baseline);
+  assert.equal(result.record.contract.deadlineSnapshot.verifyTimeoutMs,2000);
+  assert.equal(getTaskReceiptStatus(root,'T01',opts).valid,true);
+});
+
+test('latest verify timeout is read after candidate returns', async t => {
+  const root=fixture(t);
+  mkdirSync(join(root,'.gantry/planning'),{recursive:true});
+  const path=join(root,'.gantry/planning/config.json');
+  writeFileSync(path,JSON.stringify({ralph:{verifyTimeoutMs:50}}));
+  // A successful command requiring more than the old deadline.
+  writeFileSync(join(root,'verify.mjs'),"setTimeout(()=>process.exit(0),200)");
+  const result=await convergeTask(root,'T01',{...opts,execute:async()=>{
+    writeFileSync(path,JSON.stringify({ralph:{verifyTimeoutMs:2000}}));
+    return {exitCode:0};
+  }});
+  assert.equal(result.kind,'completed',result.reason);
+  assert.equal(result.record.repairsUsed,0);
+});
+
+test('repair execution adopts changed executor deadline within the same convergence call', async t => {
+  const root=fixture(t); const path=join(root,'.gantry/planning/config.json');
+  mkdirSync(join(root,'.gantry/planning'),{recursive:true});
+  writeFileSync(path,JSON.stringify({ralph:{executorTimeoutMs:2000}}));
+  let calls=0;
+  const result=await convergeTask(root,'T01',{...opts,execute:async({signal})=>{
+    if(++calls===1){writeFileSync(path,JSON.stringify({ralph:{executorTimeoutMs:40}}));return {exitCode:0};}
+    return new Promise(resolve=>signal.addEventListener('abort',()=>resolve({exitCode:1,timedOut:true,cleanupComplete:true}),{once:true}));
+  }});
+  assert.equal(result.kind,'timeout',result.reason);
+  assert.equal(calls,2); assert.equal(result.record.repairsUsed,1);
+});
+
+test('config edit during verification automatically rechecks without spending a repair',async t=>{
+  const root=fixture(t); const path=join(root,'.gantry/planning/config.json');
+  mkdirSync(join(root,'.gantry/planning'),{recursive:true});
+  writeFileSync(path,JSON.stringify({ralph:{verifyTimeoutMs:2000}}));
+  writeFileSync(join(root,'verify.mjs'),`import fs from 'node:fs'; const p='.gantry/planning/config.json'; const c=JSON.parse(fs.readFileSync(p)); if(c.ralph.verifyTimeoutMs===2000){c.ralph.verifyTimeoutMs=3000;fs.writeFileSync(p,JSON.stringify(c));} fs.mkdirSync('.gantry/logs',{recursive:true}); fs.appendFileSync('.gantry/logs/verify-count','x');`);
+  await prepareTask(root,'T01',opts);
+  const result=await verifyAndComplete(root,'T01',opts);
+  assert.equal(result.kind,'completed',result.reason);
+  assert.equal(result.record.repairsUsed,0);
+  assert.equal(readFileSync(join(root,'.gantry/logs/verify-count'),'utf8'),'xx');
 });

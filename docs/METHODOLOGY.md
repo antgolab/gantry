@@ -96,13 +96,18 @@ PROPOSAL → SPEC → DESIGN → [2a UI-DESIGN]* → TASKS → DEV → TEST → 
 | `TASKS.md` | 任务清单（任务 / 依赖 / `[P]` / verify / done）| AI |
 | `TEST.md` | 5 轮测试金字塔报告（功能矩阵 + UAT + 性能 / 安全 / 兼容 / 可观测口供）| AI |
 | `REVIEW.md` | 审查发现（严重度 / 修复决策 / 跨模型分歧）| AI |
-| `EXECUTION.md` | change 级执行日志（默认汇总所有 task 完成证据）| AI |
-| `<task-id>-SUMMARY.md` | 仅高风险/例外任务使用的专用完成报告，不再默认生成 | AI |
-| `BLOCKERS.md` | 当前 change 的人工待处理阻塞/审批摘要 | AI 维护，人处理 |
-| `FOLLOWUPS.md` | 非阻塞遗留问题与后续清单 | AI |
+| `EXECUTION.md` | change 级执行日志；每 task 汇总一次，证据只保留一份 | CLI 投影验收凭据，编排器合入报告 |
+| `<task-id>-SUMMARY.md` | 仅高风险/例外任务确有独立交接细节时生成；EXECUTION 引用，不复制 | AI（须在任务修改边界内）|
+| `BLOCKERS.md` | 有独立人工待办清单时才生成；单条暂停原因复用 STATE | AI 维护，人处理 |
+| `FOLLOWUPS.md` | 有需独立跟踪的后续清单时才生成；零散遗留复用已有报告 | AI |
 | `<task-id>-PROGRESS.md` | **临时**文件——任务执行中途清窗时写入，含「已排除方案」反重复段。任务完成后删除。详见 RULES R1.5/R1.6/R1.7 | AI |
 | `LESSONS.md`（`.gantry/specs/` 根）| **项目级常驻**——跨 change 失败知识库。每个 DEV 任务开工前必扫；INTEGRATION 阶段提名新条目。详见 RULES R1.8 | AI 提名 + 人工筛 |
-| `STATE.md`（`.gantry/planning/STATE.md`）| 跨会话状态（当前位置 / 中断任务 / 暂停原因 / 高价值决策）| AI 维护，人可改 |
+| `STATE.md`（`.gantry/planning/STATE.md`）| 跨会话状态（当前位置 / 中断任务 / 暂停原因 / 高价值决策）| CLI 维护，executor 不改 |
+
+full 的阶段主工件 PROPOSAL / SPEC / DESIGN / TASKS / EXECUTION / TEST / REVIEW / UAT 保留，各自承担决策或验收职责。下游引用已锁事实，不复制上游正文；模板中无关的条件段省略，不逐段填 N/A。UI-DESIGN、PROTOTYPE、JOURNEY-VERIFY、PATCH 只在对应场景生成；SUMMARY、BLOCKERS、FOLLOWUPS 不为占位而创建。PROGRESS 仅用于未完成任务的中断恢复，正常执行不创建、不按 verify 子条件更新，验收后清理。
+
+STATE、context-pack、execution 控制 JSON 和归档索引由 CLI 维护；AI 不另写同义状态或证据文件。light 继续只用 light.json + EXECUTION 的原有闭环。
+
 ### CONTEXT 写入边界
 
 `CONTEXT.md` 只收**后续 change 会直接消费的项目级规则**。单个 change 内才有意义的事实，写在该 change 的 `SPEC.md` / `DESIGN.md` / `EXECUTION.md`，不要升入 CONTEXT。
@@ -136,17 +141,20 @@ PROPOSAL → SPEC → DESIGN → [2a UI-DESIGN]* → TASKS → DEV → TEST → 
 
 ## 7 个核心机制（已内化进各阶段 prompt）
 
-1. **任务拆解** — 拆成可独立 verify / commit / done 的最小单元，再按依赖与文件冲突组成 wave
+1. **任务拆解** — 按独立验收价值划分工作切片，不按固定分钟数拆碎；相同目标且共用验收的小改动合并，再按依赖与文件冲突组成 wave
 2. **Prompt 组织** — 模板 + 文件引用 + 验证锚点；不靠对话堆叠
 3. **上下文控制** — 阶段切换 = 清窗；DEV 每 wave 新建子 Agent，wave 内每 task 重新生成并读取 context pack
 4. **代码生成策略** — 每 wave 一个子 Agent，wave 内逐任务独立实现、验证和提交
 5. **测试生成** — 测试从 AC 派生而非从实现派生；bug 修复必伴随回归测试
 6. **审查 / Refine 循环** — 至少两轮，至少一轮跨模型 spot-check
-7. **自迭代** — 失败自动产 fix-plan 回炉，最多 3 轮，超限人工介入
+7. **自迭代** — 可恢复门禁在宿主预算内持续诊断、修复、重验，额度耗尽后报告；不只产 fix-plan 就结束
 
 ---
 
 ## 自迭代上限
 
-任何阶段（plan / dev / verify）的自动重试次数 **≤ 3 轮**。
-超限必须停下来让人决策，禁止死循环。
+DEV 修复次数采用最新 `ralph.maxRepairs`，其他阶段采用 `autonomous.maxRetries`，均默认3。预算由宿主持久化管理，初次候选不算修复，skill/phase/hook/review 不另加计数，恢复不清零。先分析根因并修复、实际重验，耗尽才返回最后错误；人工批准、时限、进程/控制记录和用户内容保护独立保留。
+
+## 共用验证成本
+
+实现 task 与环境验证的执行单位分开：每个 task 保留 focused verify 和控制器独立验收；TEST / INTEGRATION 按 change 收口共用检查，由一个验证负责人统一组织环境准备、部署和数据清理。并行关系不增加非 DEV 验证轮次。下游引用仍满足输入、覆盖和环境要求的原始证据，只补缺失或失效部分；跨环境、远程状态变化或无法确认时重跑。共用归属记录在现有 TEST.md，不新增计划或状态工件。

@@ -25,10 +25,7 @@ fresh_context: false
 
 ## 入场协议
 
-1. 读取 .gantry/planning/STATE.md 确认当前阶段
-2. change：接收用户一句话描述
-3. requirement：读取 `PROPOSAL.md`
-4. task：读取 DESIGN.md + UI-DESIGN.md（如有）
+消费入口已确认的阶段和 pack.loadOrder，不再读取 STATE 或重建输入清单；已有且未变化的内容直接复用。task 涉及 UI 时补读 UI-DESIGN 的相关约束。
 
 ## 执行协议
 

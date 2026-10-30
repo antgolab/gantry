@@ -1,6 +1,6 @@
 {
   "name": "@mmmjk/gantry",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Protocol-driven AI engineering framework for traceable, reviewable, and verifiable AI-assisted development",
   "type": "module",
   "bin": {
@@ -27,7 +27,10 @@
     "build": "node tools/build.mjs",
     "verify": "node tools/verify.mjs",
     "metrics": "node tools/metrics.mjs",
-    "prepublishOnly": "npm run build && npm run verify"
+    "prepublishOnly": "npm run build && npm run verify",
+    "test": "node --test tests/*.test.mjs tests/evals/*.test.mjs",
+    "test:evals": "node --test tests/evals/*.test.mjs",
+    "test:evals:model": "node tests/evals/run-model.mjs"
   },
   "keywords": [
     "ai",

@@ -150,3 +150,22 @@
 ---
 
 > 本文件不包含完整代码实现。函数签名、伪代码、接口定义可以；函数体不行。
+
+
+## 调研覆盖（复杂变更可选）
+
+无需调研的简单变更可删除本段。需要时取消下例各行的引用符 `>`，填写完整七行后启用；
+状态、来源和作用域规范见阶段协议的「研究覆盖台账」。本示例仍是未决事项，不能直接推进。
+
+> <!-- gantry:research-ledger -->
+> ## Research Coverage
+>
+> | surface | status | evidence | openDecision | scope |
+> |---|---|---|---|---|
+> | contracts | open-needs-user | — | <接口/数据契约待决问题> | * |
+> | lifecycle | open-needs-user | — | <状态转换待决问题> | * |
+> | failure/retry | open-needs-user | — | <失败与重试待决问题> | * |
+> | permission/ownership | open-needs-user | — | <权限归属待决问题> | * |
+> | source-of-truth | open-needs-user | — | <事实源冲突待决问题> | * |
+> | experience | open-needs-user | — | <体验验收标准，或填写不适用依据> | * |
+> | external-version | open-needs-user | — | <官方 URL / version / deprecated，或填写不适用依据> | * |

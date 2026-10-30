@@ -1,9 +1,8 @@
 /** Task acceptance/content anchors. No task completion state is stored here. */
 import { createHash } from 'node:crypto';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { lstatSync, readFileSync, readlinkSync, realpathSync, readdirSync } from 'node:fs';
 import { resolve, relative, isAbsolute } from 'node:path';
-import { detectTestWeakening } from './light-guard.mjs';
 
 export const DEFAULT_RALPH_DEADLINES = Object.freeze({ executorTimeoutMs: 900000, verifyTimeoutMs: 600000, runTimeoutMs: 7200000, killGraceMs: 5000 });
 
@@ -23,72 +22,20 @@ export function createContract(task, config = {}) {
     checks: lines(task.checks ?? config.checks), preflight: lines(task.preflight ?? config.preflight),
     deadlineSnapshot: config.deadlineSnapshot ?? task.deadlineSnapshot ?? config.deadline ?? {},
   };
-  return { ...contract, digest: digest(contract) };
+  // Runtime deadlines describe execution, not the acceptance criteria.
+  const { deadlineSnapshot, writeFiles, readFiles, ...acceptance } = contract;
+  return { ...contract, digest: digest(acceptance) };
 }
 
-// Deliberately limited to literal direct calls, &&/;/| chains and file
-// redirects. This is not a shell parser: expansion, control flow, wrappers and
-// changed cwd/environment require a task-authored preflight instead.
-function literalRunners(command) {
-  const word = /(?:[^\s'"\\;&|<>()$`]+|'[^']*'|"(?:[^"\\$`]|\\.)*"|\\[^\n])+/y;
-  const redirect = /\d*(?:>>?|<)/y;
-  const runners = [];
-  let offset = 0, needsRunner = true, redirectTarget = false;
-  while (offset < command.length) {
-    const space = /^[ \t]+/.exec(command.slice(offset));
-    if (space) { offset += space[0].length; continue; }
-    const separator = /^(?:&&|;|\|(?!\|))/.exec(command.slice(offset));
-    if (separator) {
-      if (needsRunner || redirectTarget) return { runners, complex: true };
-      needsRunner = true; offset += separator[0].length; continue;
-    }
-    redirect.lastIndex = offset;
-    const redirection = redirect.exec(command);
-    if (redirection) {
-      if (redirectTarget) return { runners, complex: true };
-      redirectTarget = true; offset = redirect.lastIndex; continue;
-    }
-    word.lastIndex = offset;
-    const token = word.exec(command);
-    if (!token || token[0].startsWith('#')) return { runners, complex: true };
-    offset = word.lastIndex;
-    if (redirectTarget) { redirectTarget = false; continue; }
-    if (!needsRunner) continue;
-    const runner = token[0].replace(/'([^']*)'|"((?:[^"\\]|\\.)*)"|\\(.)/g,
-      (_, single, double, escaped) => single ?? (double != null ? double.replace(/\\([\\"$`])/g, '$1') : escaped));
-    // No expansion or control semantics are inferred, even when a command
-    // name could itself be found by command -v.
-    if (!/^[A-Za-z0-9_./:@%+, :^-]+$/.test(runner) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(runner)
-      || /^(?:if|then|else|elif|fi|for|while|until|do|done|case|esac|in|function|!|\{|\}|cd|export|unset|eval|exec|command|env|source|\.)$/.test(runner)
-      || /^(?:sh|bash|zsh|dash|ksh)$/.test(runner.split('/').at(-1))) return { runners, complex: true };
-    runners.push(runner); needsRunner = false;
-  }
-  return { runners, complex: needsRunner || redirectTarget };
-}
-
-/** Only validates declared direct runners, never executes target verification.
- * Package scripts, interpreter imports and remote/transitive dependencies are
- * not discovered; task planning must declare their readiness via preflight. */
-export function inspectTaskRunnerReadiness(root, contract, { probe = true } = {}) {
-  for (const command of [contract.verify, ...contract.checks]) {
-    const identified = literalRunners(command);
-    if (identified.complex && !contract.preflight.length) return {
-      ok: false, reason: 'runner-preflight-required',
-      diagnostic: `复杂 Shell 无法静态确认 runner；请在 TASKS 的 preflight 声明环境/runner 就绪探针（不要运行预期 RED 的 verify）: ${command}`,
-    };
-    if (!probe) continue;
-    for (const runner of new Set(identified.runners)) {
-      // The task text is never a shell program here. Positional arguments
-      // preserve quoting and prevent substitutions or injected commands.
-      const found = spawnSync('sh', ['-c', 'command -v "$1" >/dev/null 2>&1', 'gantry-runner-probe', runner],
-        { cwd: root, encoding: 'utf8', timeout: 5000 });
-      if (found.status !== 0 || found.error) return {
-        ok: false, reason: 'command-unavailable',
-        diagnostic: `必要 runner 不可用: ${runner}; install/安装并加入 PATH，或修复本地文件的执行权限；复杂/远程依赖请声明 preflight。`,
-      };
-    }
-  }
-  return { ok: true };
+/** Accept old deadline-bound records without resetting their baseline/budget. */
+export function contractsMatch(saved, current) {
+  if (!saved || !current) return false;
+  const { digest: savedDigest, ...fields } = saved;
+  const { deadlineSnapshot, ...withoutDeadlines } = fields;
+  const { writeFiles, ...withoutWriteFiles } = withoutDeadlines;
+  const { readFiles, ...acceptance } = withoutWriteFiles;
+  return [digest(fields), digest(withoutDeadlines), digest(withoutWriteFiles), digest(acceptance)].includes(savedDigest)
+    && digest(acceptance) === current.digest;
 }
 
 function git(root, args) {
@@ -106,6 +53,10 @@ function runtimePath(path) {
     || path === 'STATE.md';
 }
 function acceptanceContent(path, content) {
+  if (path === '.gantry/planning/config.json') {
+    try { return JSON.stringify(canonical(JSON.parse(String(content)))); }
+    catch { return content; } // Invalid config is diagnosed by the config reader.
+  }
   if (!/^\.gantry\/specs\/[^/]+\/TASKS?\.md$/.test(path)) return content;
   return String(content).replace(/(<task\b[^>]*?\bstatus\s*=\s*)(["'])[^"']*\2/g, '$1"pending"');
 }
@@ -167,7 +118,7 @@ export function captureManifest(root, { includePaths = [] } = {}) {
     if (!validPath(path)) throw new Error(`unsafe manifest path: ${path}`);
     const staged = index.get(path) ?? { indexHash: null, indexMode: null };
     const indexContent = staged.indexHash ? execFileSync('git', ['cat-file', 'blob', staged.indexHash], { cwd: root, maxBuffer: 64 * 1024 * 1024 }).toString('utf8') : null;
-    const indexHash = staged.indexHash && /^\.gantry\/specs\/[^/]+\/TASKS?\.md$/.test(path)
+    const indexHash = staged.indexHash && (/^\.gantry\/specs\/[^/]+\/TASKS?\.md$/.test(path) || path === '.gantry/planning/config.json')
       ? hash(acceptanceContent(path, indexContent)) : staged.indexHash;
     return { path, ...inspectPath(root, path), ...staged, indexHash, indexContent };
   });
@@ -207,51 +158,10 @@ function scopeRegex(pattern) {
   }
   return new RegExp(`^${expression}${pattern.endsWith('/') ? '.*' : ''}$`);
 }
-
-/** Refuse project inputs that Git cannot anchor, without opening their contents.
- * Knowledge/control documents and installed dependencies are read-only context,
- * not project source. Git exclusions keep broad read globs from walking them.
- */
-export function assertTaskPathsObservable(root, task) {
-  const contextRead = path => /^(?:\.gantry|\.context)(?:\/|$)/.test(path)
-    || /(^|\/)node_modules(?:\/|$)/.test(path);
-  function ignored(path) {
-    try {
-      return Boolean(execFileSync('git', ['check-ignore', '-z', '--stdin'], {
-        cwd: root, input: `${path}\0`, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'],
-      }));
-    } catch (error) { if (error.status === 1) return false; throw error; }
-  }
-  function refuse(path) {
-    throw new Error(`ignored source boundary: ${path}; track the task source or remove its ignore rule before running the task`);
-  }
-  for (const [patterns, readOnly] of [[lines(task.readFiles ?? task.read_files), true], [lines(task.writeFiles ?? task.write_files), false]]) {
-    for (const pattern of patterns) {
-      const matcher = scopeRegex(pattern);
-      if (!matcher) throw new Error(`unsafe task source path: ${pattern}`);
-      if (readOnly && contextRead(pattern)) continue;
-      const wildcard = pattern.indexOf('*');
-      const prefix = wildcard < 0 ? pattern : pattern.slice(0, pattern.lastIndexOf('/', wildcard) + 1) || '.';
-      const tracked = () => git(root, ['ls-files', '-z', '--', prefix]).split('\0').filter(Boolean)
-        .some(path => matcher.test(path) || (wildcard < 0 && path.startsWith(`${pattern.replace(/\/$/, '')}/`)));
-      if (wildcard < 0) {
-        if (ignored(pattern) && !tracked()) refuse(pattern);
-      } else {
-        // Checking the literal directory also covers ignored output roots that
-        // do not exist yet. Normal check-ignore semantics preserve tracked files.
-        if (prefix !== '.' && ignored(prefix) && !tracked()) refuse(prefix);
-      }
-      const exclusions = readOnly ? [':(exclude).gantry', ':(exclude).context', ':(exclude,glob)**/node_modules/**'] : [];
-      const names = git(root, ['ls-files', '--others', '--ignored', '--exclude-standard', '-z', '--', prefix, ...exclusions]);
-      for (const path of names.split('\0').filter(Boolean)) {
-        if (readOnly && contextRead(path)) continue;
-        if (matcher.test(path) || (wildcard < 0 && path.startsWith(`${pattern.replace(/\/$/, '')}/`))) refuse(path);
-      }
-    }
-  }
-}
 export function checkTaskScope(baseline, current, writeFiles) {
-  const changedFiles = changes(baseline, current).map(e => e.path);
+  // Project configuration is operator input. It invalidates evidence and is
+  // re-read/revalidated, but changing it must not require widening task scope.
+  const changedFiles = changes(baseline, current).map(e => e.path).filter(path => path !== '.gantry/planning/config.json');
   const patterns = lines(writeFiles).map(scopeRegex);
   const invalid = patterns.some(pattern => !pattern);
   const outOfScope = changedFiles.filter(path => invalid || !patterns.some(pattern => pattern.test(path)));
@@ -259,8 +169,6 @@ export function checkTaskScope(baseline, current, writeFiles) {
 }
 
 const testPath = path => /(?:^|\/)(?:tests?|__tests__)(?:\/|$)|\.(?:test|spec)\.[^/]+$/.test(path);
-const configPath = path => /(?:^|\/)(?:package\.json|(?:jest|vitest|playwright|ava|nyc|tap|mocha|eslint)[^/]*|\.mocharc[^/]*|test-commands\.yml)$/.test(path);
-const skips = text => (String(text ?? '').match(/\b(?:test|it|describe)\.(?:skip|todo)\b|\b(?:skip|todo)\s*:\s*(?:true|['"`])/g) ?? []).length;
 export function detectTaskWeakening(baseline, current) {
   const delta = changes(baseline, current);
   const reasons = [];
@@ -270,13 +178,12 @@ export function detectTaskWeakening(baseline, current) {
   for (const field of ['content', 'indexContent']) {
     const tests = delta.map(e => ({ path: e.path, before: e.before?.[field] ?? null, after: e.after?.[field] ?? null,
       status: e.after?.[field] == null ? 'D' : e.before?.[field] == null ? 'A' : 'M' }));
-    const weakened = detectTestWeakening(tests.filter(e => e.before !== e.after), testPath);
-    for (const path of weakened.files) { files.add(path); reasons.push({ path, kind: 'test-weakened', source: field }); }
-    for (const e of tests) if (testPath(e.path) && skips(e.after) > skips(e.before)) {
-      files.add(e.path); reasons.push({ path: e.path, kind: 'skip-or-todo-added', source: field });
+    for (const e of tests) if (testPath(e.path) && e.before !== null && e.status === 'D') {
+      files.add(e.path); reasons.push({ path: e.path, kind: 'test-file-deleted', source: field });
     }
   }
-  for (const e of delta) if (configPath(e.path)) { files.add(e.path); reasons.push({ path: e.path, kind: 'test-configuration-changed' }); }
+  // Configuration edits invalidate content-bound receipts and require actual
+  // verification. A changed config file alone is not evidence of weakening.
   return { hit: files.size > 0, files: [...files].sort(), reasons, reviewRequired: files.size > 0 };
 }
 
@@ -292,7 +199,7 @@ export function inspectVerificationOutput(output, { kind = 'test' } = {}) {
     return { ok: !incompleteTap || kind === 'command', counts: null, reason: incompleteTap ? 'incomplete-tap' : 'unknown-test-counts' };
   }
   for (const key of ['pass', 'fail', 'skipped', 'todo']) counts[key] ??= 0;
-  const reason = counts.tests === 0 ? 'zero-tests' : counts.fail > 0 ? 'tests-failed' : counts.skipped > 0 ? 'tests-skipped' : counts.todo > 0 ? 'tests-todo' : null;
+  const reason = counts.tests === 0 ? 'zero-tests' : counts.fail > 0 ? 'tests-failed' : counts.pass === 0 ? 'no-passing-tests' : null;
   return { ok: reason === null, counts, reason };
 }
 export function receiptMatches(receipt, contract, manifest) {

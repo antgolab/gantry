@@ -25,15 +25,13 @@ fresh_context: false
 
 ## 入场协议
 
-1. 读取所有已完成工件（CHANGE → REVIEW 全链路）
-2. 读取 TEST.md 确认测试覆盖
-3. 读取 REVIEW.md 确认审查通过
+按当前 pack.loadOrder 消费 SPEC、DESIGN、TEST、REVIEW；已在当前上下文加载且未变化的内容直接复用。仅在失败追溯时回查其他历史工件。
 
 ## 执行协议
 
 按 `.gantry/core/phases/7-integration.md`：
 
-1. 全量自动化（单测 / e2e / 构建 / 静态检查）
+1. 按 change 收口全量自动化（单测 / e2e / 构建 / 静态检查）：引用输入、覆盖与环境仍匹配的真实证据，只补缺失或失效部分；共享环境统一部署，不按 task / wave 重跑
 2. 跨服务路径总验收（仅 SPEC 定义了跨服务 Journey 时）：
    - 按 DESIGN §2.1 服务序列逐条 Journey 端到端跑（拉起真实多方或桩）
    - 断点定位 → 对照已锁工件判定归属（实现偏离→dev / 路径设计缺陷→design / 判据歧义→requirement）

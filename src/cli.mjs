@@ -29,6 +29,9 @@ import { prepareTask, verifyAndComplete, inspectTasks, checkpointTasks, revalida
 import { readTaskRecord, acquireWorkspaceLock, releaseWorkspaceLock } from './lib/task-record.mjs';
 import { captureManifest, checkTaskScope } from './lib/task-evidence.mjs';
 import { runLoop } from './loop/controller.mjs';
+import { runAcVerification, recordAcObservation, checkAcEvidence } from './lib/ac-evidence.mjs';
+import { checkPrototypeGate } from './lib/prototype.mjs';
+import { checkSimplificationScope, readReviewDiff } from './lib/simplify.mjs';
 import { checkLoopGuard } from './lib/loop-guard.mjs';
 import {
   appendHealAttempt,
@@ -109,6 +112,7 @@ const commands = {
   help, knowledge, loop,
   'loop-next': loopNext,
   'heal': heal,
+  'verify-ac': verifyAc,
 };
 
 // IDE-only skills：AI 驱动的阶段 / 动作命令，只在 IDE 中以 /gantry-<name> 执行，
@@ -860,6 +864,10 @@ async function nextOnce(projectRoot, { isSkip = false, approvedStage = null, wor
     console.log('当前无活跃变更。运行 gantry change "<描述>" 开始。');
     return { stop: true };
   }
+  if (state.currentStage === 'integration') {
+    console.log('已在 integration 阶段。运行 gantry archive 完成变更。');
+    return { reachedEnd: 'integration' };
+  }
 
   // light@fast 走独立的出口门（DESIGN D7/D8/D14；SPEC AC-6/7/8/11）：
   // 不经过 full 的阶段图与 change/design/integration 硬锁，由 CLI 执行 verify
@@ -895,8 +903,6 @@ async function nextOnce(projectRoot, { isSkip = false, approvedStage = null, wor
   }
   const nextStage = getNextStage(state.currentStage, effectiveConfig);
   if (!nextStage) {
-    updateState(projectRoot, { pauseReason: null });
-    if (state.currentStage === 'integration') console.log('integration 已获批准。运行 gantry archive 完成变更。');
     return { reachedEnd: state.currentStage };
   }
 
@@ -1010,43 +1016,15 @@ async function commitDevCheckpoint(root, state) {
     const message = `feat(${state.activeChange}): 完成 DEV 任务与组合验证`;
     let pending = existsSync(marker) ? JSON.parse(readFileSync(marker, 'utf8')) : null;
     if (pending && pending.changeId !== state.activeChange) return { ok: false, reason: '存在其他 change 的待核对提交记录' };
-    const committedCandidateMismatch = () => {
-      const manual = '；保留预约、提交与索引。请人工核对 git show HEAD、git diff HEAD、git diff --cached 及 .gantry/planning/ralph-checkpoint.json，不会自动追加 DEV 提交';
-      const subject = git(['log', '-1', '--format=%s']);
-      const parent = git(['log', '-1', '--format=%P']);
-      const tree = git(['rev-parse', 'HEAD^{tree}']);
-      if (parent !== pending.head || subject !== pending.message || tree !== pending.tree) {
-        return 'Git 实际提交的 parent/tree 或消息与已验证候选不一致' + manual;
-      }
-      // Re-read after hooks too: a matching commit alone does not prove that
-      // the index and workspace still describe the verified candidate.
-      const committedScope = checkTaskScope(baseline, captureManifest(root), tasks.flatMap(task => task.writeFiles));
-      const reservedSources = pending.files.filter(path => path !== execution).sort();
-      const candidateSources = committedScope.changedFiles.filter(path => !path.startsWith('.gantry/') && !committedScope.outOfScope.includes(path)).sort();
-      if (reservedSources.length !== candidateSources.length || reservedSources.some((path, i) => path !== candidateSources[i])) {
-        return 'Git 已提交，但任务源码清单已变化' + manual;
-      }
-      if (git(['write-tree']) !== pending.tree) return 'Git 已提交，但索引已变化' + manual;
-      if (reservedSources.length && git(['diff', 'HEAD', '--', ...reservedSources])) {
-        return 'Git 已提交，但工作区源码已变化' + manual;
-      }
-      return null;
-    };
     if (pending && head !== pending.head) {
-      const mismatch = committedCandidateMismatch();
-      if (mismatch) return { ok: false, reason: mismatch };
-      unlinkSync(marker);
-      return { ok: true, commit: head, recovered: true };
-    }
-    const candidateFiles = [...allowed].sort();
-    if (pending && (pending.files.length !== candidateFiles.length || pending.files.some((path, i) => path !== candidateFiles[i]))) {
-      return { ok: false, reason: '待提交清单已变化；保留索引。请人工核对并保存暂存内容，再清空暂存区、删除 .gantry/planning/ralph-checkpoint.json 后重跑 gantry advance' };
-    }
-    // A failed hook leaves our staged tree behind. Path membership alone does
-    // not establish ownership: the user may have staged different bytes or
-    // unstaged one of those same files since the failure.
-    if (pending && (!pending.tree || git(['write-tree']) !== pending.tree)) {
-      return { ok: false, reason: '待提交索引已变化或缺少预约摘要；保留索引。请人工核对并保存暂存内容，再清空暂存区、删除 .gantry/planning/ralph-checkpoint.json 后重跑 gantry advance' };
+      const subject = git(['log', '-1', '--format=%s']);
+      const parent = git(['rev-parse', 'HEAD^']);
+      const tree = git(['rev-parse', 'HEAD^{tree}']);
+      if (parent === pending.head && subject === pending.message && tree === pending.tree) {
+        unlinkSync(marker);
+        return { ok: true, commit: head, recovered: true };
+      }
+      return { ok: false, reason: 'Git HEAD 在待提交窗口变化，需要核对真实提交' };
     }
     const staged = git(['diff', '--cached', '--name-only', '-z']).split('\0').filter(Boolean);
     if (staged.length && (!pending || staged.some(path => !pending.files.includes(path)))) {
@@ -1057,26 +1035,20 @@ async function commitDevCheckpoint(root, state) {
       return { ok: false, reason: '当前为主分支，请在工作分支完成 DEV 提交' };
     }
     if (!pending) {
-      pending = { changeId: state.activeChange, head, message, files: candidateFiles, tree: git(['write-tree']) };
+      pending = { changeId: state.activeChange, head, message, files: [...allowed].sort(), tree: null };
       writeFileSync(marker, JSON.stringify(pending, null, 2) + '\n');
     }
+    if (pending.files.some(path => !allowed.has(path))) return { ok: false, reason: '待提交清单已变化，请核对后恢复' };
     const sourceFiles = pending.files.filter(path => path !== execution);
     if (sourceFiles.length) git(['add', '--', ...sourceFiles]);
     if (pending.files.includes(execution)) git(['add', '-f', '--', execution]);
-    pending.tree = git(['write-tree']);
-    writeFileSync(marker, JSON.stringify(pending, null, 2) + '\n');
     // Index contents are part of evidence; staging invalidates earlier receipts.
     const checked = await checkpointTasks(root, taskOptions());
     if (checked.kind !== 'completed') return { ok: false, reason: checked.reason || '暂存后的组合验证失败，保留现场' };
-    // The checkpoint refreshes this framework-owned receipt after index-bound
-    // verification. Include the final human evidence, not its previous digest.
-    if (pending.files.includes(execution)) git(['add', '-f', '--', execution]);
     pending.tree = git(['write-tree']);
     writeFileSync(marker, JSON.stringify(pending, null, 2) + '\n');
     git(['commit', '-m', pending.message]);
     const commit = git(['rev-parse', 'HEAD']);
-    const mismatch = committedCandidateMismatch();
-    if (mismatch) return { ok: false, reason: mismatch };
     unlinkSync(marker);
     return { ok: true, commit };
   } catch (error) { return { ok: false, reason: error.message }; }
@@ -1114,6 +1086,22 @@ function getConfiguredMaxStages(config = {}, fallback = 3) {
 function context(args) {
   const projectRoot = process.cwd();
   ensureInit(projectRoot);
+  const findingsPath = getFlag(args, '--simplify-findings');
+  if (findingsPath) {
+    const state = readState(projectRoot);
+    const dir = join(projectRoot, SPECS_DIR, state.activeChange || '');
+    const taskFile = resolveArtifactPath(dir, 'tasks');
+    const tasks = taskFile ? parseTasks(taskFile.path) : [];
+    const taskId = getFlag(args, '--task');
+    const owned = taskId ? tasks.filter(task => task.id === taskId) : tasks;
+    if (!owned.length) throw new Error('simplify requires an existing task boundary');
+    const payload = JSON.parse(readFileSync(resolve(findingsPath), 'utf8'));
+    const targetDiff = readReviewDiff(projectRoot);
+    const changedFiles = [...targetDiff.matchAll(/^\+\+\+ b\/(.+)$/gm)].map(match => match[1]);
+    const checked = checkSimplificationScope(payload, owned.flatMap(task => task.writeFiles), changedFiles);
+    console.log(JSON.stringify(checked)); if (!checked.allowed) process.exitCode = 2;
+    return;
+  }
   const overrides = {};
 
   // 解析 --task / --stage / --json
@@ -1165,10 +1153,11 @@ async function done(args) {
   ensureInit(root);
   const taskId = args.find(a => !a.startsWith('-'));
   if (!taskId) throw new Error('用法: gantry done <task-id> [--json]');
-  const result = await verifyAndComplete(root, taskId, taskOptions());
+  const result = await verifyAndComplete(root, taskId, {...taskOptions(), forceRecheck:args.includes('--recheck')});
   if (result.kind === 'completed') {
     updateState(root, { currentTask: null, pauseReason: null });
   }
+  if (result.scope?.outOfScope.length) console.error(`范围提示（不阻断） ${taskId}:\n${result.scope.outOfScope.map(path => `  ${path}`).join('\n')}`);
   console.log(args.includes('--json') ? JSON.stringify(result) : `${result.kind}: ${taskId} ${result.reason || ''}`);
   process.exitCode = result.exitCode || 0;
 }
@@ -1678,6 +1667,14 @@ async function archive(args, opts = {}) {
     return;
   }
 
+  const deliveryDir = join(projectRoot, SPECS_DIR, finishedChange);
+  const acProof = checkAcEvidence(projectRoot, deliveryDir);
+  if (!acProof.passed) throw new Error(acProof.reason);
+  const prototype = checkPrototypeGate(deliveryDir, projectRoot, {validateTask: task => {
+    const tasks = inspectTasks(projectRoot, {changeId:finishedChange});
+    return !tasks.invalidReceipts.some(item => item.taskId === task.id);
+  }});
+  if (!prototype.passed) throw new Error(prototype.reason);
   const skipLearning = args.includes('--skip-learning');
 
   // friction 汇总 hook (T15): 采集必须在 archiveChange 移动 change 目录之前完成,否则 getEvents 读不到事件。
@@ -1848,13 +1845,13 @@ function metrics(args) {
  */
 async function loop(args) {
   if (!args[0] || ['-h', '--help'].includes(args[0])) {
-    console.log('用法: gantry loop <claude|codex> [--quiet|-q] [--verbose|-v]');
+    console.log('用法: gantry loop <claude|codex> [--quiet|-q] [--verbose|-v] [--auto-approve]');
     if (!args[0]) process.exitCode = 64;
     return;
   }
-  const unknown = args.slice(1).filter(arg => !['--quiet', '-q', '--verbose', '-v'].includes(arg));
+  const unknown = args.slice(1).filter(arg => !['--quiet', '-q', '--verbose', '-v', '--auto-approve'].includes(arg));
   if (unknown.length) { console.error(`未知参数: ${unknown.join(', ')}`); process.exitCode = 64; return; }
-  process.exitCode = await runLoop({ root: process.cwd(), client: args[0], quiet: args.includes('--quiet') || args.includes('-q') });
+  process.exitCode = await runLoop({ root: process.cwd(), client: args[0], quiet: args.includes('--quiet') || args.includes('-q'), autoApprove: args.includes('--auto-approve'), verbose: args.includes('--verbose') || args.includes('-v') });
 }
 
 /**
@@ -1884,7 +1881,7 @@ function help(args = []) {
   pipeline full        将 light change 单向升档为 full
   advance              单步推进           [--skip]
   auto                 多阶段自动推进
-  loop <claude|codex>  无监督收敛 driver(headless)  [--quiet]
+  loop <claude|codex>  无监督收敛 driver(headless)  [--quiet] [--auto-approve]
   loop-next            无监督 driver 消费的 token
   heal                 dev 阶段 self-heal
 
@@ -1921,8 +1918,7 @@ function helpAll() {
   dispatch            预约一个 ready task，刷新对应 context pack（重复预约阻塞）
     --json              输出 { status, waveId?, taskIds? }
 
-  loop <claude|codex> 无监督收敛 driver(headless)——包装 src/loop/loop.sh
-                      [--quiet] 只打每步摘要;默认全显示并流式转发 dispatch 输出
+  loop <claude|codex> 无监督收敛 driver(headless)——包装 src/loop/loop.sh                      [--quiet] 只打每步摘要;默认全显示并流式转发 dispatch 输出
                       dispatch/advance 失败带诊断退避重试(上限 config.autonomous.maxRetries)
                       退出码: 0=done  2=blocked  3=max-steps  4=dispatch 失败  5=stuck  64=用法错
                       环境变量: GANTRY_LOOP_MAX_STEPS；ralph 配置控制运行时限
@@ -2337,4 +2333,16 @@ function slugifyEnglish(text) {
 function limitSlugWords(slug, maxWords) {
   const words = String(slug || '').split('-').filter(Boolean);
   return words.slice(0, maxWords).join('-');
+}
+
+async function verifyAc(args) {
+  const root = process.cwd(); const state = readState(root);
+  if (!state.activeChange) throw new Error('无活跃 change');
+  const dir = join(root, SPECS_DIR, state.activeChange);
+  const observation = getFlag(args, '--observation');
+  const result = observation
+    ? { recorded: recordAcObservation(root, dir, JSON.parse(readFileSync(resolve(observation), 'utf8')), taskOptions()) }
+    : await runAcVerification(root, dir, { ...taskOptions(), onOutput: args.includes('--json') ? undefined : chunk => process.stderr.write(chunk) });
+  console.log(JSON.stringify(result));
+  if (result.passed === false) process.exitCode = 1;
 }

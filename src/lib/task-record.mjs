@@ -42,7 +42,7 @@ export function validateTaskRecord(record, changeId = record?.changeId, taskId =
     fail('record identity or schema version mismatch');
   }
   if (!Number.isInteger(record.revision) || record.revision < 0 ||
-      !Number.isInteger(record.repairsUsed) || record.repairsUsed < 0 || record.repairsUsed > MAX_TASK_REPAIRS) {
+      !Number.isSafeInteger(record.repairsUsed) || record.repairsUsed < 0) {
     fail('invalid record revision or repair budget');
   }
   if ('status' in record || 'done' in record) fail('record must not duplicate task completion');
@@ -59,11 +59,6 @@ export function validateTaskRecord(record, changeId = record?.changeId, taskId =
     }
   } else if (record.repairsUsed !== 0) {
     fail('record budget has no attempt');
-  }
-  if (record.executorReports != null && (!Array.isArray(record.executorReports) || record.executorReports.length > 4 ||
-      record.executorReports.some(report => report?.source !== 'executor' || typeof report.attemptId !== 'string' ||
-        typeof report.at !== 'string' || typeof report.text !== 'string' || report.text.length > 4096 || typeof report.truncated !== 'boolean'))) {
-    fail('invalid bounded executor reports');
   }
   return record;
 }
@@ -145,16 +140,16 @@ export function writeTaskRecord(root, record, options = {}) {
   });
 }
 
-export function reserveAttempt(root, record, { repair = false, ownerNonce = null } = {}) {
+export function reserveAttempt(root, record, { repair = false, ownerNonce = null, limit = MAX_TASK_REPAIRS } = {}) {
   validateTaskRecord(record);
+  if (!Number.isSafeInteger(limit) || limit < 0) fail('invalid repair limit');
   if (record.attempt?.lifecycle === 'running') fail('record attempt still running; reconcile before reserving');
   if (!repair && record.attempt) fail('initial attempt already reserved');
   if (repair && !record.attempt) fail('initial attempt required before repair');
-  if (repair && record.repairsUsed >= MAX_TASK_REPAIRS) fail('task repair budget exhausted', 'task-repairs-exhausted');
+  if (repair && record.repairsUsed >= limit) fail('task repair budget exhausted', 'task-repairs-exhausted');
   const repairsUsed = record.repairsUsed + (repair ? 1 : 0);
   const next = {
     ...record, repairsUsed, candidate: null, receipt: null,
-    executorReports: retainExecutorReports(record),
     attempt: {
       id: randomUUID(), repairOrdinal: repairsUsed, lifecycle: 'reserved',
       reservedAt: new Date().toISOString(), executorPid: null, processGroupId: null,
@@ -162,21 +157,6 @@ export function reserveAttempt(root, record, { repair = false, ownerNonce = null
     },
   };
   return writeTaskRecord(root, next, { ownerNonce });
-}
-
-function retainExecutorReports(record) {
-  const reports = record.executorReports ?? [];
-  const output = record.attempt?.result;
-  const stdout = typeof output?.stdout === 'string' ? output.stdout : '';
-  const stderr = typeof output?.stderr === 'string' ? output.stderr : '';
-  if ((!stdout && !stderr) || reports.some(report => report.attemptId === record.attempt.id)) return reports;
-  // Preserve claims verbatim as bounded excerpts, never promote them to verify
-  // facts. Four business attempts bound the history independently of output size.
-  return [...reports, {
-    source: 'executor', attemptId: record.attempt.id, at: new Date().toISOString(),
-    text: `stdout:\n${stdout.slice(0, 2000)}\nstderr:\n${stderr.slice(0, 2000)}`,
-    truncated: stdout.length > 2000 || stderr.length > 2000,
-  }].slice(-4);
 }
 
 export function recordExternalRetry(root, record, { limit = MAX_EXTERNAL_RETRIES, ownerNonce = null } = {}) {
